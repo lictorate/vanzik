@@ -20,7 +20,7 @@ All notable changes to this project will be documented in this file.
   - **On the wire:** headers `X-Vanzik-*`; MCP `_meta` prefix `dev.vanzik/`; the LLM proxy's refusal id `vanzik-refusal`, error type `vanzik_error` and `User-Agent: vanzik-llm-proxy/<version>`; webhook `User-Agent: Vanzik/2.0`; dashboard cookies `vanzik_session` and `vanzik_csrf`.
   - **Output:** metrics `vanzik_*`; the report's `vanzik_version` field.
   - **Code:** Go module `lictorate.com/vanzik/v2`; PyPI package `vanzik` (import `vanzik`) and npm package `@lictorate/vanzik`, with their `Vanzik*` classes.
-  - **Project:** `github.com/lictorate/vanzik`, `https://vanzik.lictorate.com`; security reports to security@lictorate.com.
+  - **Project:** `github.com/lictorate/vanzik`, `https://vanzik.lictorate.com`; contact hello@lictorate.com (security reports included).
 - **An `AGENTGUARD_*` variable that would be used stops the program** instead of being ignored. `vanzik server` with only `AGENTGUARD_API_KEY` set would otherwise run without the key its operator configured. The same holds for `AGENTGUARD_POLICY`, `AGENTGUARD_URL` (client commands, MCP gateway, LLM proxy) and, in the SDKs, `AGENTGUARD_URL`, `AGENTGUARD_API_KEY` and `AGENTGUARD_TENANT_ID`. A flag, an argument or the `VANZIK_*` variable makes the old one irrelevant. `vanzik hook` never refuses; it names the variable when it couldn't check a call.
 
 ### Added

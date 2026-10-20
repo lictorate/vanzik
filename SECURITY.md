@@ -21,7 +21,7 @@ entry lists any behaviour changes.
 
 ## Reporting a Vulnerability
 
-Please report suspected vulnerabilities by email to **security@lictorate.com**.
+Please report suspected vulnerabilities by email to **hello@lictorate.com**.
 
 Do **not** open a public GitHub issue, pull request, or discussion thread for
 security reports. Public reports give attackers a head start before a fix is

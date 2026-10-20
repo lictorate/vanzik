@@ -224,4 +224,4 @@ We welcome community-contributed policy templates in `configs/examples/`. Includ
 
 ## Reporting Security Issues
 
-If you find a security vulnerability in Vanzik, please email security@lictorate.com instead of opening a public issue. We take security seriously — it's literally our whole thing.
+If you find a security vulnerability in Vanzik, please email hello@lictorate.com instead of opening a public issue. We take security seriously — it's literally our whole thing.

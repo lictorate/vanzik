@@ -17,7 +17,7 @@ license = "Apache-2.0"
 # 3.10, 3.11, 3.12, 3.13 on every push.
 requires-python = ">=3.10"
 authors = [
-    { name = "Cauã Ferraz", email = "cauaferrazp@gmail.com" },
+    { name = "Cauã Ferraz", email = "hello@lictorate.com" },
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
