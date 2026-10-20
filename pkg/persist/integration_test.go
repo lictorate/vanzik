@@ -1,7 +1,7 @@
 package persist
 
 // End-to-end persistence integration: drive the REAL proxy.Server over HTTP
-// with a store + syncer wired exactly as cmd/agentguard does, then prove that
+// with a store + syncer wired exactly as cmd/vanzik does, then prove that
 // (1) approvals / costs / rate-limit buckets survive a full restart, and
 // (2) enabling persistence does NOT push the /v1/check hot path over the <3ms
 // budget (the store is write-behind, never inline).
@@ -17,11 +17,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/notify"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
-	"github.com/Caua-ferraz/AgentGuard/pkg/proxy"
-	"github.com/Caua-ferraz/AgentGuard/pkg/store"
+	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/notify"
+	"lictorate.com/vanzik/v2/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/proxy"
+	"lictorate.com/vanzik/v2/pkg/store"
 )
 
 const itAPIKey = "it-key"
@@ -46,7 +46,7 @@ func itPolicy() *policy.Policy {
 }
 
 // itServer builds a server + syncer over the given store, mirroring the
-// cmd/agentguard wiring (store-backed audit behind the buffered async logger so
+// cmd/vanzik wiring (store-backed audit behind the buffered async logger so
 // the hot path only enqueues).
 type itServer struct {
 	srv    *proxy.Server
@@ -109,7 +109,7 @@ func (s *itServer) postCheck(t *testing.T, body string) (int, map[string]any, ht
 func TestIntegration_StateSurvivesRestart(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "agentguard.db")
+	dbPath := filepath.Join(dir, "vanzik.db")
 
 	// --- lifecycle 1: create state, flush, shut down ---
 	st1, err := store.NewSQLiteStore(dbPath)

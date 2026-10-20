@@ -14,7 +14,7 @@ Covers the v0.5 hardening contract from R5 E3 / R5 E12 / T3:
 Real-CrewAI tests are gated behind ``pytest.importorskip("crewai", ...)``
 so the suite stays green on installs that do not have the framework.
 The mock-server fixture from ``tests/conftest.py`` provides the
-AgentGuard side; only the CrewAI / LangChain library is real.
+Vanzik side; only the CrewAI / LangChain library is real.
 """
 
 import asyncio
@@ -22,12 +22,12 @@ from unittest.mock import MagicMock, AsyncMock
 
 import pytest
 
-from agentguard import (
-    AgentGuardApprovalRequired,
-    AgentGuardDenied,
+from vanzik import (
+    VanzikApprovalRequired,
+    VanzikDenied,
     Guard,
 )
-from tests.conftest import MockAgentGuardHandler
+from tests.conftest import MockVanzikHandler
 
 
 # ---------------------------------------------------------------------------
@@ -78,9 +78,9 @@ class _FakeCrewAITool:
 
 class TestModernAPIAllowPath:
     def test_guardedcrewtool_invoke_allow_passes_through(self, mock_server):
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         guard = Guard(mock_server)
 
         tool = _FakeCrewAITool(name="search", description="search the web")
@@ -93,9 +93,9 @@ class TestModernAPIAllowPath:
         assert kinds == ["invoke"]
 
     def test_guardedcrewtool_ainvoke_allow(self, mock_server):
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         guard = Guard(mock_server)
 
         tool = _FakeCrewAITool(name="search", description="search the web")
@@ -107,9 +107,9 @@ class TestModernAPIAllowPath:
         assert kinds == ["ainvoke"]
 
     def test_guardedcrewtool_call_dunder_allow(self, mock_server):
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         guard = Guard(mock_server)
 
         tool = _FakeCrewAITool()
@@ -121,9 +121,9 @@ class TestModernAPIAllowPath:
         assert kinds == ["__call__"]
 
     def test_guardedcrewtool_run_allow(self, mock_server):
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         guard = Guard(mock_server)
 
         tool = _FakeCrewAITool()
@@ -133,9 +133,9 @@ class TestModernAPIAllowPath:
         assert out == "ran-via-_run"
 
     def test_guardedcrewtool_underscore_run_allow(self, mock_server):
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         guard = Guard(mock_server)
 
         tool = _FakeCrewAITool()
@@ -145,9 +145,9 @@ class TestModernAPIAllowPath:
         assert out == "ran-via-_run"
 
     def test_guardedcrewtool_arun_allow(self, mock_server):
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         guard = Guard(mock_server)
 
         tool = _FakeCrewAITool()
@@ -163,9 +163,9 @@ class TestModernAPIAllowPath:
 
 class TestModernAPIDenyPath:
     def test_guardedcrewtool_invoke_deny_raises(self, mock_server):
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "DENY",
             "reason": "policy says no",
         }
@@ -178,16 +178,16 @@ class TestModernAPIDenyPath:
             gct.invoke({"command": "rm -rf /"})
 
         # Should be the typed subclass and reference the reason.
-        assert isinstance(ei.value, AgentGuardDenied)
+        assert isinstance(ei.value, VanzikDenied)
         assert "denied" in str(ei.value).lower()
         assert "policy says no" in str(ei.value)
         # The underlying tool was never called.
         assert tool._invocations == []
 
     def test_guardedcrewtool_ainvoke_deny_raises(self, mock_server):
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "DENY",
             "reason": "blocked",
         }
@@ -202,9 +202,9 @@ class TestModernAPIDenyPath:
 
     def test_guardedcrewtool_call_dunder_gated(self, mock_server):
         """``tool(...)`` direct invocation must hit the gate."""
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "DENY",
             "reason": "blocked",
         }
@@ -215,13 +215,13 @@ class TestModernAPIDenyPath:
 
         with pytest.raises(PermissionError) as ei:
             gct("rm -rf /")
-        assert isinstance(ei.value, AgentGuardDenied)
+        assert isinstance(ei.value, VanzikDenied)
         assert tool._invocations == []
 
     def test_guardedcrewtool_run_deny_raises(self, mock_server):
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "DENY",
             "reason": "blocked",
         }
@@ -241,9 +241,9 @@ class TestModernAPIDenyPath:
 
 class TestApprovalPath:
     def test_invoke_approval_raises(self, mock_server):
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "REQUIRE_APPROVAL",
             "reason": "needs review",
             "approval_url": "http://approve/ap_1",
@@ -255,7 +255,7 @@ class TestApprovalPath:
 
         with pytest.raises(PermissionError) as ei:
             gct.invoke({"command": "sudo reboot"})
-        assert isinstance(ei.value, AgentGuardApprovalRequired)
+        assert isinstance(ei.value, VanzikApprovalRequired)
         assert "approval" in str(ei.value).lower()
         assert "http://approve/ap_1" in str(ei.value)
         assert tool._invocations == []
@@ -303,7 +303,7 @@ class TestDefenseContract:
             from crewai.tools import BaseTool as CrewBaseTool  # type: ignore
         except ImportError:
             pytest.skip("crewai not installed; isinstance-pass guarantee is crewai-specific")
-        from agentguard.adapters.crewai import _build_guarded_class
+        from vanzik.adapters.crewai import _build_guarded_class
 
         guard = Guard(mock_server)
         # Build a real CrewAI BaseTool subclass to wrap.
@@ -327,7 +327,7 @@ class TestDefenseContract:
         implementation runs without consulting Guard.check — that is the
         regression we are pinning against.
         """
-        from agentguard.adapters.crewai import _build_guarded_class
+        from vanzik.adapters.crewai import _build_guarded_class
 
         cls = _build_guarded_class()
         # The methods we MUST override. If any is inherited, the gate is
@@ -353,9 +353,9 @@ class TestDefenseContract:
         with ``func=self._run``. Our override must hand off OUR gated
         ``_run``, so the resulting structured tool also gates.
         """
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "DENY",
             "reason": "structured-tool gate fired",
         }
@@ -383,7 +383,7 @@ class TestDefenseContract:
         in ``model_dump()`` output — operators rendering tool metadata
         for telemetry should not see the guard handle.
         """
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
         guard = Guard(mock_server)
         inner = _FakeCrewAITool(name="my_tool", description="my description")
@@ -404,9 +404,9 @@ class TestDefenseContract:
         framework can read ``name`` / ``description`` / ``args_schema``
         for tool registration. CrewAI mangles ``description`` into
         ``Tool Name: ... Tool Arguments: ...`` during model_post_init —
-        that is a CrewAI behavior, not an AgentGuard contract.
+        that is a CrewAI behavior, not a Vanzik contract.
         """
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
         guard = Guard(mock_server)
         inner = _FakeCrewAITool(name="my_tool", description="my description")
@@ -425,7 +425,7 @@ class TestDefenseContract:
 
 class TestGuardCrewToolsFactory:
     def test_factory_wraps_all_tools(self, mock_server):
-        from agentguard.adapters.crewai import guard_crew_tools, GuardedCrewTool
+        from vanzik.adapters.crewai import guard_crew_tools, GuardedCrewTool
 
         tools = [_FakeCrewAITool(name=f"t{i}") for i in range(3)]
         wrapped = guard_crew_tools(tools, guard_url=mock_server)
@@ -437,9 +437,9 @@ class TestGuardCrewToolsFactory:
 
     def test_factory_gates_invoke(self, mock_server):
         """Factory-produced wrappers must also gate ``invoke``."""
-        from agentguard.adapters.crewai import guard_crew_tools
+        from vanzik.adapters.crewai import guard_crew_tools
 
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "DENY",
             "reason": "blocked",
         }
@@ -495,10 +495,10 @@ class TestRealCrewAI:
         self, mock_server, real_crewai_basetool
     ):
         """Build a real CrewAI tool, wrap it, call ``invoke`` and
-        verify the AgentGuard gate fires."""
-        from agentguard.adapters.crewai import GuardedCrewTool
+        verify the Vanzik gate fires."""
+        from vanzik.adapters.crewai import GuardedCrewTool
 
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "DENY",
             "reason": "real-crewai gate fired",
         }
@@ -527,7 +527,7 @@ class TestRealCrewAI:
         wrapper because of the virtual-subclass registration. CrewAI's
         agent / crew code performs this check before treating an object
         as a tool."""
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
         BaseTool = real_crewai_basetool
 
@@ -563,14 +563,14 @@ class TestRealCrewAI:
         This is the audit's P4 / "real upstream library" coverage.
         Skips cleanly when crewai (or its LLM wiring) is missing.
         """
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
         # We can't actually drive an LLM in CI without secrets, so
         # this test focuses on what we CAN verify deterministically:
         # CrewAI's BaseTool.invoke (the public Runnable surface) must
         # route through our gate. If the framework changes how tools
         # are invoked from inside agents, this test will catch it.
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "DENY",
             "reason": "kickoff-path gate fired",
         }

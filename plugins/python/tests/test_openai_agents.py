@@ -1,7 +1,7 @@
 """Unit tests for the OpenAI Agents SDK adapter.
 
 Most tests use a FunctionTool-shaped fake (name, description,
-params_json_schema, async on_invoke_tool) and the mock AgentGuard server,
+params_json_schema, async on_invoke_tool) and the mock Vanzik server,
 so they need no SDK. The few that touch SDK types (exception classes,
 the tool input guardrail) importorskip ``agents``. The real Runner loop
 lives in tests/integration/test_at_real_openai_agents.py.
@@ -18,19 +18,19 @@ from typing import Any, List
 
 import pytest
 
-from agentguard import (
-    AgentGuardApprovalRequired,
-    AgentGuardDenied,
+from vanzik import (
+    VanzikApprovalRequired,
+    VanzikDenied,
     CheckResult,
     Guard,
 )
-from agentguard.adapters import openai_agents as oa
-from agentguard.adapters.openai_agents import (
-    agentguard_tool_guardrail,
+from vanzik.adapters import openai_agents as oa
+from vanzik.adapters.openai_agents import (
+    vanzik_tool_guardrail,
     guard_tool,
     guard_tools,
 )
-from tests.conftest import MockAgentGuardHandler
+from tests.conftest import MockVanzikHandler
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +84,7 @@ def _invoke(tool: Any, input_json: str) -> Any:
 
 
 def _last_check_body() -> dict:
-    return json.loads(MockAgentGuardHandler.last_request_body)
+    return json.loads(MockVanzikHandler.last_request_body)
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +94,7 @@ def _last_check_body() -> dict:
 
 class TestDecisions:
     def test_allow_runs_the_tool_with_the_original_input(self, mock_server):
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         tool = _FakeFunctionTool()
         guarded = guard_tool(tool, Guard(mock_server, agent_id="oa"))
 
@@ -108,11 +108,11 @@ class TestDecisions:
         assert body["agent_id"] == "oa"
 
     def test_deny_raises_and_never_runs_the_tool(self, mock_server):
-        MockAgentGuardHandler.check_response = {"decision": "DENY", "reason": "rule:no-rm"}
+        MockVanzikHandler.check_response = {"decision": "DENY", "reason": "rule:no-rm"}
         tool = _FakeFunctionTool()
         guarded = guard_tool(tool, Guard(mock_server))
 
-        with pytest.raises(AgentGuardDenied) as ei:
+        with pytest.raises(VanzikDenied) as ei:
             _invoke(guarded, '{"command": "rm -rf /"}')
 
         assert tool.calls == []
@@ -122,7 +122,7 @@ class TestDecisions:
         assert ei.value.result.denied
 
     def test_approval_raises_with_id_and_url_and_never_runs_the_tool(self, mock_server):
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "REQUIRE_APPROVAL",
             "reason": "needs review",
             "approval_id": "ap_42",
@@ -131,7 +131,7 @@ class TestDecisions:
         tool = _FakeFunctionTool()
         guarded = guard_tool(tool, Guard(mock_server))
 
-        with pytest.raises(AgentGuardApprovalRequired) as ei:
+        with pytest.raises(VanzikApprovalRequired) as ei:
             _invoke(guarded, '{"command": "terraform apply"}')
 
         assert tool.calls == []
@@ -143,7 +143,7 @@ class TestDecisions:
         tool = _FakeFunctionTool()
         guarded = guard_tool(tool, _RecordingGuard(decision="MAYBE"))
 
-        with pytest.raises(AgentGuardDenied):
+        with pytest.raises(VanzikDenied):
             _invoke(guarded, '{"command": "ls"}')
         assert tool.calls == []
 
@@ -152,7 +152,7 @@ class TestDecisions:
         # Port 9 (discard) on localhost: nothing listens, connection refused.
         guarded = guard_tool(tool, Guard("http://127.0.0.1:9", timeout=1))
 
-        with pytest.raises(AgentGuardDenied):
+        with pytest.raises(VanzikDenied):
             _invoke(guarded, '{"command": "ls"}')
         assert tool.calls == []
 
@@ -296,7 +296,7 @@ class TestInputParsing:
         tool = _FakeFunctionTool()
         guarded = guard_tool(tool, guard)
 
-        with pytest.raises(AgentGuardDenied):
+        with pytest.raises(VanzikDenied):
             _invoke(guarded, "rm -rf /")
         assert tool.calls == []
 
@@ -439,11 +439,11 @@ class TestSDKTypes:
         agents_exceptions = pytest.importorskip("agents.exceptions")
         guarded = guard_tool(_FakeFunctionTool(), _RecordingGuard(decision="DENY"))
 
-        with pytest.raises(AgentGuardDenied) as ei:
+        with pytest.raises(VanzikDenied) as ei:
             _invoke(guarded, '{"command": "ls"}')
 
         # The SDK runner re-raises AgentsException unchanged instead of
-        # wrapping it in UserError, so callers can catch AgentGuardDenied.
+        # wrapping it in UserError, so callers can catch VanzikDenied.
         assert isinstance(ei.value, agents_exceptions.AgentsException)
         assert ei.value.run_data is None
 
@@ -453,7 +453,7 @@ class TestSDKTypes:
             _FakeFunctionTool(), _RecordingGuard(decision="REQUIRE_APPROVAL")
         )
 
-        with pytest.raises(AgentGuardApprovalRequired) as ei:
+        with pytest.raises(VanzikApprovalRequired) as ei:
             _invoke(guarded, '{"command": "ls"}')
 
         assert isinstance(ei.value, agents_exceptions.AgentsException)
@@ -474,7 +474,7 @@ class TestToolGuardrail:
 
     def test_allow_lets_the_call_through(self):
         guard = _RecordingGuard()
-        guardrail = agentguard_tool_guardrail(guard)
+        guardrail = vanzik_tool_guardrail(guard)
 
         out = asyncio.run(guardrail.run(_guardrail_data("run_shell", '{"command": "ls"}')))
 
@@ -483,7 +483,7 @@ class TestToolGuardrail:
         assert guard.calls == [("shell", {"command": "ls"})]
 
     def test_deny_rejects_with_a_message_for_the_model(self):
-        guardrail = agentguard_tool_guardrail(_RecordingGuard(decision="DENY"))
+        guardrail = vanzik_tool_guardrail(_RecordingGuard(decision="DENY"))
 
         out = asyncio.run(guardrail.run(_guardrail_data("run_shell", '{"command": "rm"}')))
 
@@ -491,7 +491,7 @@ class TestToolGuardrail:
         assert "Action denied" in out.behavior["message"]
 
     def test_approval_rejects_with_the_approval_url(self):
-        guardrail = agentguard_tool_guardrail(_RecordingGuard(decision="REQUIRE_APPROVAL"))
+        guardrail = vanzik_tool_guardrail(_RecordingGuard(decision="REQUIRE_APPROVAL"))
 
         out = asyncio.run(guardrail.run(_guardrail_data("run_shell", '{"command": "rm"}')))
 
@@ -499,7 +499,7 @@ class TestToolGuardrail:
         assert "http://x/approve" in out.behavior["message"]
 
     def test_raise_on_block_trips_the_guardrail(self):
-        guardrail = agentguard_tool_guardrail(
+        guardrail = vanzik_tool_guardrail(
             _RecordingGuard(decision="DENY"), raise_on_block=True
         )
 
@@ -510,7 +510,7 @@ class TestToolGuardrail:
 
     def test_scope_is_inferred_from_arguments_and_name(self):
         guard = _RecordingGuard()
-        guardrail = agentguard_tool_guardrail(guard)
+        guardrail = vanzik_tool_guardrail(guard)
 
         asyncio.run(guardrail.run(_guardrail_data("read_file", '{"path": "/etc/hosts"}')))
 
@@ -518,7 +518,7 @@ class TestToolGuardrail:
 
     def test_explicit_scope_wins(self):
         guard = _RecordingGuard()
-        guardrail = agentguard_tool_guardrail(guard, scope="data", name="ag")
+        guardrail = vanzik_tool_guardrail(guard, scope="data", name="ag")
 
         asyncio.run(guardrail.run(_guardrail_data("read_file", '{"path": "/etc/hosts"}')))
 

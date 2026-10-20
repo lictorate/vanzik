@@ -1,6 +1,6 @@
 # Test cases for configs/default.yaml. Run them with:
 #
-#   agentguard test configs/tests
+#   vanzik test configs/tests
 #
 # Each case is an action and the verdict the policy must give it. When you
 # change the policy, change or add a case here too, so CI catches the

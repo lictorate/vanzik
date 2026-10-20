@@ -4,7 +4,7 @@ You'll go from "Claude Desktop talks to MCP servers" to "Claude Desktop
 talks to MCP servers, gated by a policy file" in under 90 seconds.
 
 By the end, every tool call Claude wants to make passes through
-AgentGuard, is evaluated against a YAML policy, and shows up live on a
+Vanzik, is evaluated against a YAML policy, and shows up live on a
 dashboard you can approve / deny from.
 
 ## Prerequisites
@@ -18,19 +18,19 @@ This walkthrough uses Claude Desktop. The same pattern works for Cursor,
 Cline, Continue.dev, and Zed — see [`examples/`](../examples/) for ready
 configs.
 
-## 30 seconds — install AgentGuard
+## 30 seconds — install Vanzik
 
 ```bash
-go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard@latest
-go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard-mcp-gateway@latest
+go install lictorate.com/vanzik/v2/cmd/vanzik@latest
+go install lictorate.com/vanzik/v2/cmd/vanzik-mcp-gateway@latest
 ```
 
 Confirm both binaries are on `PATH`:
 
 ```bash
-which agentguard agentguard-mcp-gateway
-# /Users/you/go/bin/agentguard
-# /Users/you/go/bin/agentguard-mcp-gateway
+which vanzik vanzik-mcp-gateway
+# /Users/you/go/bin/vanzik
+# /Users/you/go/bin/vanzik-mcp-gateway
 ```
 
 If `which` finds nothing, add `$(go env GOPATH)/bin` to your shell's
@@ -38,18 +38,18 @@ If `which` finds nothing, add `$(go env GOPATH)/bin` to your shell's
 
 ## 30 seconds — run the policy server
 
-Generate an API key and start the central AgentGuard server with a
+Generate an API key and start the central Vanzik server with a
 default policy:
 
 ```bash
-export AGENTGUARD_API_KEY="$(openssl rand -hex 32)"
+export VANZIK_API_KEY="$(openssl rand -hex 32)"
 
-git clone https://github.com/Caua-ferraz/AgentGuard.git
-agentguard server \
-  --policy AgentGuard/configs/default.yaml \
+git clone https://github.com/lictorate/vanzik.git
+vanzik server \
+  --policy Vanzik/configs/default.yaml \
   --dashboard \
   --watch \
-  --api-key "$AGENTGUARD_API_KEY"
+  --api-key "$VANZIK_API_KEY"
 ```
 
 Open the dashboard: <http://127.0.0.1:8080/dashboard> — log in with the
@@ -63,24 +63,24 @@ open `claude_desktop_config.json`. Replace its contents with:
 ```jsonc
 {
   "mcpServers": {
-    "agentguard": {
-      "command": "agentguard-mcp-gateway",
+    "vanzik": {
+      "command": "vanzik-mcp-gateway",
       "args": [
         "--upstream", "fs:npx -y @modelcontextprotocol/server-filesystem /tmp",
         "--guard-url", "http://127.0.0.1:8080",
-        "--policy", "/absolute/path/to/AgentGuard/configs/default.yaml",
+        "--policy", "/absolute/path/to/Vanzik/configs/default.yaml",
         "--policy-mode", "strict",
         "--fail-mode", "deny"
       ],
       "env": {
-        "AGENTGUARD_API_KEY": "<paste the key from step 2 here>"
+        "VANZIK_API_KEY": "<paste the key from step 2 here>"
       }
     }
   }
 }
 ```
 
-Replace `/absolute/path/to/AgentGuard/configs/default.yaml` with your
+Replace `/absolute/path/to/Vanzik/configs/default.yaml` with your
 actual clone path. Claude Desktop does not expand shell variables in flag
 strings — the `env` block is the only place the API key is looked up.
 
@@ -99,7 +99,7 @@ just close the window).
 First create a file to read — in a terminal, not through Claude:
 
 ```bash
-echo "hello from AgentGuard" > /tmp/hello.txt
+echo "hello from Vanzik" > /tmp/hello.txt
 ```
 
 Open a new chat and ask:

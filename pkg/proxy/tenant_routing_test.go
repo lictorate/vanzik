@@ -23,9 +23,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/notify"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/notify"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // newTenantRoutingServer builds a Server wired to a real httptest.Server

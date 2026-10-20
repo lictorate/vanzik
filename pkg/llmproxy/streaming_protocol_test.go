@@ -400,7 +400,7 @@ func TestB21_WhitespaceSeedStreamGatesEndToEnd(t *testing.T) {
 	spy := &pvCallSpy{decision: Decision{Allow: true, Rule: "allow:test"}}
 	got := pvRunStream(t, "anthropic", stream, spy)
 
-	if strings.Contains(got, "AgentGuard denied") {
+	if strings.Contains(got, "Vanzik denied") {
 		t.Fatalf("a conformant `{ }`-seeded stream was refused (B21 regression): %q", got)
 	}
 	calls := spy.seen()

@@ -43,15 +43,15 @@ linters:
         # bookkeeping; the call site has nowhere to escalate an error
         # to. Listed by their package-qualified interface or concrete
         # type so a stray Close() outside a teardown path still fires.
-        - (github.com/Caua-ferraz/AgentGuard/pkg/audit.Logger).Close
-        - (github.com/Caua-ferraz/AgentGuard/pkg/policy.PolicyProvider).Close
-        - (*github.com/Caua-ferraz/AgentGuard/pkg/policy.Engine).Close
-        - (*github.com/Caua-ferraz/AgentGuard/pkg/policy.FilePolicyProvider).Close
-        - (*github.com/Caua-ferraz/AgentGuard/pkg/policy.StaticPolicyProvider).Close
-        - (*github.com/Caua-ferraz/AgentGuard/pkg/audit.FileLogger).Close
-        - (*github.com/Caua-ferraz/AgentGuard/pkg/audit.BufferedAsyncLogger).Close
-        - (*github.com/Caua-ferraz/AgentGuard/pkg/audit.SQLiteLogger).Close
-        - (*github.com/Caua-ferraz/AgentGuard/pkg/mcpgw.StdioUpstream).Close
+        - (lictorate.com/vanzik/v2/pkg/audit.Logger).Close
+        - (lictorate.com/vanzik/v2/pkg/policy.PolicyProvider).Close
+        - (*lictorate.com/vanzik/v2/pkg/policy.Engine).Close
+        - (*lictorate.com/vanzik/v2/pkg/policy.FilePolicyProvider).Close
+        - (*lictorate.com/vanzik/v2/pkg/policy.StaticPolicyProvider).Close
+        - (*lictorate.com/vanzik/v2/pkg/audit.FileLogger).Close
+        - (*lictorate.com/vanzik/v2/pkg/audit.BufferedAsyncLogger).Close
+        - (*lictorate.com/vanzik/v2/pkg/audit.SQLiteLogger).Close
+        - (*lictorate.com/vanzik/v2/pkg/mcpgw.StdioUpstream).Close
   exclusions:
     rules:
       - path: _test\.go

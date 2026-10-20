@@ -1,5 +1,12 @@
 name: Publish Python SDK to PyPI
 
+# Builds plugins/python and uploads it to PyPI as `vanzik` when a GitHub
+# release is published. Releases before 2.0 went to the `agentguardproxy`
+# project; `vanzik` is a new project, so PYPI_API_TOKEN must be a token that
+# may create it (an account-wide token) for the first upload, after which
+# it can be swapped for one scoped to `vanzik`. A token scoped to
+# agentguardproxy is refused.
+
 on:
   release:
     types: [published]
@@ -29,6 +36,20 @@ jobs:
 
       - name: Build package
         run: python -m build
+
+      # A release tagged v2.0.0 must upload vanzik 2.0.0, as publish-npm.yml
+      # checks for npm: catches a release cut before bump-version.sh ran, or
+      # a build that still names the old project.
+      - name: Check the package matches the release
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          want="vanzik-${TAG#v}.tar.gz"
+          if [ ! -f "dist/$want" ]; then
+            echo "::error::expected dist/$want for release $TAG; built: $(ls dist)" >&2
+            exit 1
+          fi
 
       - name: Publish to PyPI
         env:

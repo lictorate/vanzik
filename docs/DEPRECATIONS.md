@@ -1,22 +1,22 @@
 # Deprecations
 
-This file is the single source of truth for features that are on the way out of AgentGuard. Every deprecation lands here in the same commit that introduces it.
+This file is the single source of truth for features that are on the way out of Vanzik. Every deprecation lands here in the same commit that introduces it.
 
 ## How this table is used
 
-- **feature** — a stable identifier, also used as the key passed to `deprecation.Warn(...)` and exposed via `agentguard_deprecations_used_total{feature="..."}`.
+- **feature** — a stable identifier, also used as the key passed to `deprecation.Warn(...)` and exposed via `vanzik_deprecations_used_total{feature="..."}`.
 - **deprecated-in** — the release that started emitting the warning.
 - **removal-target** — the release where the feature becomes an error or is removed. Do not slip this silently; if the date moves, update this file and say why.
 - **migration-path** — what users should do instead. Must link to code, docs, or a config snippet.
 - **owner** — person or area responsible for following through on removal.
 
-Before the removal release ships, check `agentguard_deprecations_used_total` in scraped metrics. If anyone is still using the feature, extend the timeline explicitly in this file — do not remove silently.
+Before the removal release ships, check `vanzik_deprecations_used_total` in scraped metrics. If anyone is still using the feature, extend the timeline explicitly in this file — do not remove silently.
 
 ## Active deprecations
 
 | feature | deprecated-in | removal-target | migration-path | owner |
 |---|---|---|---|---|
-| `audit.migration.v040_to_v041` | v0.4.1 | TBD (was v0.4.3 — that release never shipped; still in the binary as of v1.0.0) | Runs automatically on startup (registered via `pkg/migrate/v040_to_v041`, also invocable as `agentguard migrate`). Users still on headerless v1 audit files should migrate before the removal release, whenever it is rescheduled. | audit |
+| `audit.migration.v040_to_v041` | v0.4.1 | TBD (was v0.4.3 — that release never shipped; still in the binary as of v1.0.0) | Runs automatically on startup (registered via `pkg/migrate/v040_to_v041`, also invocable as `vanzik migrate`). Users still on headerless v1 audit files should migrate before the removal release, whenever it is rescheduled. | audit |
 | `audit.backup.v040` | v0.4.1 | TBD (was v0.4.3 — that release never shipped; convention still active as of v1.0.0) | `.v040-backup` is created by the v0.4.0 → v0.4.1 migration to enable downgrade. Operators who want the backup retained long-term should archive it externally. It will be removed alongside the migration code. | audit |
 
 ## Removed (historical)

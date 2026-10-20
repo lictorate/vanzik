@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // checkDetailParity pins GET /v1/sessions/{id}'s data: the file backend's
@@ -70,7 +70,7 @@ func TestAuditSessions_ListCapsAgree(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = fileLogger.Close() })
-	st, err := NewSQLiteStore(filepath.Join(dir, "agentguard.db"))
+	st, err := NewSQLiteStore(filepath.Join(dir, "vanzik.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

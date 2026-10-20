@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/metrics"
 )
 
 func TestLimiter_Allow(t *testing.T) {

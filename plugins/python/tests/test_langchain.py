@@ -1,7 +1,7 @@
 """Real-LangChain adapter tests (v0.5 R5 closure).
 
 These tests import the actual ``langchain_core`` library — they do **not**
-mock the LangChain types themselves. The AgentGuard HTTP server is mocked
+mock the LangChain types themselves. The Vanzik HTTP server is mocked
 via the ``mock_server`` fixture so the policy decision can be steered per
 test, but every Tool/Runnable used here is a real LangChain object.
 
@@ -16,8 +16,8 @@ import json
 
 import pytest
 
-from agentguard import Guard
-from tests.conftest import MockAgentGuardHandler
+from vanzik import Guard
+from tests.conftest import MockVanzikHandler
 
 
 # Skip the entire module if langchain_core is not importable. Tests that
@@ -52,9 +52,9 @@ def _make_real_tool(name: str = "echo", description: str = "echoes input"):
 
 class TestInvoke:
     def test_guardedtool_invoke_allow_passes_through(self, mock_server):
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         guard = Guard(mock_server)
         tool, calls = _make_real_tool()
         gt = GuardedTool(tool, guard, scope="shell")
@@ -65,9 +65,9 @@ class TestInvoke:
         assert calls == ["hello"]
 
     def test_guardedtool_invoke_deny_raises(self, mock_server):
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "DENY",
             "reason": "blocked",
         }
@@ -83,9 +83,9 @@ class TestInvoke:
         assert calls == []
 
     def test_guardedtool_invoke_approval_raises(self, mock_server):
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "REQUIRE_APPROVAL",
             "reason": "needs review",
             "approval_url": "http://approve/ap_1",
@@ -103,9 +103,9 @@ class TestInvoke:
         assert calls == []
 
     def test_guardedtool_ainvoke_allow_passes_through(self, mock_server):
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         guard = Guard(mock_server)
         tool, calls = _make_real_tool()
         gt = GuardedTool(tool, guard, scope="shell")
@@ -116,9 +116,9 @@ class TestInvoke:
         assert calls == ["hi"]
 
     def test_guardedtool_ainvoke_deny_raises(self, mock_server):
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "DENY",
             "reason": "blocked",
         }
@@ -142,9 +142,9 @@ class TestStream:
         Counts request bodies sent to the mock server: should be 1, not 1
         per chunk.
         """
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         guard = Guard(mock_server)
         tool, calls = _make_real_tool()
         gt = GuardedTool(tool, guard, scope="shell")
@@ -157,9 +157,9 @@ class TestStream:
         assert chunks == ["echo:hello"]
 
     def test_guardedtool_stream_deny_raises(self, mock_server):
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "DENY",
             "reason": "blocked",
         }
@@ -172,9 +172,9 @@ class TestStream:
         assert calls == []
 
     def test_guardedtool_astream_gates_input_once(self, mock_server):
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         guard = Guard(mock_server)
         tool, calls = _make_real_tool()
         gt = GuardedTool(tool, guard, scope="shell")
@@ -190,9 +190,9 @@ class TestStream:
         assert chunks == ["echo:hi"]
 
     def test_guardedtool_astream_deny_raises(self, mock_server):
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
-        MockAgentGuardHandler.check_response = {"decision": "DENY", "reason": "no"}
+        MockVanzikHandler.check_response = {"decision": "DENY", "reason": "no"}
         guard = Guard(mock_server)
         tool, calls = _make_real_tool()
         gt = GuardedTool(tool, guard, scope="shell")
@@ -210,7 +210,7 @@ class TestStream:
 # Batch / abatch
 # ---------------------------------------------------------------------------
 
-class _IndexedDecisionHandler(MockAgentGuardHandler):
+class _IndexedDecisionHandler(MockVanzikHandler):
     """Mock handler that returns DENY for the Nth call and ALLOW otherwise.
 
     Configure via class attribute ``deny_at_index``. The counter is reset by
@@ -226,7 +226,7 @@ class _IndexedDecisionHandler(MockAgentGuardHandler):
             _IndexedDecisionHandler._call_count += 1
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length) if content_length else b""
-            MockAgentGuardHandler.last_request_body = body
+            MockVanzikHandler.last_request_body = body
             if idx == _IndexedDecisionHandler.deny_at_index:
                 self._json_response(
                     200, {"decision": "DENY", "reason": f"deny-at-{idx}"}
@@ -266,9 +266,9 @@ def mock_server_indexed():
 
 class TestBatch:
     def test_guardedtool_batch_all_allowed(self, mock_server):
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         guard = Guard(mock_server)
         tool, calls = _make_real_tool()
         gt = GuardedTool(tool, guard, scope="shell")
@@ -288,7 +288,7 @@ class TestBatch:
     def test_guardedtool_batch_denies_first(self, mock_server_indexed):
         """First entry DENY → batch raises with index 0 in the message,
         underlying function never runs (whole-batch-fails-on-first-deny)."""
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
         _IndexedDecisionHandler.deny_at_index = 0
         guard = Guard(mock_server_indexed)
@@ -306,7 +306,7 @@ class TestBatch:
 
     def test_guardedtool_batch_denies_second(self, mock_server_indexed):
         """Second entry DENY → batch raises with index 1 in the message."""
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
         _IndexedDecisionHandler.deny_at_index = 1
         guard = Guard(mock_server_indexed)
@@ -323,7 +323,7 @@ class TestBatch:
         assert "bad1" not in calls
 
     def test_guardedtool_abatch_denies_first(self, mock_server_indexed):
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
         _IndexedDecisionHandler.deny_at_index = 0
         guard = Guard(mock_server_indexed)
@@ -362,7 +362,7 @@ class TestDefenseContract:
             from langchain_core.tools import BaseTool as LCBase
         except ImportError:
             pytest.skip("langchain_core not installed")
-        from agentguard.adapters.langchain import _build_guarded_tool_class
+        from vanzik.adapters.langchain import _build_guarded_tool_class
 
         cls = _build_guarded_tool_class()
         guard = Guard(mock_server)
@@ -382,7 +382,7 @@ class TestDefenseContract:
         merely inherited. Inheritance would mean the parent's (un-gated)
         implementation runs.
         """
-        from agentguard.adapters.langchain import _build_guarded_tool_class
+        from vanzik.adapters.langchain import _build_guarded_tool_class
 
         cls = _build_guarded_tool_class()
         for method_name in (
@@ -408,7 +408,7 @@ class TestDefenseContract:
         public model. ``_tool`` / ``_guard`` / ``_scope`` must NOT appear
         in ``model_dump()`` output.
         """
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
         guard = Guard(mock_server)
         tool, _ = _make_real_tool()
@@ -433,7 +433,7 @@ class TestDefenseContract:
         like ``_internal_thing`` still raises (because pydantic's model
         validates field names).
         """
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
         guard = Guard(mock_server)
         tool, _calls = _make_real_tool()
@@ -446,7 +446,7 @@ class TestDefenseContract:
         """Metadata attributes pass through cleanly — they live on the
         wrapper itself as pydantic-validated fields.
         """
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
         guard = Guard(mock_server)
         tool, _calls = _make_real_tool(name="my_tool", description="does things")
@@ -476,14 +476,14 @@ class TestRealLangChainRuntime:
         guarded tool's invoke result into a lambda Runnable to prove the
         composition stays intact under real LangChain.
         """
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
         try:
             from langchain_core.runnables import RunnableLambda
         except ImportError:  # pragma: no cover - sanity guard
             pytest.skip("RunnableLambda not available in this langchain_core version")
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         guard = Guard(mock_server)
         tool, calls = _make_real_tool()
         gt = GuardedTool(tool, guard, scope="shell")
@@ -498,21 +498,21 @@ class TestRealLangChainRuntime:
         assert out == "ECHO:PING"
         assert calls == ["ping"]
         # And the gate fired:
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body["scope"] == "shell"
         assert body["command"] == "ping"
 
     def test_real_chain_deny_propagates_through_lcel(self, mock_server):
         """If the gate denies, the PermissionError must propagate through
         the LCEL chain (not be swallowed by the runtime)."""
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
         try:
             from langchain_core.runnables import RunnableLambda
         except ImportError:  # pragma: no cover
             pytest.skip("RunnableLambda not available")
 
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "DENY",
             "reason": "blocked at chain",
         }
@@ -537,9 +537,9 @@ class TestLegacyRunArun:
     DENY/REQUIRE_APPROVAL (v0.4.x compat). Only the modern entries raise."""
 
     def test_run_allow(self, mock_server):
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         guard = Guard(mock_server)
         tool, calls = _make_real_tool()
         gt = GuardedTool(tool, guard, scope="shell")
@@ -549,9 +549,9 @@ class TestLegacyRunArun:
         assert calls == ["hello"]
 
     def test_run_deny_returns_string(self, mock_server):
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "DENY",
             "reason": "blocked",
         }
@@ -578,7 +578,7 @@ class TestStreamRegating:
             self.calls = 0
 
         def check(self, scope, **params):
-            from agentguard import CheckResult, DECISION_ALLOW, DECISION_DENY
+            from vanzik import CheckResult, DECISION_ALLOW, DECISION_DENY
             self.calls += 1
             if self.calls <= self.allow_first:
                 return CheckResult(decision=DECISION_ALLOW, reason="ok")
@@ -601,8 +601,8 @@ class TestStreamRegating:
             return "done"
 
     def test_stream_cut_off_on_mid_stream_revocation(self, monkeypatch):
-        from agentguard.adapters import langchain as lc_mod
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters import langchain as lc_mod
+        from vanzik.adapters.langchain import GuardedTool
 
         # Re-validate on every chunk so the revocation lands deterministically.
         monkeypatch.setattr(lc_mod, "STREAM_REGATE_SECONDS", 0.0)
@@ -616,8 +616,8 @@ class TestStreamRegating:
         assert guard.calls >= 2  # open gate + at least one re-check
 
     def test_stream_completes_when_policy_stays_allowed(self, monkeypatch):
-        from agentguard.adapters import langchain as lc_mod
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters import langchain as lc_mod
+        from vanzik.adapters.langchain import GuardedTool
 
         monkeypatch.setattr(lc_mod, "STREAM_REGATE_SECONDS", 0.0)
         guard = self._FlippingGuard(allow_first=10**9)
@@ -629,8 +629,8 @@ class TestStreamRegating:
     def test_astream_cut_off_on_mid_stream_revocation(self, monkeypatch):
         import asyncio
 
-        from agentguard.adapters import langchain as lc_mod
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters import langchain as lc_mod
+        from vanzik.adapters.langchain import GuardedTool
 
         monkeypatch.setattr(lc_mod, "STREAM_REGATE_SECONDS", 0.0)
         guard = self._FlippingGuard(allow_first=1)
@@ -646,7 +646,7 @@ class TestStreamRegating:
             asyncio.run(consume())
 
     def test_default_interval_does_not_recheck_fast_streams(self):
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
         guard = self._FlippingGuard(allow_first=1)  # any re-check would deny
         gt = GuardedTool(self._StreamingTool(), guard, scope="shell")

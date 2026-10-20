@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/deprecation"
+	"lictorate.com/vanzik/v2/pkg/deprecation"
 )
 
 func TestWritePrometheus_EmitsDeprecationCounters(t *testing.T) {
@@ -19,13 +19,13 @@ func TestWritePrometheus_EmitsDeprecationCounters(t *testing.T) {
 	WritePrometheus(&buf)
 	out := buf.String()
 
-	if !strings.Contains(out, "# TYPE agentguard_deprecations_used_total counter") {
+	if !strings.Contains(out, "# TYPE vanzik_deprecations_used_total counter") {
 		t.Fatalf("expected deprecation counter TYPE line, got:\n%s", out)
 	}
-	if !strings.Contains(out, `agentguard_deprecations_used_total{feature="test.metrics_alpha"} 2`) {
+	if !strings.Contains(out, `vanzik_deprecations_used_total{feature="test.metrics_alpha"} 2`) {
 		t.Errorf("alpha counter missing or wrong value; output:\n%s", out)
 	}
-	if !strings.Contains(out, `agentguard_deprecations_used_total{feature="test.metrics_beta"} 1`) {
+	if !strings.Contains(out, `vanzik_deprecations_used_total{feature="test.metrics_beta"} 1`) {
 		t.Errorf("beta counter missing or wrong value; output:\n%s", out)
 	}
 
@@ -44,11 +44,11 @@ func TestWritePrometheus_NoDeprecationsEmitsHeaderOnly(t *testing.T) {
 	WritePrometheus(&buf)
 	out := buf.String()
 
-	if !strings.Contains(out, "# TYPE agentguard_deprecations_used_total counter") {
+	if !strings.Contains(out, "# TYPE vanzik_deprecations_used_total counter") {
 		t.Fatalf("header must be present even when no features used, got:\n%s", out)
 	}
 	// No label lines should exist.
-	if strings.Contains(out, "agentguard_deprecations_used_total{") {
+	if strings.Contains(out, "vanzik_deprecations_used_total{") {
 		t.Errorf("unexpected deprecation label lines when no features used")
 	}
 }
@@ -63,10 +63,10 @@ func TestWritePrometheus_NotifyDroppedHeaderOnly(t *testing.T) {
 	WritePrometheus(&buf)
 	out := buf.String()
 
-	if !strings.Contains(out, "# TYPE agentguard_notify_events_dropped_total counter") {
+	if !strings.Contains(out, "# TYPE vanzik_notify_events_dropped_total counter") {
 		t.Fatalf("TYPE header missing; got:\n%s", out)
 	}
-	if strings.Contains(out, "agentguard_notify_events_dropped_total{") {
+	if strings.Contains(out, "vanzik_notify_events_dropped_total{") {
 		t.Errorf("unexpected label lines with empty counter, got:\n%s", out)
 	}
 }
@@ -86,11 +86,11 @@ func TestWritePrometheus_NotifyDroppedLabels(t *testing.T) {
 	out := buf.String()
 
 	if !strings.Contains(out,
-		`agentguard_notify_events_dropped_total{notifier="slack",reason="queue_full"} 1`) {
+		`vanzik_notify_events_dropped_total{notifier="slack",reason="queue_full"} 1`) {
 		t.Errorf("slack line missing or wrong count; got:\n%s", out)
 	}
 	if !strings.Contains(out,
-		`agentguard_notify_events_dropped_total{notifier="webhook",reason="queue_full"} 2`) {
+		`vanzik_notify_events_dropped_total{notifier="webhook",reason="queue_full"} 2`) {
 		t.Errorf("webhook line missing or wrong count; got:\n%s", out)
 	}
 	// slack < webhook alphabetically.
@@ -111,10 +111,10 @@ func TestWritePrometheus_ApprovalEvictedHeaderOnly(t *testing.T) {
 	WritePrometheus(&buf)
 	out := buf.String()
 
-	if !strings.Contains(out, "# TYPE agentguard_approvals_evicted_total counter") {
+	if !strings.Contains(out, "# TYPE vanzik_approvals_evicted_total counter") {
 		t.Fatalf("TYPE header missing; got:\n%s", out)
 	}
-	if strings.Contains(out, "agentguard_approvals_evicted_total{") {
+	if strings.Contains(out, "vanzik_approvals_evicted_total{") {
 		t.Errorf("unexpected label lines with empty counter, got:\n%s", out)
 	}
 }
@@ -135,18 +135,18 @@ func TestWritePrometheus_ApprovalEvictedLabels(t *testing.T) {
 	out := buf.String()
 
 	if !strings.Contains(out,
-		`agentguard_approvals_evicted_total{reason="lru_resolved"} 2`) {
+		`vanzik_approvals_evicted_total{reason="lru_resolved"} 2`) {
 		t.Errorf("lru_resolved line missing or wrong count; got:\n%s", out)
 	}
 	if !strings.Contains(out,
-		`agentguard_approvals_evicted_total{reason="queue_full"} 1`) {
+		`vanzik_approvals_evicted_total{reason="queue_full"} 1`) {
 		t.Errorf("queue_full line missing or wrong count; got:\n%s", out)
 	}
 	// lru_resolved < queue_full alphabetically. Anchor on the full metric
 	// name so we don't accidentally match reason="queue_full" from the
 	// notify_dropped series (which is emitted earlier in the exposition).
-	lruIdx := strings.Index(out, `agentguard_approvals_evicted_total{reason="lru_resolved"}`)
-	qfIdx := strings.Index(out, `agentguard_approvals_evicted_total{reason="queue_full"}`)
+	lruIdx := strings.Index(out, `vanzik_approvals_evicted_total{reason="lru_resolved"}`)
+	qfIdx := strings.Index(out, `vanzik_approvals_evicted_total{reason="queue_full"}`)
 	if lruIdx == -1 || qfIdx == -1 || lruIdx >= qfIdx {
 		t.Errorf("labels not sorted; lru=%d queue_full=%d", lruIdx, qfIdx)
 	}
@@ -163,10 +163,10 @@ func TestWritePrometheus_RateLimitBucketsGauge(t *testing.T) {
 	WritePrometheus(&buf)
 	out := buf.String()
 
-	if !strings.Contains(out, "# TYPE agentguard_ratelimit_buckets gauge") {
+	if !strings.Contains(out, "# TYPE vanzik_ratelimit_buckets gauge") {
 		t.Fatalf("gauge TYPE missing; got:\n%s", out)
 	}
-	if !strings.Contains(out, "agentguard_ratelimit_buckets 42") {
+	if !strings.Contains(out, "vanzik_ratelimit_buckets 42") {
 		t.Errorf("gauge value missing; got:\n%s", out)
 	}
 }
@@ -180,10 +180,10 @@ func TestWritePrometheus_RateLimitEvictedHeaderOnly(t *testing.T) {
 	WritePrometheus(&buf)
 	out := buf.String()
 
-	if !strings.Contains(out, "# TYPE agentguard_ratelimit_bucket_evictions_total counter") {
+	if !strings.Contains(out, "# TYPE vanzik_ratelimit_bucket_evictions_total counter") {
 		t.Fatalf("TYPE header missing; got:\n%s", out)
 	}
-	if strings.Contains(out, "agentguard_ratelimit_bucket_evictions_total{") {
+	if strings.Contains(out, "vanzik_ratelimit_bucket_evictions_total{") {
 		t.Errorf("unexpected label lines with empty counter, got:\n%s", out)
 	}
 }
@@ -202,17 +202,17 @@ func TestWritePrometheus_RateLimitEvictedLabels(t *testing.T) {
 	out := buf.String()
 
 	if !strings.Contains(out,
-		`agentguard_ratelimit_bucket_evictions_total{scope="network"} 1`) {
+		`vanzik_ratelimit_bucket_evictions_total{scope="network"} 1`) {
 		t.Errorf("network line missing or wrong count; got:\n%s", out)
 	}
 	if !strings.Contains(out,
-		`agentguard_ratelimit_bucket_evictions_total{scope="shell"} 2`) {
+		`vanzik_ratelimit_bucket_evictions_total{scope="shell"} 2`) {
 		t.Errorf("shell line missing or wrong count; got:\n%s", out)
 	}
 	// network < shell alphabetically — anchor on the full metric name to
 	// avoid collisions with scope="..." labels on other series.
-	netIdx := strings.Index(out, `agentguard_ratelimit_bucket_evictions_total{scope="network"}`)
-	shellIdx := strings.Index(out, `agentguard_ratelimit_bucket_evictions_total{scope="shell"}`)
+	netIdx := strings.Index(out, `vanzik_ratelimit_bucket_evictions_total{scope="network"}`)
+	shellIdx := strings.Index(out, `vanzik_ratelimit_bucket_evictions_total{scope="shell"}`)
 	if netIdx == -1 || shellIdx == -1 || netIdx >= shellIdx {
 		t.Errorf("labels not sorted; network=%d shell=%d", netIdx, shellIdx)
 	}
@@ -234,23 +234,23 @@ func TestWritePrometheus_AuditReplayAndRotations(t *testing.T) {
 	WritePrometheus(&buf)
 	out := buf.String()
 
-	if !strings.Contains(out, "agentguard_audit_replay_entries_total 1234") {
+	if !strings.Contains(out, "vanzik_audit_replay_entries_total 1234") {
 		t.Errorf("replay entries counter missing; got:\n%s", out)
 	}
-	if !strings.Contains(out, "agentguard_audit_rotations_total 3") {
+	if !strings.Contains(out, "vanzik_audit_rotations_total 3") {
 		t.Errorf("rotations counter missing; got:\n%s", out)
 	}
 	// 750ms = 0.75s; Prometheus %g formats 0.75 cleanly.
-	if !strings.Contains(out, "agentguard_audit_replay_duration_seconds 0.75") {
+	if !strings.Contains(out, "vanzik_audit_replay_duration_seconds 0.75") {
 		t.Errorf("replay duration gauge missing or wrong; got:\n%s", out)
 	}
-	if !strings.Contains(out, "# TYPE agentguard_audit_replay_entries_total counter") {
+	if !strings.Contains(out, "# TYPE vanzik_audit_replay_entries_total counter") {
 		t.Errorf("replay entries TYPE missing; got:\n%s", out)
 	}
-	if !strings.Contains(out, "# TYPE agentguard_audit_rotations_total counter") {
+	if !strings.Contains(out, "# TYPE vanzik_audit_rotations_total counter") {
 		t.Errorf("rotations TYPE missing; got:\n%s", out)
 	}
-	if !strings.Contains(out, "# TYPE agentguard_audit_replay_duration_seconds gauge") {
+	if !strings.Contains(out, "# TYPE vanzik_audit_replay_duration_seconds gauge") {
 		t.Errorf("replay duration TYPE missing; got:\n%s", out)
 	}
 }
@@ -300,13 +300,13 @@ func TestRegistry_Isolation(t *testing.T) {
 	var bufA, bufB bytes.Buffer
 	a.WritePrometheus(&bufA)
 	b.WritePrometheus(&bufB)
-	if !strings.Contains(bufA.String(), "agentguard_checks_total 2") {
+	if !strings.Contains(bufA.String(), "vanzik_checks_total 2") {
 		t.Errorf("a output missing counted checks:\n%s", bufA.String())
 	}
-	if !strings.Contains(bufB.String(), "agentguard_checks_total 0") {
+	if !strings.Contains(bufB.String(), "vanzik_checks_total 0") {
 		t.Errorf("b output should be zeroed:\n%s", bufB.String())
 	}
-	if !strings.Contains(bufA.String(), "agentguard_pending_approvals 7") {
+	if !strings.Contains(bufA.String(), "vanzik_pending_approvals 7") {
 		t.Errorf("a gauge missing:\n%s", bufA.String())
 	}
 }

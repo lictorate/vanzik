@@ -1,7 +1,7 @@
-# Continue.dev — AgentGuard MCP Gateway
+# Continue.dev — Vanzik MCP Gateway
 
 Drop-in MCP config that routes Continue's agent-mode tool calls through
-the AgentGuard gateway.
+the Vanzik gateway.
 
 > Source: <https://docs.continue.dev/customize/deep-dives/mcp> (verified
 > 2026-05-05). Continue accepts either a YAML block file under
@@ -13,16 +13,16 @@ the AgentGuard gateway.
 
 ## Option A — YAML block file (preferred, current docs)
 
-Save the following to `<workspace>/.continue/mcpServers/agentguard.yaml`:
+Save the following to `<workspace>/.continue/mcpServers/vanzik.yaml`:
 
 ```yaml
-name: AgentGuard MCP Gateway
+name: Vanzik MCP Gateway
 version: 0.0.1
 schema: v1
 mcpServers:
-  - name: agentguard
+  - name: vanzik
     type: stdio
-    command: agentguard-mcp-gateway
+    command: vanzik-mcp-gateway
     args:
       - "--upstream"
       - "fs:npx -y @modelcontextprotocol/server-filesystem /tmp"
@@ -33,7 +33,7 @@ mcpServers:
       - "--guard-url"
       - "http://127.0.0.1:8080"
       - "--policy"
-      - "/etc/agentguard/policy.yaml"
+      - "/etc/vanzik/policy.yaml"
       - "--tenant-id"
       - "local"
       - "--policy-mode"
@@ -43,13 +43,13 @@ mcpServers:
       - "--log-level"
       - "info"
     env:
-      AGENTGUARD_API_KEY: set-from-shell-or-secret-store
+      VANZIK_API_KEY: set-from-shell-or-secret-store
       GITHUB_PERSONAL_ACCESS_TOKEN: set-from-shell-or-secret-store
 ```
 
-> Don't add `--api-key "$AGENTGUARD_API_KEY"` to the `args` list —
+> Don't add `--api-key "$VANZIK_API_KEY"` to the `args` list —
 > Continue does **not** shell-expand `$VAR` references in args. The
-> gateway reads `AGENTGUARD_API_KEY` from its environment when the
+> gateway reads `VANZIK_API_KEY` from its environment when the
 > `--api-key` flag is absent, so the `env:` block above is sufficient.
 > See "API key handling" below.
 
@@ -70,7 +70,7 @@ your existing `mcpServers` block if you have one).
 ## What this config does
 
 ```
-Continue (agent mode) ──stdio──► agentguard-mcp-gateway ──► fs / fetch / github
+Continue (agent mode) ──stdio──► vanzik-mcp-gateway ──► fs / fetch / github
                                        │
                                        └─HTTP──► http://127.0.0.1:8080/v1/check
                                                  (policy + audit + dashboard)
@@ -99,8 +99,8 @@ into the container.
 1. **Install binaries** (Go 1.25+):
 
    ```bash
-   go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard@latest
-   go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard-mcp-gateway@latest
+   go install lictorate.com/vanzik/v2/cmd/vanzik@latest
+   go install lictorate.com/vanzik/v2/cmd/vanzik-mcp-gateway@latest
    ```
 
 2. **Pick a policy** and update `--policy` (`configs/default.yaml` ships
@@ -109,13 +109,13 @@ into the container.
 3. **Export the API key** in the shell that launches your editor:
 
    ```bash
-   export AGENTGUARD_API_KEY="$(openssl rand -hex 32)"
+   export VANZIK_API_KEY="$(openssl rand -hex 32)"
    ```
 
-4. **Start the central AgentGuard server:**
+4. **Start the central Vanzik server:**
 
    ```bash
-   agentguard server --policy /etc/agentguard/policy.yaml --dashboard --watch --api-key "$AGENTGUARD_API_KEY"
+   vanzik server --policy /etc/vanzik/policy.yaml --dashboard --watch --api-key "$VANZIK_API_KEY"
    ```
 
 5. **Save the YAML / JSON.** Switch Continue into agent mode and try a
@@ -134,12 +134,12 @@ In Continue's agent-mode chat:
 
 ## API key handling
 
-Do **not** pass `--api-key "$AGENTGUARD_API_KEY"` as an `args` entry.
+Do **not** pass `--api-key "$VANZIK_API_KEY"` as an `args` entry.
 Continue does **not** shell-expand `$VAR` references inside JSON or
 YAML `args` — the gateway would receive the literal string
-`$AGENTGUARD_API_KEY` and authentication would fail. Instead, use the
+`$VANZIK_API_KEY` and authentication would fail. Instead, use the
 `env` block above to inject the key as an environment variable; the
-gateway picks up `AGENTGUARD_API_KEY` automatically when the
+gateway picks up `VANZIK_API_KEY` automatically when the
 `--api-key` flag is absent.
 
 ## Tenant ID
@@ -148,7 +148,7 @@ gateway picks up `AGENTGUARD_API_KEY` automatically when the
 calls (they go to `/v1/t/<tenant>/check`). Keep `local` — the policy
 the server loads with `--policy` — unless you've registered another
 tenant on the central server with
-`agentguard tenant put <id> --policy <file.yaml>`. A tenant the server
+`vanzik tenant put <id> --policy <file.yaml>`. A tenant the server
 doesn't know answers `404`, which the gateway
 treats like an unreachable server: `--fail-mode` decides, so with `deny`
 every call is refused.

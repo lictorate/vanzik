@@ -14,8 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // DefaultHTTPTimeout is the timeout for webhook and Slack HTTP requests.
@@ -535,7 +535,7 @@ func (w *WebhookNotifier) Notify(event Event) error {
 		return fmt.Errorf("webhook build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "AgentGuard/1.0")
+	req.Header.Set("User-Agent", "Vanzik/2.0")
 
 	resp, err := w.client.Do(req)
 	if err != nil {
@@ -596,7 +596,7 @@ func (s *SlackNotifier) Notify(event Event) error {
 			{
 				"color":     color,
 				"text":      text,
-				"footer":    "AgentGuard",
+				"footer":    "Vanzik",
 				"ts":        event.Timestamp.Unix(),
 				"mrkdwn_in": []string{"text"},
 			},
@@ -644,7 +644,7 @@ func (c *ConsoleNotifier) Notify(event Event) error {
 		action = event.Request.Domain
 	}
 
-	fmt.Printf("[AgentGuard] %s | scope=%s action=%q agent=%s | %s\n",
+	fmt.Printf("[Vanzik] %s | scope=%s action=%q agent=%s | %s\n",
 		event.Result.Decision, event.Request.Scope, action,
 		event.Request.AgentID, event.Result.Reason)
 

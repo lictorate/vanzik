@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/audit"
 )
 
 const (

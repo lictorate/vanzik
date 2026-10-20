@@ -2,20 +2,20 @@
 
 import pytest
 
-from agentguard import (
+from vanzik import (
     Guard,
     guarded,
-    AgentGuardError,
-    AgentGuardDenied,
-    AgentGuardApprovalRequired,
-    AgentGuardApprovalTimeout,
+    VanzikError,
+    VanzikDenied,
+    VanzikApprovalRequired,
+    VanzikApprovalTimeout,
 )
-from tests.conftest import MockAgentGuardHandler
+from tests.conftest import MockVanzikHandler
 
 
 class TestGuardedDecorator:
     def test_allows_execution(self, mock_server):
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "ALLOW",
             "reason": "ok",
         }
@@ -28,7 +28,7 @@ class TestGuardedDecorator:
         assert my_func("ls") == "executed: ls"
 
     def test_blocks_on_deny(self, mock_server):
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "DENY",
             "reason": "not allowed",
         }
@@ -42,7 +42,7 @@ class TestGuardedDecorator:
             my_func("rm -rf /")
 
     def test_blocks_on_approval_needed(self, mock_server):
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "REQUIRE_APPROVAL",
             "reason": "needs review",
             "approval_url": "http://example.com/approve/123",
@@ -69,7 +69,7 @@ class TestGuardedDecorator:
 
     def test_passes_first_arg_as_command(self, mock_server):
         """The decorator should send args[0] as the 'command' in the check."""
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "ALLOW",
             "reason": "ok",
         }
@@ -82,7 +82,7 @@ class TestGuardedDecorator:
         run("echo hello")
 
         import json
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body["command"] == "echo hello"
 
 
@@ -94,8 +94,8 @@ class TestGuardedTypedExceptions:
     specific subclass and inspect structured fields.
     """
 
-    def test_deny_raises_agentguard_denied_with_result(self, mock_server):
-        MockAgentGuardHandler.check_response = {
+    def test_deny_raises_vanzik_denied_with_result(self, mock_server):
+        MockVanzikHandler.check_response = {
             "decision": "DENY",
             "reason": "not allowed",
             "matched_rule": "deny:shell:rm",
@@ -106,7 +106,7 @@ class TestGuardedTypedExceptions:
         def my_func(cmd):
             return cmd
 
-        with pytest.raises(AgentGuardDenied) as excinfo:
+        with pytest.raises(VanzikDenied) as excinfo:
             my_func("rm -rf /")
 
         # Carries the originating CheckResult with the matched rule visible.
@@ -117,7 +117,7 @@ class TestGuardedTypedExceptions:
         assert isinstance(excinfo.value, PermissionError)
 
     def test_approval_required_raises_typed_exception(self, mock_server):
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "REQUIRE_APPROVAL",
             "reason": "needs review",
             "approval_id": "ap_abc",
@@ -129,7 +129,7 @@ class TestGuardedTypedExceptions:
         def my_func(cmd):
             return cmd
 
-        with pytest.raises(AgentGuardApprovalRequired) as excinfo:
+        with pytest.raises(VanzikApprovalRequired) as excinfo:
             my_func("sudo reboot")
 
         assert excinfo.value.approval_id == "ap_abc"
@@ -143,7 +143,7 @@ class TestGuardedTypedExceptions:
 
     def test_permission_error_still_catches_denied(self, mock_server):
         """v0.4.x callers using ``except PermissionError:`` must still catch."""
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "DENY",
             "reason": "blocked",
         }
@@ -161,7 +161,7 @@ class TestGuardedTypedExceptions:
         assert caught
 
     def test_permission_error_still_catches_approval_required(self, mock_server):
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "REQUIRE_APPROVAL",
             "reason": "needs review",
             "approval_id": "ap_xyz",
@@ -180,11 +180,11 @@ class TestGuardedTypedExceptions:
             caught = True
         assert caught
 
-    def test_all_typed_exceptions_inherit_agentguard_error(self):
-        assert issubclass(AgentGuardDenied, AgentGuardError)
-        assert issubclass(AgentGuardApprovalRequired, AgentGuardError)
-        assert issubclass(AgentGuardApprovalTimeout, AgentGuardError)
-        assert issubclass(AgentGuardError, PermissionError)
+    def test_all_typed_exceptions_inherit_vanzik_error(self):
+        assert issubclass(VanzikDenied, VanzikError)
+        assert issubclass(VanzikApprovalRequired, VanzikError)
+        assert issubclass(VanzikApprovalTimeout, VanzikError)
+        assert issubclass(VanzikError, PermissionError)
 
 
 class TestGuardedWaitForApproval:
@@ -197,7 +197,7 @@ class TestGuardedWaitForApproval:
     """
 
     def test_waits_and_runs_on_allow(self, mock_server):
-        MockAgentGuardHandler.check_response_queue = [
+        MockVanzikHandler.check_response_queue = [
             {
                 "decision": "REQUIRE_APPROVAL",
                 "reason": "needs review",
@@ -207,7 +207,7 @@ class TestGuardedWaitForApproval:
             # The replay: this is the call that spends the one-shot ALLOW.
             {"decision": "ALLOW", "reason": "approved", "matched_rule": "allow:approved"},
         ]
-        MockAgentGuardHandler.status_response = {
+        MockVanzikHandler.status_response = {
             "id": "ap_wait1",
             "status": "resolved",
             "decision": "ALLOW",
@@ -234,20 +234,20 @@ class TestGuardedWaitForApproval:
         import json as _json
         checks = [
             _json.loads(r["body"])
-            for r in MockAgentGuardHandler.request_log
+            for r in MockVanzikHandler.request_log
             if r["method"] == "POST" and r["path"] == "/v1/check"
         ]
         assert len(checks) == 2
         assert checks[1]["approval_id"] == "ap_wait1"
 
     def test_waits_and_raises_on_deny(self, mock_server):
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "REQUIRE_APPROVAL",
             "reason": "needs review",
             "approval_id": "ap_wait2",
             "approval_url": "http://example.com/approve/ap_wait2",
         }
-        MockAgentGuardHandler.status_response = {
+        MockVanzikHandler.status_response = {
             "id": "ap_wait2",
             "status": "resolved",
             "decision": "DENY",
@@ -265,14 +265,14 @@ class TestGuardedWaitForApproval:
         def my_func(cmd):
             return cmd
 
-        with pytest.raises(AgentGuardDenied) as excinfo:
+        with pytest.raises(VanzikDenied) as excinfo:
             my_func("deploy")
         assert "human denied" in str(excinfo.value)
         assert excinfo.value.result is not None
         assert excinfo.value.result.denied
 
     def test_waits_and_raises_on_timeout(self, mock_server):
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "REQUIRE_APPROVAL",
             "reason": "needs review",
             "approval_id": "ap_wait3",
@@ -280,7 +280,7 @@ class TestGuardedWaitForApproval:
         }
         # status stays "pending" → wait_for_approval returns its synthetic
         # "Approval timed out" DENY after the deadline.
-        MockAgentGuardHandler.status_response = {
+        MockVanzikHandler.status_response = {
             "id": "ap_wait3",
             "status": "pending",
         }
@@ -296,7 +296,7 @@ class TestGuardedWaitForApproval:
         def my_func(cmd):
             return cmd
 
-        with pytest.raises(AgentGuardApprovalTimeout) as excinfo:
+        with pytest.raises(VanzikApprovalTimeout) as excinfo:
             my_func("deploy")
         assert excinfo.value.approval_id == "ap_wait3"
         assert "timed out" in str(excinfo.value)

@@ -1,16 +1,16 @@
 # Integration Examples
 
-Copy-paste working configs for AgentGuard's integration paths. Every
+Copy-paste working configs for Vanzik's integration paths. Every
 example was last verified against the upstream client docs on **2026-05-05**;
 each `<client>-config.md` file cites the source URL and the verification
 date.
 
 ## MCP Gateway
 
-The gateway binary is `agentguard-mcp-gateway` (Go 1.25+,
-`go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard-mcp-gateway@latest`).
+The gateway binary is `vanzik-mcp-gateway` (Go 1.25+,
+`go install lictorate.com/vanzik/v2/cmd/vanzik-mcp-gateway@latest`).
 It sits between an MCP client and one or more downstream MCP servers,
-gating every `tools/call` against the central AgentGuard server's
+gating every `tools/call` against the central Vanzik server's
 `/v1/check`. See [`docs/MCP_GATEWAY.md`](../docs/MCP_GATEWAY.md) for the
 wire-format design and [`docs/QUICKSTART_MCP.md`](../docs/QUICKSTART_MCP.md)
 for the 90-second walkthrough.
@@ -34,11 +34,11 @@ lists what to install; drop the upstreams you don't need.
 
 ## LLM API Proxy
 
-The proxy binary is `agentguard-llm-proxy` (Go 1.25+,
-`go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard-llm-proxy@latest`).
+The proxy binary is `vanzik-llm-proxy` (Go 1.25+,
+`go install lictorate.com/vanzik/v2/cmd/vanzik-llm-proxy@latest`).
 It speaks the OpenAI Chat Completions and Anthropic Messages wire
 formats, forwards traffic to the real upstream, and gates tool calls
-inside the response stream against the central AgentGuard server's
+inside the response stream against the central Vanzik server's
 `/v1/check`. Existing code that already uses the OpenAI / Anthropic
 SDKs works unchanged after setting one environment variable. See
 [`docs/LLM_API_PROXY.md`](../docs/LLM_API_PROXY.md) for the wire-format

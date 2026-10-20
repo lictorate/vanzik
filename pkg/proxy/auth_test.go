@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // --- SessionStore ---
@@ -582,7 +582,7 @@ func TestDashboardDoesNotLeakAPIKey(t *testing.T) {
 		if apiKey != "" && strings.Contains(body, apiKey) {
 			t.Errorf("dashboard HTML contains API key %q", apiKey)
 		}
-		if strings.Contains(body, "agentguard-api-key") {
+		if strings.Contains(body, "vanzik-api-key") {
 			t.Errorf("dashboard HTML references the old api-key meta tag (key=%q)", apiKey)
 		}
 	}

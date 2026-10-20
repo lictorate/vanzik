@@ -47,13 +47,13 @@ except ImportError:  # pragma: no cover - layout differs across versions
         allow_module_level=True,
     )
 
-from agentguard import (  # noqa: E402
-    AgentGuardApprovalRequired,
-    AgentGuardDenied,
+from vanzik import (  # noqa: E402
+    VanzikApprovalRequired,
+    VanzikDenied,
     Guard,
 )
-from agentguard.adapters.openai_agents import (  # noqa: E402
-    agentguard_tool_guardrail,
+from vanzik.adapters.openai_agents import (  # noqa: E402
+    vanzik_tool_guardrail,
     guard_tool,
     guard_tools,
 )
@@ -207,7 +207,7 @@ class TestRunnerWithGuardedTools:
             tools=guard_tools(_tools(ran), Guard(integration_mock.base_url)),
         )
 
-        with pytest.raises(AgentGuardDenied, match="rule:no-rm"):
+        with pytest.raises(VanzikDenied, match="rule:no-rm"):
             await Runner.run(agent, "wipe the disk", run_config=_RUN_CONFIG)
 
         assert ran == []
@@ -225,7 +225,7 @@ class TestRunnerWithGuardedTools:
             tools=guard_tools(_tools(ran), Guard(integration_mock.base_url)),
         )
 
-        with pytest.raises(AgentGuardApprovalRequired) as ei:
+        with pytest.raises(VanzikApprovalRequired) as ei:
             await Runner.run(agent, "deploy", run_config=_RUN_CONFIG)
 
         assert ei.value.approval_id == "ap_loop"
@@ -246,7 +246,7 @@ class TestRunnerWithGuardedTools:
             tools=guard_tools(_tools(ran), Guard(integration_mock.base_url)),
         )
 
-        with pytest.raises(AgentGuardDenied):
+        with pytest.raises(VanzikDenied):
             await Runner.run(agent, "go", run_config=_RUN_CONFIG)
 
         assert ran == ["ls"]
@@ -269,7 +269,7 @@ class TestRunnerWithGuardedTools:
         )
 
         result = Runner.run_streamed(agent, "wipe", run_config=_RUN_CONFIG)
-        with pytest.raises(AgentGuardDenied):
+        with pytest.raises(VanzikDenied):
             async for _ in result.stream_events():
                 pass
 
@@ -290,7 +290,7 @@ class TestRunnerWithGuardedTools:
             tools=guard_tools([helper_tool], Guard(integration_mock.base_url)),
         )
 
-        with pytest.raises(AgentGuardDenied):
+        with pytest.raises(VanzikDenied):
             await Runner.run(agent, "ask", run_config=_RUN_CONFIG)
 
         assert helper_model.inputs == []
@@ -321,7 +321,7 @@ class TestArgumentSmuggling:
             tools=guard_tools([run_cmd], Guard(integration_mock.base_url)),
         )
 
-        with pytest.raises(AgentGuardDenied, match="conflicting values for 'command'"):
+        with pytest.raises(VanzikDenied, match="conflicting values for 'command'"):
             await Runner.run(agent, "list files", run_config=_RUN_CONFIG)
 
         assert ran == []
@@ -392,7 +392,7 @@ class TestNestedAgentAsTool:
     async def test_default_as_tool_turns_the_deny_into_a_tool_error(self, integration_mock):
         # The outer as_tool's default failure_error_function catches the
         # deny: the outer run continues and its model sees the SDK's
-        # generic tool error (older releases append the AgentGuard text,
+        # generic tool error (older releases append the Vanzik text,
         # 0.23 does not). The denied tool still never runs.
         integration_mock.set_default_check(deny(reason="rule:no-rm"))
         ran: List[str] = []
@@ -416,7 +416,7 @@ class TestNestedAgentAsTool:
             integration_mock, ran, failure_error_function=None
         )
 
-        with pytest.raises(AgentGuardDenied, match="rule:no-rm"):
+        with pytest.raises(VanzikDenied, match="rule:no-rm"):
             await Runner.run(outer, "go", run_config=_RUN_CONFIG)
 
         assert ran == []
@@ -467,7 +467,7 @@ class TestInvokerContextType:
 
 
 # ---------------------------------------------------------------------------
-# agentguard_tool_guardrail inside Runner.run
+# vanzik_tool_guardrail inside Runner.run
 # ---------------------------------------------------------------------------
 
 
@@ -490,7 +490,7 @@ class TestRunnerWithToolGuardrail:
     async def test_deny_is_shown_to_the_model_and_the_run_continues(self, integration_mock):
         integration_mock.set_default_check(deny(reason="rule:no-rm"))
         ran: List[str] = []
-        guardrail = agentguard_tool_guardrail(Guard(integration_mock.base_url))
+        guardrail = vanzik_tool_guardrail(Guard(integration_mock.base_url))
         model = _ScriptedModel([
             [_tool_call("run_shell", {"command": "rm -rf /"}, "c1")],
             [_message("I was not allowed to do that")],
@@ -503,14 +503,14 @@ class TestRunnerWithToolGuardrail:
         assert result.final_output == "I was not allowed to do that"
         outputs = _tool_outputs(model)
         assert len(outputs) == 1
-        assert "[AgentGuard] Action denied" in outputs[0]
+        assert "[Vanzik] Action denied" in outputs[0]
         assert "rule:no-rm" in outputs[0]
 
     @pytest.mark.asyncio
     async def test_allow_runs_the_tool(self, integration_mock):
         integration_mock.set_default_check(allow())
         ran: List[str] = []
-        guardrail = agentguard_tool_guardrail(Guard(integration_mock.base_url))
+        guardrail = vanzik_tool_guardrail(Guard(integration_mock.base_url))
         model = _ScriptedModel([
             [_tool_call("run_shell", {"command": "ls"}, "c1")],
             [_message("done")],
@@ -527,7 +527,7 @@ class TestRunnerWithToolGuardrail:
     async def test_raise_on_block_trips_the_guardrail(self, integration_mock):
         integration_mock.set_default_check(deny())
         ran: List[str] = []
-        guardrail = agentguard_tool_guardrail(
+        guardrail = vanzik_tool_guardrail(
             Guard(integration_mock.base_url), raise_on_block=True
         )
         model = _ScriptedModel([[_tool_call("run_shell", {"command": "rm"}, "c1")]])

@@ -1,41 +1,50 @@
 #!/bin/sh
-# install.sh — Install, update or uninstall AgentGuard (Linux and macOS).
+# install.sh — Install, update or uninstall Vanzik (Linux and macOS).
 #
-#   curl -fsSL https://github.com/Caua-ferraz/AgentGuard/releases/latest/download/install.sh | sh
-#   curl -fsSL https://github.com/Caua-ferraz/AgentGuard/releases/latest/download/install.sh | sh -s -- --uninstall
+#   curl -fsSL https://github.com/lictorate/vanzik/releases/latest/download/install.sh | sh
+#   curl -fsSL https://github.com/lictorate/vanzik/releases/latest/download/install.sh | sh -s -- --uninstall
 #
 # Running it again updates to the latest release. It downloads the archive for
 # this OS and CPU from GitHub Releases, verifies it against the release's
-# checksums.txt, and installs agentguard, agentguard-mcp-gateway and
-# agentguard-llm-proxy. Windows: use install.ps1 from the same release.
+# checksums.txt, and installs vanzik, vanzik-mcp-gateway and
+# vanzik-llm-proxy. Windows: use install.ps1 from the same release.
 #
 # Options (or the matching environment variable, set to 1):
-#   --uninstall  AGENTGUARD_UNINSTALL  remove the three binaries; the policy
-#                                      folder is kept
-#   --purge      AGENTGUARD_PURGE      with --uninstall: delete the policy
-#                                      folder too
+#   --uninstall  VANZIK_UNINSTALL  remove the three binaries; the policy
+#                                  folder is kept
+#   --purge      VANZIK_PURGE      with --uninstall: delete the policy
+#                                  folder too
 #
 # Environment variables:
-#   AGENTGUARD_VERSION       version to install, e.g. 1.2.0 (default: this
-#                            script's release, or the latest release)
-#   AGENTGUARD_INSTALL_DIR   where the binaries go (default: /usr/local/bin
-#                            when run as root, otherwise ~/.local/bin)
-#   AGENTGUARD_DOWNLOAD_URL  base URL holding the release assets, for mirrors
-#                            and air-gapped installs (default: GitHub Releases)
+#   VANZIK_VERSION       version to install, e.g. 2.0.0 (default: this
+#                        script's release, or the latest release)
+#   VANZIK_INSTALL_DIR   where the binaries go (default: /usr/local/bin
+#                        when run as root, otherwise ~/.local/bin)
+#   VANZIK_DOWNLOAD_URL  base URL holding the release assets, for mirrors
+#                        and air-gapped installs (default: GitHub Releases)
+#
+# Upgrading from AgentGuard 1.x (this project's name before 2.0): once the
+# new binaries are in place, the installer runs `vanzik migrate
+# --from-agentguard`, which moves the user's AgentGuard setup over: its
+# login service, ~/.config/agentguard and the data folder, the database,
+# and the hooks Claude Code, Cursor, Gemini CLI and Codex run, which still
+# name the agentguard program. The old agentguard binaries stay where they
+# were; the migration says when they can go. Run as root, it changes
+# nothing and lists a system-wide install to move by hand.
 #
 # POSIX sh on purpose: it runs under dash, busybox and macOS's sh.
 set -eu
 
-REPO="Caua-ferraz/AgentGuard"
-TOOLS="agentguard agentguard-mcp-gateway agentguard-llm-proxy"
+REPO="lictorate/vanzik"
+TOOLS="vanzik vanzik-mcp-gateway vanzik-llm-proxy"
 # The release workflow replaces this placeholder with the release's version,
 # so a script downloaded from a given release installs that release. Run from
 # a source checkout, the placeholder survives and the latest release is used.
-RELEASE_VERSION="@AGENTGUARD_VERSION@"
+RELEASE_VERSION="@VANZIK_VERSION@"
 
 say() { printf '%s\n' "$*"; }
 warn() { printf 'Warning: %s\n' "$*" >&2; }
-fail() { printf 'agentguard install: %s\n' "$*" >&2; exit 1; }
+fail() { printf 'vanzik install: %s\n' "$*" >&2; exit 1; }
 enabled() { case "${1:-}" in "" | 0 | false | no) return 1 ;; *) return 0 ;; esac; }
 
 fetch() { # fetch <url> <output file>
@@ -77,8 +86,8 @@ version_lt() {
 # Where the binaries and the starter policy go. Install and uninstall must
 # agree on both, so they are worked out in one place.
 install_dir() {
-  if [ -n "${AGENTGUARD_INSTALL_DIR:-}" ]; then
-    printf '%s\n' "$AGENTGUARD_INSTALL_DIR"
+  if [ -n "${VANZIK_INSTALL_DIR:-}" ]; then
+    printf '%s\n' "$VANZIK_INSTALL_DIR"
   elif [ "$(id -u)" = "0" ]; then
     printf '%s\n' /usr/local/bin
   else
@@ -86,10 +95,10 @@ install_dir() {
   fi
 }
 config_dir() {
-  if [ "$(id -u)" = "0" ] && [ -z "${AGENTGUARD_INSTALL_DIR:-}" ]; then
-    printf '%s\n' /etc/agentguard
+  if [ "$(id -u)" = "0" ] && [ -z "${VANZIK_INSTALL_DIR:-}" ]; then
+    printf '%s\n' /etc/vanzik
   else
-    printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/agentguard"
+    printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/vanzik"
   fi
 }
 
@@ -106,8 +115,8 @@ shell_rc() {
   esac
 }
 
-uninstall="${AGENTGUARD_UNINSTALL:-}"
-purge="${AGENTGUARD_PURGE:-}"
+uninstall="${VANZIK_UNINSTALL:-}"
+purge="${VANZIK_PURGE:-}"
 for arg in "$@"; do
   case "$arg" in
     --uninstall) uninstall=1 ;;
@@ -134,24 +143,24 @@ if enabled "$uninstall"; then
     if [ -e "$dir/$tool" ]; then found=1; fi
   done
   if [ -z "$found" ]; then
-    say "AgentGuard is not installed in $dir; nothing to remove."
+    say "Vanzik is not installed in $dir; nothing to remove."
     # A root install is invisible to a normal user, and the other way round.
     for other in /usr/local/bin "$HOME/.local/bin"; do
-      if [ "$other" != "$dir" ] && [ -e "$other/agentguard" ]; then
-        say "There is one in $other: run the uninstall as the user that installed it (with sudo for /usr/local/bin), or set AGENTGUARD_INSTALL_DIR=$other."
+      if [ "$other" != "$dir" ] && [ -e "$other/vanzik" ]; then
+        say "There is one in $other: run the uninstall as the user that installed it (with sudo for /usr/local/bin), or set VANZIK_INSTALL_DIR=$other."
       fi
     done
     exit 0
   fi
-  [ -w "$dir" ] || fail "cannot write to $dir; run the uninstall with sudo or set AGENTGUARD_INSTALL_DIR"
+  [ -w "$dir" ] || fail "cannot write to $dir; run the uninstall with sudo or set VANZIK_INSTALL_DIR"
   for tool in $TOOLS; do
     rm -f "$dir/$tool" "$dir/.$tool.new"
   done
-  say "Removed agentguard, agentguard-mcp-gateway and agentguard-llm-proxy from $dir"
+  say "Removed vanzik, vanzik-mcp-gateway and vanzik-llm-proxy from $dir"
 
   if enabled "$purge"; then
-    # config_dir always ends in /agentguard; refuse anything else before rm -rf.
-    case "$confdir" in */agentguard) ;; *) fail "refusing to delete unexpected folder $confdir" ;; esac
+    # config_dir always ends in /vanzik; refuse anything else before rm -rf.
+    case "$confdir" in */vanzik) ;; *) fail "refusing to delete unexpected folder $confdir" ;; esac
     if [ -d "$confdir" ]; then
       rm -rf "$confdir"
       say "Deleted the policy folder $confdir"
@@ -159,7 +168,7 @@ if enabled "$uninstall"; then
   elif [ -d "$confdir" ]; then
     say "Kept your policy folder $confdir (delete it yourself, or uninstall again with --purge)"
   fi
-  say "Audit logs and the state database live where you ran \`agentguard server\`; they were not touched."
+  say "Audit logs and the state database live where you ran \`vanzik server\`; they were not touched."
 
   # The installer never edits startup files, but it asked the user to.
   if [ "$dir" != /usr/local/bin ]; then
@@ -183,28 +192,28 @@ case "$(uname -m)" in
   *) fail "unsupported CPU: $(uname -m)" ;;
 esac
 
-version="${AGENTGUARD_VERSION:-}"
+version="${VANZIK_VERSION:-}"
 if [ -z "$version" ]; then
   case "$RELEASE_VERSION" in
     *@*) ;;
     *) version="$RELEASE_VERSION" ;;
   esac
 fi
-tmp="$(mktemp -d 2>/dev/null || mktemp -d -t agentguard)"
+tmp="$(mktemp -d 2>/dev/null || mktemp -d -t vanzik)"
 trap 'rm -rf "$tmp"' EXIT INT TERM
 if [ -z "$version" ]; then
   fetch "https://api.github.com/repos/$REPO/releases/latest" "$tmp/latest.json" ||
-    fail "could not look up the latest release; set AGENTGUARD_VERSION"
+    fail "could not look up the latest release; set VANZIK_VERSION"
   version="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$tmp/latest.json" | head -n 1)"
-  [ -n "$version" ] || fail "could not read the latest release tag; set AGENTGUARD_VERSION"
+  [ -n "$version" ] || fail "could not read the latest release tag; set VANZIK_VERSION"
 fi
 version="${version#v}"
 
-base="${AGENTGUARD_DOWNLOAD_URL:-https://github.com/$REPO/releases/download/v$version}"
-name="agentguard_${version}_${os}_${arch}"
+base="${VANZIK_DOWNLOAD_URL:-https://github.com/$REPO/releases/download/v$version}"
+name="vanzik_${version}_${os}_${arch}"
 archive="$name.tar.gz"
 
-say "Downloading AgentGuard $version for $os/$arch"
+say "Downloading Vanzik $version for $os/$arch"
 fetch "$base/$archive" "$tmp/$archive" || fail "download failed: $base/$archive"
 fetch "$base/checksums.txt" "$tmp/checksums.txt" || fail "download failed: $base/checksums.txt"
 
@@ -219,12 +228,12 @@ tar -xzf "$tmp/$archive" -C "$tmp"
 
 dir="$(install_dir)"
 mkdir -p "$dir" || fail "cannot create $dir"
-[ -w "$dir" ] || fail "cannot write to $dir; set AGENTGUARD_INSTALL_DIR or run with sudo"
+[ -w "$dir" ] || fail "cannot write to $dir; set VANZIK_INSTALL_DIR or run with sudo"
 
 previous=""
-if [ -x "$dir/agentguard" ]; then
+if [ -x "$dir/vanzik" ]; then
   # The update check would add a network call and a stderr notice here.
-  previous="$(AGENTGUARD_NO_UPDATE_CHECK=1 "$dir/agentguard" --version 2>/dev/null | awk '{print $2}' || true)"
+  previous="$(VANZIK_NO_UPDATE_CHECK=1 "$dir/vanzik" --version 2>/dev/null | awk '{print $2}' || true)"
 fi
 
 for tool in $TOOLS; do
@@ -236,18 +245,28 @@ for tool in $TOOLS; do
 done
 
 if [ -z "$previous" ]; then
-  say "Installed AgentGuard $version in $dir"
+  say "Installed Vanzik $version in $dir"
 elif [ "$previous" = "$version" ]; then
-  say "Reinstalled AgentGuard $version in $dir (it was already on this version)"
+  say "Reinstalled Vanzik $version in $dir (it was already on this version)"
 elif version_lt "$version" "$previous"; then
-  say "Downgraded AgentGuard $previous -> $version in $dir"
-  if [ -n "${AGENTGUARD_VERSION:-}" ]; then
-    warn "$version is older than the $previous you had. Unset AGENTGUARD_VERSION to install the latest release."
+  say "Downgraded Vanzik $previous -> $version in $dir"
+  if [ -n "${VANZIK_VERSION:-}" ]; then
+    warn "$version is older than the $previous you had. Unset VANZIK_VERSION to install the latest release."
   else
     warn "$version is older than the $previous you had. The install command from releases/latest installs the newest release."
   fi
 else
-  say "Updated AgentGuard $previous -> $version in $dir"
+  say "Updated Vanzik $previous -> $version in $dir"
+fi
+
+# Before the starter policy: an AgentGuard 1.x policy moving over must not
+# find a new one in its place. A hook left pointing at the agentguard
+# program stops being checked once that program goes (most agents let the
+# call through), so a failed step fails the install, after it finishes.
+migrated=1
+say ""
+if ! VANZIK_NO_UPDATE_CHECK=1 "$dir/vanzik" migrate --from-agentguard; then
+  migrated=""
 fi
 
 # Starter policy, so `server` has something to load on a fresh machine. An
@@ -274,11 +293,15 @@ esac
 
 say ""
 if [ -e "$policy" ]; then
-  say "Next: agentguard setup   (a menu: starts it at login with an API key)"
-  say "  or run it yourself: agentguard server --policy $policy --dashboard"
+  say "Next: vanzik setup   (a menu: starts it at login with an API key)"
+  say "  or run it yourself: vanzik server --policy $policy --dashboard"
 else
-  say "Next: agentguard server --policy <policy.yaml> --dashboard"
+  say "Next: vanzik server --policy <policy.yaml> --dashboard"
 fi
 say "Docs: https://github.com/$REPO#quickstart"
 say "To update later, run the same install command again."
 say "To uninstall: curl -fsSL https://github.com/$REPO/releases/latest/download/install.sh | sh -s -- --uninstall"
+if [ -z "$migrated" ]; then
+  say ""
+  fail "Vanzik $version is installed, but moving the AgentGuard 1.x install over needs attention: see the steps marked ✗ above, then run: $dir/vanzik migrate --from-agentguard"
+fi

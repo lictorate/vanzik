@@ -17,15 +17,15 @@ import (
 // Session cookie and CSRF header names used by the dashboard.
 //
 // Double-submit cookie pattern:
-//   - ag_session is HttpOnly: used by the server to validate the session.
-//   - ag_csrf is JS-readable: the dashboard reads it via document.cookie and
+//   - vanzik_session is HttpOnly: used by the server to validate the session.
+//   - vanzik_csrf is JS-readable: the dashboard reads it via document.cookie and
 //     echoes its value in X-CSRF-Token. Both cookies carry the SAME token, so
 //     the server compares the header against the session token. An attacker
 //     on another origin cannot read either cookie (same-origin policy), so
 //     cannot forge the X-CSRF-Token header.
 const (
-	SessionCookieName = "ag_session"
-	CSRFCookieName    = "ag_csrf"
+	SessionCookieName = "vanzik_session"
+	CSRFCookieName    = "vanzik_csrf"
 	CSRFHeaderName    = "X-CSRF-Token"
 	SessionTTL        = 1 * time.Hour
 	// MaxSessions caps the in-memory session table. New logins at capacity

@@ -1,27 +1,36 @@
-# install.ps1 - Install, update or uninstall AgentGuard (Windows).
+# install.ps1 - Install, update or uninstall Vanzik (Windows).
 #
-#   irm https://github.com/Caua-ferraz/AgentGuard/releases/latest/download/install.ps1 | iex
-#   $env:AGENTGUARD_UNINSTALL=1; irm https://github.com/Caua-ferraz/AgentGuard/releases/latest/download/install.ps1 | iex
+#   irm https://github.com/lictorate/vanzik/releases/latest/download/install.ps1 | iex
+#   $env:VANZIK_UNINSTALL=1; irm https://github.com/lictorate/vanzik/releases/latest/download/install.ps1 | iex
 #
 # Running it again updates to the latest release. It downloads the archive for
 # this CPU from GitHub Releases, verifies it against the release's
-# checksums.txt, installs agentguard.exe, agentguard-mcp-gateway.exe and
-# agentguard-llm-proxy.exe, and adds the install folder to the user PATH.
+# checksums.txt, installs vanzik.exe, vanzik-mcp-gateway.exe and
+# vanzik-llm-proxy.exe, and adds the install folder to the user PATH.
 #
 # Environment variables:
-#   AGENTGUARD_VERSION         version to install, e.g. 1.2.0 (default: this
-#                              script's release, or the latest release)
-#   AGENTGUARD_INSTALL_DIR     where the binaries go
-#                              (default: %LOCALAPPDATA%\Programs\AgentGuard\bin)
-#   AGENTGUARD_DOWNLOAD_URL    base URL holding the release assets, for mirrors
-#                              and air-gapped installs (default: GitHub Releases)
-#   AGENTGUARD_NO_MODIFY_PATH  set to 1 to leave the user PATH unchanged
-#   AGENTGUARD_UNINSTALL       set to 1 to remove the binaries and the PATH
-#                              entry instead; the policy folder is kept
-#   AGENTGUARD_PURGE           with AGENTGUARD_UNINSTALL: delete the policy
-#                              folder too
-# AGENTGUARD_UNINSTALL and AGENTGUARD_PURGE are cleared as soon as they are
+#   VANZIK_VERSION         version to install, e.g. 2.0.0 (default: this
+#                          script's release, or the latest release)
+#   VANZIK_INSTALL_DIR     where the binaries go
+#                          (default: %LOCALAPPDATA%\Programs\Vanzik\bin)
+#   VANZIK_DOWNLOAD_URL    base URL holding the release assets, for mirrors
+#                          and air-gapped installs (default: GitHub Releases)
+#   VANZIK_NO_MODIFY_PATH  set to 1 to leave the user PATH unchanged
+#   VANZIK_UNINSTALL       set to 1 to remove the binaries and the PATH
+#                          entry instead; the policy folder is kept
+#   VANZIK_PURGE           with VANZIK_UNINSTALL: delete the policy
+#                          folder too
+# VANZIK_UNINSTALL and VANZIK_PURGE are cleared as soon as they are
 # read, so a later install in the same window installs.
+#
+# Upgrading from AgentGuard 1.x (this project's name before 2.0): once the
+# new binaries are in place, the installer runs `vanzik migrate
+# --from-agentguard`, which moves the user's AgentGuard setup over: its
+# Task Scheduler task, %APPDATA%\agentguard and %LOCALAPPDATA%\AgentGuard\data,
+# the database, and the hooks Claude Code, Cursor, Gemini CLI and Codex run,
+# which still name agentguard.exe. The old binaries in
+# %LOCALAPPDATA%\Programs\AgentGuard\bin stay (and on the PATH); the
+# migration says when they can go.
 #
 # Works in Windows PowerShell 5.1 and PowerShell 7. Everything runs inside one
 # script block so that, piped into `iex`, it neither leaks variables into the
@@ -31,13 +40,13 @@
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'   # the progress bar makes downloads far slower in 5.1
 
-    $Repo = 'Caua-ferraz/AgentGuard'
-    $Tools = @('agentguard', 'agentguard-mcp-gateway', 'agentguard-llm-proxy')
+    $Repo = 'lictorate/vanzik'
+    $Tools = @('vanzik', 'vanzik-mcp-gateway', 'vanzik-llm-proxy')
     # The release workflow replaces this placeholder with the release's version,
     # so a script downloaded from a given release installs that release. Run
     # from a source checkout, the placeholder survives and the latest release
     # is used.
-    $ReleaseVersion = '@AGENTGUARD_VERSION@'
+    $ReleaseVersion = '@VANZIK_VERSION@'
 
     function Test-Enabled([string] $Value) { $Value -and $Value -notin @('0', 'false', 'no') }
 
@@ -48,22 +57,22 @@
         [version]::new([int]$m.Groups[1].Value, [int]('0' + $m.Groups[2].Value), [int]('0' + $m.Groups[3].Value))
     }
 
-    $uninstall = Test-Enabled $env:AGENTGUARD_UNINSTALL
-    $purge = Test-Enabled $env:AGENTGUARD_PURGE
-    Remove-Item Env:\AGENTGUARD_UNINSTALL, Env:\AGENTGUARD_PURGE -ErrorAction SilentlyContinue
+    $uninstall = Test-Enabled $env:VANZIK_UNINSTALL
+    $purge = Test-Enabled $env:VANZIK_PURGE
+    Remove-Item Env:\VANZIK_UNINSTALL, Env:\VANZIK_PURGE -ErrorAction SilentlyContinue
     if ($purge -and -not $uninstall) {
-        throw 'agentguard install: AGENTGUARD_PURGE only applies together with AGENTGUARD_UNINSTALL'
+        throw 'vanzik install: VANZIK_PURGE only applies together with VANZIK_UNINSTALL'
     }
 
     # Where the binaries and the starter policy go. Install and uninstall must
     # agree on both, so they are worked out once.
-    $dir = if ($env:AGENTGUARD_INSTALL_DIR) { $env:AGENTGUARD_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Programs\AgentGuard\bin' }
-    $confdir = Join-Path $env:APPDATA 'agentguard'
+    $dir = if ($env:VANZIK_INSTALL_DIR) { $env:VANZIK_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Programs\Vanzik\bin' }
+    $confdir = Join-Path $env:APPDATA 'vanzik'
 
     if ($uninstall) {
         $present = @($Tools | Where-Object { Test-Path (Join-Path $dir "$_.exe") })
         if ($present.Count -eq 0) {
-            Write-Host "AgentGuard is not installed in $dir; nothing to remove."
+            Write-Host "Vanzik is not installed in $dir; nothing to remove."
             return
         }
 
@@ -73,18 +82,18 @@
                 Where-Object { $_.Path -and $_.Path.StartsWith($dir, [StringComparison]::OrdinalIgnoreCase) })
         if ($running.Count -gt 0) {
             $list = ($running | ForEach-Object { "$($_.ProcessName) (PID $($_.Id))" }) -join ', '
-            throw "agentguard install: AgentGuard is running: $list. Stop it, then run the uninstall again."
+            throw "vanzik install: Vanzik is running: $list. Stop it, then run the uninstall again."
         }
 
         foreach ($tool in $Tools) {
             $exe = Join-Path $dir "$tool.exe"
             Remove-Item $exe, "$exe.old" -Force -ErrorAction SilentlyContinue
-            if (Test-Path $exe) { throw "agentguard install: could not remove $exe" }
+            if (Test-Path $exe) { throw "vanzik install: could not remove $exe" }
         }
-        Write-Host "Removed agentguard.exe, agentguard-mcp-gateway.exe and agentguard-llm-proxy.exe from $dir"
+        Write-Host "Removed vanzik.exe, vanzik-mcp-gateway.exe and vanzik-llm-proxy.exe from $dir"
 
         # The default folders are the installer's own; leave a custom one alone.
-        if (-not $env:AGENTGUARD_INSTALL_DIR) {
+        if (-not $env:VANZIK_INSTALL_DIR) {
             foreach ($folder in @($dir, (Split-Path $dir -Parent))) {
                 if ((Test-Path $folder) -and -not (Get-ChildItem $folder -Force)) { Remove-Item $folder -Force }
             }
@@ -95,8 +104,8 @@
         $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
         $parts = @("$userPath" -split ';')
         if ($parts -contains $dir) {
-            if ($env:AGENTGUARD_NO_MODIFY_PATH -eq '1') {
-                Write-Host "$dir is still on your user PATH (AGENTGUARD_NO_MODIFY_PATH=1); remove it yourself if you added it."
+            if ($env:VANZIK_NO_MODIFY_PATH -eq '1') {
+                Write-Host "$dir is still on your user PATH (VANZIK_NO_MODIFY_PATH=1); remove it yourself if you added it."
             } else {
                 [Environment]::SetEnvironmentVariable('Path', (($parts | Where-Object { $_ -ne $dir }) -join ';'), 'User')
                 $env:Path = (@($env:Path -split ';') | Where-Object { $_ -ne $dir }) -join ';'
@@ -105,15 +114,15 @@
         }
 
         if ($purge) {
-            if ((Split-Path $confdir -Leaf) -ne 'agentguard') { throw "agentguard install: refusing to delete unexpected folder $confdir" }
+            if ((Split-Path $confdir -Leaf) -ne 'vanzik') { throw "vanzik install: refusing to delete unexpected folder $confdir" }
             if (Test-Path $confdir) {
                 Remove-Item $confdir -Recurse -Force
                 Write-Host "Deleted the policy folder $confdir"
             }
         } elseif (Test-Path $confdir) {
-            Write-Host "Kept your policy folder $confdir (delete it yourself, or uninstall again with AGENTGUARD_PURGE=1)"
+            Write-Host "Kept your policy folder $confdir (delete it yourself, or uninstall again with VANZIK_PURGE=1)"
         }
-        Write-Host 'Audit logs and the state database live where you ran `agentguard server`; they were not touched.'
+        Write-Host 'Audit logs and the state database live where you ran `vanzik server`; they were not touched.'
         return
     }
 
@@ -124,29 +133,29 @@
     switch ($cpu) {
         'AMD64' { $arch = 'amd64' }
         'ARM64' { $arch = 'arm64' }
-        default { throw "agentguard install: unsupported CPU: $cpu" }
+        default { throw "vanzik install: unsupported CPU: $cpu" }
     }
 
-    $version = $env:AGENTGUARD_VERSION
+    $version = $env:VANZIK_VERSION
     if (-not $version -and $ReleaseVersion -notlike '*@*') { $version = $ReleaseVersion }
     if (-not $version) {
         try {
-            $latest = Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ 'User-Agent' = 'agentguard-install' }
+            $latest = Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ 'User-Agent' = 'vanzik-install' }
             $version = $latest.tag_name
         } catch {
-            throw "agentguard install: could not look up the latest release; set AGENTGUARD_VERSION. $($_.Exception.Message)"
+            throw "vanzik install: could not look up the latest release; set VANZIK_VERSION. $($_.Exception.Message)"
         }
     }
     $version = $version -replace '^v', ''
 
-    $base = if ($env:AGENTGUARD_DOWNLOAD_URL) { $env:AGENTGUARD_DOWNLOAD_URL.TrimEnd('/') } else { "https://github.com/$Repo/releases/download/v$version" }
-    $name = "agentguard_${version}_windows_$arch"
+    $base = if ($env:VANZIK_DOWNLOAD_URL) { $env:VANZIK_DOWNLOAD_URL.TrimEnd('/') } else { "https://github.com/$Repo/releases/download/v$version" }
+    $name = "vanzik_${version}_windows_$arch"
     $archive = "$name.zip"
 
-    $tmp = Join-Path ([IO.Path]::GetTempPath()) ("agentguard-" + [Guid]::NewGuid().ToString('N'))
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) ("vanzik-" + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $tmp | Out-Null
     try {
-        Write-Host "Downloading AgentGuard $version for windows/$arch"
+        Write-Host "Downloading Vanzik $version for windows/$arch"
         Invoke-WebRequest -UseBasicParsing -Uri "$base/$archive" -OutFile (Join-Path $tmp $archive)
         Invoke-WebRequest -UseBasicParsing -Uri "$base/checksums.txt" -OutFile (Join-Path $tmp 'checksums.txt')
 
@@ -156,9 +165,9 @@
             $parts = $line -split '\s+', 2
             if ($parts.Count -eq 2 -and $parts[1].TrimStart('*') -eq $archive) { $expected = $parts[0].ToLower() }
         }
-        if (-not $expected) { throw "agentguard install: $archive is not listed in checksums.txt" }
+        if (-not $expected) { throw "vanzik install: $archive is not listed in checksums.txt" }
         $actual = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $tmp $archive)).Hash.ToLower()
-        if ($expected -ne $actual) { throw "agentguard install: checksum mismatch for $archive (expected $expected, got $actual)" }
+        if ($expected -ne $actual) { throw "vanzik install: checksum mismatch for $archive (expected $expected, got $actual)" }
         Write-Host 'Checksum verified'
 
         Expand-Archive -Path (Join-Path $tmp $archive) -DestinationPath $tmp -Force
@@ -166,12 +175,12 @@
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
 
         $previous = $null
-        $current = Join-Path $dir 'agentguard.exe'
+        $current = Join-Path $dir 'vanzik.exe'
         if (Test-Path $current) {
             # The update check would add a network call and a stderr notice here.
-            $env:AGENTGUARD_NO_UPDATE_CHECK = '1'
+            $env:VANZIK_NO_UPDATE_CHECK = '1'
             try { $previous = ((& $current --version) -split ' ')[1] } catch { $previous = $null }
-            Remove-Item Env:\AGENTGUARD_NO_UPDATE_CHECK
+            Remove-Item Env:\VANZIK_NO_UPDATE_CHECK
         }
 
         foreach ($tool in $Tools) {
@@ -191,16 +200,27 @@
         $was = ConvertTo-Release $previous
         $now = ConvertTo-Release $version
         if (-not $previous) {
-            Write-Host "Installed AgentGuard $version in $dir"
+            Write-Host "Installed Vanzik $version in $dir"
         } elseif ($previous -eq $version) {
-            Write-Host "Reinstalled AgentGuard $version in $dir (it was already on this version)"
+            Write-Host "Reinstalled Vanzik $version in $dir (it was already on this version)"
         } elseif ($was -and $now -and $now -lt $was) {
-            Write-Host "Downgraded AgentGuard $previous -> $version in $dir"
-            $how = if ($env:AGENTGUARD_VERSION) { 'Unset AGENTGUARD_VERSION to install the latest release.' } else { 'The install command from releases/latest installs the newest release.' }
+            Write-Host "Downgraded Vanzik $previous -> $version in $dir"
+            $how = if ($env:VANZIK_VERSION) { 'Unset VANZIK_VERSION to install the latest release.' } else { 'The install command from releases/latest installs the newest release.' }
             Write-Host "Warning: $version is older than the $previous you had. $how" -ForegroundColor Yellow
         } else {
-            Write-Host "Updated AgentGuard $previous -> $version in $dir"
+            Write-Host "Updated Vanzik $previous -> $version in $dir"
         }
+
+        # Before the starter policy: an AgentGuard 1.x policy moving over must
+        # not find a new one in its place. A hook left pointing at
+        # agentguard.exe stops being checked once that program goes (most
+        # agents let the call through), so a failed step fails the install,
+        # after it finishes.
+        Write-Host ''
+        $env:VANZIK_NO_UPDATE_CHECK = '1'
+        & (Join-Path $dir 'vanzik.exe') migrate --from-agentguard
+        $migrated = $LASTEXITCODE -eq 0
+        Remove-Item Env:\VANZIK_NO_UPDATE_CHECK
 
         # Starter policy, so `server` has something to load on a fresh machine.
         # An existing file is the operator's policy and is never overwritten.
@@ -214,9 +234,9 @@
         $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
         $onPath = ($userPath -split ';') -contains $dir
         if (-not $onPath) {
-            if ($env:AGENTGUARD_NO_MODIFY_PATH -eq '1') {
+            if ($env:VANZIK_NO_MODIFY_PATH -eq '1') {
                 Write-Host ''
-                Write-Host "$dir is not on your PATH; add it to run agentguard from any folder."
+                Write-Host "$dir is not on your PATH; add it to run vanzik from any folder."
             } else {
                 $newPath = if ($userPath) { "$userPath;$dir" } else { $dir }
                 [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
@@ -226,11 +246,14 @@
         }
 
         Write-Host ''
-        Write-Host 'Next: agentguard setup   (a menu: starts it at login with an API key)'
-        Write-Host "  or run it yourself: agentguard server --policy `"$policy`" --dashboard"
+        Write-Host 'Next: vanzik setup   (a menu: starts it at login with an API key)'
+        Write-Host "  or run it yourself: vanzik server --policy `"$policy`" --dashboard"
         Write-Host "Docs: https://github.com/$Repo#quickstart"
         Write-Host 'To update later, run the same install command again.'
-        Write-Host "To uninstall: `$env:AGENTGUARD_UNINSTALL=1; irm https://github.com/$Repo/releases/latest/download/install.ps1 | iex"
+        Write-Host "To uninstall: `$env:VANZIK_UNINSTALL=1; irm https://github.com/$Repo/releases/latest/download/install.ps1 | iex"
+        if (-not $migrated) {
+            throw "vanzik install: Vanzik $version is installed, but moving the AgentGuard 1.x install over needs attention: see the failed steps above, then run: $(Join-Path $dir 'vanzik.exe') migrate --from-agentguard"
+        }
     } finally {
         Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
     }

@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
-// mockGuardServer stands in for the central AgentGuard /v1/check
+// mockGuardServer stands in for the central Vanzik /v1/check
 // endpoint. Each test wires a handler that returns the policy
 // decision it wants to assert on, and the server records every
 // received ActionRequest for cross-call assertions (e.g.,
@@ -556,7 +556,7 @@ func TestBuildMappedActionRequest_ShellArgs(t *testing.T) {
 }
 
 // TestHTTPPolicyClient_PropagatesApprovalID — A19b. The bridge stamps
-// ToolsCallRequest.ApprovalID from `_meta.dev.agentguard/approval_id`;
+// ToolsCallRequest.ApprovalID from `_meta.dev.vanzik/approval_id`;
 // the gateway's HTTPPolicyClient must forward this as a top-level
 // ApprovalID field on the /v1/check body so the central server can
 // look up the approval queue and short-circuit. This pins the wire

@@ -15,16 +15,16 @@ WORKDIR /app
 COPY go.mod go.sum* ./
 RUN go mod download 2>/dev/null || true
 COPY . .
-# COMMIT feeds `agentguard version` and the CLI update check (`make docker`
+# COMMIT feeds `vanzik version` and the CLI update check (`make docker`
 # passes the git short hash). Left at "dev", the binary falls back to Go build
 # info, as a plain `go build` does.
 ARG COMMIT=dev
 ARG TARGETOS=linux
 ARG TARGETARCH
 # All three binaries go into the image so the MCP gateway and LLM proxy can run
-# from it too (`--entrypoint agentguard-llm-proxy`); the default entrypoint
+# from it too (`--entrypoint vanzik-llm-proxy`); the default entrypoint
 # stays the enforcement server.
-RUN for b in agentguard agentguard-mcp-gateway agentguard-llm-proxy; do \
+RUN for b in vanzik vanzik-mcp-gateway vanzik-llm-proxy; do \
         CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
             go build -trimpath -ldflags="-s -w -X main.commit=${COMMIT}" -o /out/$b ./cmd/$b || exit 1; \
     done
@@ -33,23 +33,23 @@ RUN for b in agentguard agentguard-mcp-gateway agentguard-llm-proxy; do \
 FROM alpine:3.22
 
 RUN apk --no-cache add ca-certificates \
-    && addgroup -S agentguard \
-    && adduser -S -G agentguard -u 10001 agentguard \
-    && mkdir -p /var/lib/agentguard \
-    && chown -R agentguard:agentguard /var/lib/agentguard
+    && addgroup -S vanzik \
+    && adduser -S -G vanzik -u 10001 vanzik \
+    && mkdir -p /var/lib/vanzik \
+    && chown -R vanzik:vanzik /var/lib/vanzik
 
 COPY --from=builder /out/ /usr/local/bin/
-COPY configs/default.yaml /etc/agentguard/default.yaml
+COPY configs/default.yaml /etc/vanzik/default.yaml
 
 # Tells the CLI's update notice that this copy updates by pulling a new image,
 # not by re-running the one-line installer.
-ENV AGENTGUARD_DISTRIBUTION=container
+ENV VANZIK_DISTRIBUTION=container
 
-# Run as non-root. /var/lib/agentguard is the default writable location for
+# Run as non-root. /var/lib/vanzik is the default writable location for
 # the audit log; mount a volume here in production so the log survives
 # container restarts.
-USER agentguard:agentguard
-WORKDIR /var/lib/agentguard
+USER vanzik:vanzik
+WORKDIR /var/lib/vanzik
 
 # GOMEMLIMIT is deliberately NOT hardcoded: the right value is the container's
 # memory limit, which is only known at run time. Without it the Go runtime is
@@ -68,5 +68,5 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD wget -q --spider http://127.0.0.1:8080/health || exit 1
 
-ENTRYPOINT ["agentguard"]
-CMD ["server", "--policy", "/etc/agentguard/default.yaml", "--dashboard", "--audit-log", "/var/lib/agentguard/audit.jsonl"]
+ENTRYPOINT ["vanzik"]
+CMD ["server", "--policy", "/etc/vanzik/default.yaml", "--dashboard", "--audit-log", "/var/lib/vanzik/audit.jsonl"]

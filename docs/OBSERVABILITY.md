@@ -1,6 +1,6 @@
 # Observability
 
-Everything AgentGuard exposes for monitoring: the `/metrics` endpoint, `/api/stats`, response-header timings, and example Prometheus / alerting rules.
+Everything Vanzik exposes for monitoring: the `/metrics` endpoint, `/api/stats`, response-header timings, and example Prometheus / alerting rules.
 
 Source of truth: `pkg/metrics/metrics.go`.
 
@@ -20,47 +20,47 @@ curl -s http://127.0.0.1:8080/metrics
 
 | Name | Labels | What it counts |
 |---|---|---|
-| `agentguard_checks_total` | — | All `/v1/check` requests processed (sum of all decisions including rate-limit denies). |
-| `agentguard_allowed_total` | — | Decisions of `ALLOW`. |
-| `agentguard_denied_total` | — | Decisions of `DENY`, including rate-limit denies. |
-| `agentguard_approval_required_total` | — | Decisions of `REQUIRE_APPROVAL`. |
-| `agentguard_rate_limited_total` | — | Subset of `_denied_total` where the denial came from the rate limiter. |
-| `agentguard_request_rejected_total` | `reason` | Requests rejected **before** policy eval. Current reasons: `body_too_large`. |
-| `agentguard_notify_events_dropped_total` | `notifier`, `reason` | Notification events never delivered. Notifier ∈ {`webhook`,`slack`,`console`,`log`,`unknown`}; reason currently `queue_full`. |
-| `agentguard_approvals_evicted_total` | `reason` | Approval queue evictions. Reason ∈ {`lru_resolved`, `queue_full`}. |
-| `agentguard_ratelimit_bucket_evictions_total` | `scope` | Rate-limit buckets evicted under capacity pressure (`MaxBuckets=10000`). |
-| `agentguard_sse_events_dropped_total` | `reason` | SSE broadcasts dropped before reaching a subscriber. Reason currently `slow_consumer`. |
-| `agentguard_audit_replay_entries_total` | — | Audit entries re-read at startup to seed counters. |
-| `agentguard_audit_rotations_total` | — | Live audit file rotations triggered by size threshold. |
-| `agentguard_audit_buffered_dropped_to_overflow_total` | — | Audit entries spilled to the buffered logger's overflow file (durable, not lost). |
-| `agentguard_audit_buffered_drained_from_overflow_total` | — | Spilled audit entries re-enqueued by the recovery loop. |
-| `agentguard_audit_corrupt_lines_total` | — | Audit lines that failed JSON parse during `Query()` and were skipped. |
-| `agentguard_audit_seal_tail_mismatch_total` | — | **(v1.4)** Startups where the sealed audit log ended before the chain head the replay checkpoint recorded: entries may have been removed. Any increase deserves a look (`agentguard audit verify`). |
-| `agentguard_notify_spooled_to_disk_total` | — | Notification events spilled to the `--notify-spool` file on queue overflow (retried, not dropped). |
-| `agentguard_notify_despooled_total` | — | Spooled notification events re-enqueued for dispatch. |
-| `agentguard_deprecations_used_total` | `feature` | Times a deprecated feature was exercised. Keys match `docs/DEPRECATIONS.md`. |
+| `vanzik_checks_total` | — | All `/v1/check` requests processed (sum of all decisions including rate-limit denies). |
+| `vanzik_allowed_total` | — | Decisions of `ALLOW`. |
+| `vanzik_denied_total` | — | Decisions of `DENY`, including rate-limit denies. |
+| `vanzik_approval_required_total` | — | Decisions of `REQUIRE_APPROVAL`. |
+| `vanzik_rate_limited_total` | — | Subset of `_denied_total` where the denial came from the rate limiter. |
+| `vanzik_request_rejected_total` | `reason` | Requests rejected **before** policy eval. Current reasons: `body_too_large`. |
+| `vanzik_notify_events_dropped_total` | `notifier`, `reason` | Notification events never delivered. Notifier ∈ {`webhook`,`slack`,`console`,`log`,`unknown`}; reason currently `queue_full`. |
+| `vanzik_approvals_evicted_total` | `reason` | Approval queue evictions. Reason ∈ {`lru_resolved`, `queue_full`}. |
+| `vanzik_ratelimit_bucket_evictions_total` | `scope` | Rate-limit buckets evicted under capacity pressure (`MaxBuckets=10000`). |
+| `vanzik_sse_events_dropped_total` | `reason` | SSE broadcasts dropped before reaching a subscriber. Reason currently `slow_consumer`. |
+| `vanzik_audit_replay_entries_total` | — | Audit entries re-read at startup to seed counters. |
+| `vanzik_audit_rotations_total` | — | Live audit file rotations triggered by size threshold. |
+| `vanzik_audit_buffered_dropped_to_overflow_total` | — | Audit entries spilled to the buffered logger's overflow file (durable, not lost). |
+| `vanzik_audit_buffered_drained_from_overflow_total` | — | Spilled audit entries re-enqueued by the recovery loop. |
+| `vanzik_audit_corrupt_lines_total` | — | Audit lines that failed JSON parse during `Query()` and were skipped. |
+| `vanzik_audit_seal_tail_mismatch_total` | — | **(v1.4)** Startups where the sealed audit log ended before the chain head the replay checkpoint recorded: entries may have been removed. Any increase deserves a look (`vanzik audit verify`). |
+| `vanzik_notify_spooled_to_disk_total` | — | Notification events spilled to the `--notify-spool` file on queue overflow (retried, not dropped). |
+| `vanzik_notify_despooled_total` | — | Spooled notification events re-enqueued for dispatch. |
+| `vanzik_deprecations_used_total` | `feature` | Times a deprecated feature was exercised. Keys match `docs/DEPRECATIONS.md`. |
 
 ### Gauges
 
 | Name | Labels | What it reports |
 |---|---|---|
-| `agentguard_pending_approvals` | — | Current approval-queue depth. |
-| `agentguard_ratelimit_buckets` | — | Currently tracked rate-limit token buckets. |
-| `agentguard_sse_subscribers` | — | Live `/api/stream` subscribers. |
-| `agentguard_notify_queue_depth` | — | Length of the shared notify dispatch queue (sampled at last enqueue). |
-| `agentguard_audit_buffered_queue_depth` | — | Entries waiting in the buffered audit queue. |
-| `agentguard_audit_replay_duration_seconds` | — | Wall-clock duration of the most recent startup audit replay. |
-| `agentguard_audit_seal_seq` | — | **(v1.4)** `seq` of the newest published audit anchor: the sealed chain's head at the last anchor (every `--audit-anchor-interval`, at rotation, at startup and at shutdown). `0` when `--audit-seal` is off. It should only go up; see [OPERATIONS § Sealing and anchoring](OPERATIONS.md#sealing-and-anchoring). |
-| `agentguard_audit_migration_status` | `from`, `to`, `status` | 1 = current outcome of an audit-schema migration; 0 for non-current statuses of the same `(from, to)`. Status ∈ {`ran`,`skipped`,`failed`}. |
+| `vanzik_pending_approvals` | — | Current approval-queue depth. |
+| `vanzik_ratelimit_buckets` | — | Currently tracked rate-limit token buckets. |
+| `vanzik_sse_subscribers` | — | Live `/api/stream` subscribers. |
+| `vanzik_notify_queue_depth` | — | Length of the shared notify dispatch queue (sampled at last enqueue). |
+| `vanzik_audit_buffered_queue_depth` | — | Entries waiting in the buffered audit queue. |
+| `vanzik_audit_replay_duration_seconds` | — | Wall-clock duration of the most recent startup audit replay. |
+| `vanzik_audit_seal_seq` | — | **(v1.4)** `seq` of the newest published audit anchor: the sealed chain's head at the last anchor (every `--audit-anchor-interval`, at rotation, at startup and at shutdown). `0` when `--audit-seal` is off. It should only go up; see [OPERATIONS § Sealing and anchoring](OPERATIONS.md#sealing-and-anchoring). |
+| `vanzik_audit_migration_status` | `from`, `to`, `status` | 1 = current outcome of an audit-schema migration; 0 for non-current statuses of the same `(from, to)`. Status ∈ {`ran`,`skipped`,`failed`}. |
 
 ### Histograms
 
 | Name | Unit | What it measures |
 |---|---|---|
-| `agentguard_request_duration_ms` | ms | End-to-end latency of `/v1/check`. |
-| `agentguard_policy_eval_duration_ms` | ms | Time inside `Engine.Check` only. |
-| `agentguard_audit_write_duration_ms` | ms | Time inside `Logger.Log` only. |
-| `agentguard_notify_dispatch_duration_seconds` | seconds (labeled by `notifier`) | Time inside each `Notifier.Notify`. |
+| `vanzik_request_duration_ms` | ms | End-to-end latency of `/v1/check`. |
+| `vanzik_policy_eval_duration_ms` | ms | Time inside `Engine.Check` only. |
+| `vanzik_audit_write_duration_ms` | ms | Time inside `Logger.Log` only. |
+| `vanzik_notify_dispatch_duration_seconds` | seconds (labeled by `notifier`) | Time inside each `Notifier.Notify`. |
 
 Duration bucket bounds (ms, shared across the three `_ms` histograms):
 
@@ -86,16 +86,16 @@ The LLM proxy additionally records these series in its process-local registry (`
 
 | Name | Type | Labels | Meaning |
 |---|---|---|---|
-| `agentguard_llmproxy_streams_active` | gauge | — | Open streaming responses (bounded by `--max-concurrent-streams`). |
-| `agentguard_llmproxy_streams_rejected_total` | counter | — | Streaming requests refused with 503 at the concurrent-stream cap. |
-| `agentguard_llmproxy_buffer_overflow_total` | counter | `provider` | Streaming tool-call buffer exceeded `--max-buffer-bytes`; converted to a synthetic refusal. |
-| `agentguard_llmproxy_non_streaming_overflow_total` | counter | `provider` | Same, for non-streaming responses. |
-| `agentguard_llmproxy_protocol_violation_total` | counter | `provider` | Streams refused fail-closed because the upstream's tool-call structure could not be bound to a gateable call: interleaved or conflicting `tool_use` blocks, tool input arriving with no block open (audit B7), or tool calls spread across several OpenAI choices (audit B18). The client-visible rule string names which — see `docs/LLM_API_PROXY.md` §5.4. |
-| `agentguard_llmproxy_undecodable_tool_call_total` | counter | `provider` | Non-streaming responses refused fail-closed because the body failed strict decode yet still carried a tool call a lenient client SDK would have executed ungated (audit B6). Non-zero usually means an OpenAI-compatible shim is emitting a wrong-typed field. |
+| `vanzik_llmproxy_streams_active` | gauge | — | Open streaming responses (bounded by `--max-concurrent-streams`). |
+| `vanzik_llmproxy_streams_rejected_total` | counter | — | Streaming requests refused with 503 at the concurrent-stream cap. |
+| `vanzik_llmproxy_buffer_overflow_total` | counter | `provider` | Streaming tool-call buffer exceeded `--max-buffer-bytes`; converted to a synthetic refusal. |
+| `vanzik_llmproxy_non_streaming_overflow_total` | counter | `provider` | Same, for non-streaming responses. |
+| `vanzik_llmproxy_protocol_violation_total` | counter | `provider` | Streams refused fail-closed because the upstream's tool-call structure could not be bound to a gateable call: interleaved or conflicting `tool_use` blocks, tool input arriving with no block open (audit B7), or tool calls spread across several OpenAI choices (audit B18). The client-visible rule string names which — see `docs/LLM_API_PROXY.md` §5.4. |
+| `vanzik_llmproxy_undecodable_tool_call_total` | counter | `provider` | Non-streaming responses refused fail-closed because the body failed strict decode yet still carried a tool call a lenient client SDK would have executed ungated (audit B6). Non-zero usually means an OpenAI-compatible shim is emitting a wrong-typed field. |
 
 The MCP gateway emits no metrics of its own; its decisions surface in the central server's audit stream and counters.
 
-**Approval-id replay defense (central server):** `agentguard_approval_replay_mismatch_total` — non-zero is a security alert. Its companion `agentguard_approval_replay_refused_total{reason="consumed"|"expired"}` counts shape-matched replays refused by the approval state machine (approvals are one-shot and time-boxed by `--approval-validity`); a rising `consumed` count means something is trying to reuse one human approval for multiple executions.
+**Approval-id replay defense (central server):** `vanzik_approval_replay_mismatch_total` — non-zero is a security alert. Its companion `vanzik_approval_replay_refused_total{reason="consumed"|"expired"}` counts shape-matched replays refused by the approval state machine (approvals are one-shot and time-boxed by `--approval-validity`); a rising `consumed` count means something is trying to reuse one human approval for multiple executions.
 
 ---
 
@@ -103,10 +103,10 @@ The MCP gateway emits no metrics of its own; its decisions surface in the centra
 
 ```yaml
 scrape_configs:
-  - job_name: agentguard
+  - job_name: vanzik
     metrics_path: /metrics
     static_configs:
-      - targets: ['agentguard.internal:8080']
+      - targets: ['vanzik.internal:8080']
     # /metrics is unauthenticated; gate at the network layer if needed.
     scrape_interval: 15s
     scrape_timeout: 10s
@@ -120,58 +120,58 @@ Behind a reverse proxy with path rewriting, keep `/metrics` un-prefixed (do not 
 
 ```yaml
 groups:
-  - name: agentguard
+  - name: vanzik
     rules:
       # Sudden spike of denies: either an attack or a policy that's too strict.
-      - alert: AgentGuardDeniedSpike
-        expr: rate(agentguard_denied_total[5m]) > 5 * rate(agentguard_denied_total[1h] offset 1h)
+      - alert: VanzikDeniedSpike
+        expr: rate(vanzik_denied_total[5m]) > 5 * rate(vanzik_denied_total[1h] offset 1h)
         for: 10m
         labels: { severity: warning }
         annotations:
           summary: "DENY rate 5× its 1h baseline"
 
       # Human approvers falling behind.
-      - alert: AgentGuardPendingApprovalsGrowing
-        expr: agentguard_pending_approvals > 100
+      - alert: VanzikPendingApprovalsGrowing
+        expr: vanzik_pending_approvals > 100
         for: 15m
         labels: { severity: warning }
         annotations:
           summary: "Approval queue > 100 for 15m; triage is not keeping up"
 
       # Approval queue saturation — approaching 503s.
-      - alert: AgentGuardApprovalQueueCritical
-        expr: agentguard_pending_approvals > 9000
+      - alert: VanzikApprovalQueueCritical
+        expr: vanzik_pending_approvals > 9000
         for: 2m
         labels: { severity: critical }
         annotations:
           summary: "Approval queue near MaxPendingApprovals=10000"
 
       # Notifier events are being dropped — Slack/webhook probably slow.
-      - alert: AgentGuardNotifierDrops
-        expr: rate(agentguard_notify_events_dropped_total[5m]) > 0
+      - alert: VanzikNotifierDrops
+        expr: rate(vanzik_notify_events_dropped_total[5m]) > 0
         for: 10m
         labels: { severity: warning }
         annotations:
           summary: "Notifier {{ $labels.notifier }} dropping events: {{ $labels.reason }}"
 
       # p99 policy eval > 50 ms sustained — policy is heavy or a reload is contending.
-      - alert: AgentGuardSlowPolicyEval
-        expr: histogram_quantile(0.99, sum by (le) (rate(agentguard_policy_eval_duration_ms_bucket[5m]))) > 50
+      - alert: VanzikSlowPolicyEval
+        expr: histogram_quantile(0.99, sum by (le) (rate(vanzik_policy_eval_duration_ms_bucket[5m]))) > 50
         for: 10m
         labels: { severity: warning }
         annotations:
           summary: "p99 Engine.Check > 50 ms"
 
       # Audit replay on startup is becoming the slow path.
-      - alert: AgentGuardSlowAuditReplay
-        expr: agentguard_audit_replay_duration_seconds > 30
+      - alert: VanzikSlowAuditReplay
+        expr: vanzik_audit_replay_duration_seconds > 30
         labels: { severity: warning }
         annotations:
           summary: "Startup audit replay > 30s; consider rotating the audit log"
 
       # Agents bypassing per-instance rate limits via multi-replica fanout.
-      - alert: AgentGuardRateLimitBucketEviction
-        expr: rate(agentguard_ratelimit_bucket_evictions_total[5m]) > 1
+      - alert: VanzikRateLimitBucketEviction
+        expr: rate(vanzik_ratelimit_bucket_evictions_total[5m]) > 1
         for: 15m
         labels: { severity: info }
         annotations:
@@ -210,9 +210,9 @@ Every `/v1/check` response carries three timing headers (values in **ms**, 3-dec
 
 | Header | What it measures |
 |---|---|
-| `X-AgentGuard-Policy-Ms` | Time in `Engine.Check`. |
-| `X-AgentGuard-Audit-Ms` | Time in `Logger.Log`. |
-| `X-AgentGuard-Total-Ms` | End-to-end server processing, including decode, rate-limit, policy, audit, notify enqueue. |
+| `X-Vanzik-Policy-Ms` | Time in `Engine.Check`. |
+| `X-Vanzik-Audit-Ms` | Time in `Logger.Log`. |
+| `X-Vanzik-Total-Ms` | End-to-end server processing, including decode, rate-limit, policy, audit, notify enqueue. |
 
 `Total - Policy - Audit` approximates the framework overhead (JSON decode/encode, rate limit lookup, notify dispatch enqueue).
 
@@ -233,7 +233,7 @@ data: {"type":"check","timestamp":"…","request":{…},"result":{…}}\n\n
 
 Events are unnamed SSE messages (no `event:` field), so an `EventSource` receives them through `onmessage`. Each carries `transport` (`sdk`, `mcp_gateway`, `llm_api_proxy`) and, for tenants other than `local`, `tenant`, alongside `request` and `result`. `approval_required` and `denied` are **notifier** event types (webhook / Slack / console), not stream events — see [`APPROVAL_WORKFLOW.md`](APPROVAL_WORKFLOW.md#2-notification-fan-out).
 
-Slow consumers drop events; see `agentguard_sse_events_dropped_total{reason="slow_consumer"}`.
+Slow consumers drop events; see `vanzik_sse_events_dropped_total{reason="slow_consumer"}`.
 
 ---
 
@@ -241,9 +241,9 @@ Slow consumers drop events; see `agentguard_sse_events_dropped_total{reason="slo
 
 1. `curl -s localhost:8080/health` — is the server up?
 2. `curl -s localhost:8080/metrics | head -80` — counters growing? pending gauge reasonable?
-3. `curl -D- -X POST localhost:8080/v1/check -d '{"scope":"shell","command":"ls"}'` — check the `X-AgentGuard-*-Ms` headers.
+3. `curl -D- -X POST localhost:8080/v1/check -d '{"scope":"shell","command":"ls"}'` — check the `X-Vanzik-*-Ms` headers.
 4. `curl -s -H "Authorization: Bearer $KEY" localhost:8080/v1/audit?limit=20` — see the last 20 decisions.
-5. `agentguard status` — health + pending approvals CLI-style.
+5. `vanzik status` — health + pending approvals CLI-style.
 
 ---
 
@@ -252,4 +252,4 @@ Slow consumers drop events; see `agentguard_sse_events_dropped_total{reason="slo
 - [`docs/OPERATIONS.md`](OPERATIONS.md) — notifier queue sizing, audit rotation, capacity limits.
 - [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) — exposing `/metrics` safely behind a reverse proxy.
 - [`docs/TROUBLESHOOTING.md`](TROUBLESHOOTING.md) — keyed by symptom; most entries reference a metric to confirm.
-- [`docs/DEPRECATIONS.md`](DEPRECATIONS.md) — feature keys for `agentguard_deprecations_used_total`.
+- [`docs/DEPRECATIONS.md`](DEPRECATIONS.md) — feature keys for `vanzik_deprecations_used_total`.

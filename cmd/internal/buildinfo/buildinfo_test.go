@@ -14,7 +14,7 @@ func stub(t *testing.T, bi *debug.BuildInfo, ok bool) {
 }
 
 func info(version string, settings ...debug.BuildSetting) *debug.BuildInfo {
-	return &debug.BuildInfo{Main: debug.Module{Path: "github.com/Caua-ferraz/AgentGuard", Version: version}, Settings: settings}
+	return &debug.BuildInfo{Main: debug.Module{Path: "lictorate.com/vanzik/v2", Version: version}, Settings: settings}
 }
 
 func TestReleaseVersion(t *testing.T) {

@@ -1,30 +1,30 @@
 """
-AgentGuard Quick Start Example
+Vanzik Quick Start Example
 
 Demonstrates how to guard a simple AI agent that can run shell commands
 and make API calls.
 
 1. Install the SDK:
 
-    pip install agentguardproxy
+    pip install vanzik
 
-2. Start AgentGuard:
+2. Start Vanzik:
 
-    agentguard server --policy configs/default.yaml --dashboard
+    vanzik server --policy configs/default.yaml --dashboard
 
 3. Run this script:
 
     python examples/quickstart.py
 """
 
-from agentguard import Guard
+from vanzik import Guard
 
 def main():
-    # Connect to AgentGuard
+    # Connect to Vanzik
     guard = Guard("http://localhost:8080", agent_id="quickstart-demo")
 
     print("=" * 60)
-    print("  AgentGuard Quick Start Demo")
+    print("  Vanzik Quick Start Demo")
     print("=" * 60)
     print()
 

@@ -16,7 +16,7 @@ package llmproxy
 //   - Per-stream buffer cap (--max-buffer-bytes) bounds memory; if
 //     accumulated tool_call arguments exceed the cap, a synthetic
 //     refusal with reason "tool call arguments exceed gating buffer"
-//     fires and the metric agentguard_llmproxy_buffer_overflow_total
+//     fires and the metric vanzik_llmproxy_buffer_overflow_total
 //     increments.
 //
 // Per-request goroutine isolation is the hard rule: each request
@@ -39,7 +39,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/metrics"
 )
 
 // RefusalContext is the input to Server.BuildRefusal. Carries
@@ -72,7 +72,7 @@ type RefusalContext struct {
 	// Model is the original request's model string, surfaced into the
 	// synthetic non-streaming response so SDKs that index by model
 	// don't see "" / unknown-model errors. Optional; empty falls back
-	// to "agentguard-refusal" in the builder.
+	// to "vanzik-refusal" in the builder.
 	NonStreaming bool
 	Model        string
 }
@@ -267,9 +267,9 @@ func (s *Server) buildRefusal(provider string, decision Decision, ctx *RefusalCo
 func defaultRefusalBytes(provider string, decision Decision, ctx *RefusalContext) []byte {
 	msg := decision.Reason
 	if msg == "" {
-		msg = "tool call denied by AgentGuard policy"
+		msg = "tool call denied by Vanzik policy"
 	}
-	full := "AgentGuard denied this action: " + msg
+	full := "Vanzik denied this action: " + msg
 
 	if ctx != nil && ctx.NonStreaming {
 		return defaultRefusalNonStreamingBytes(provider, full, ctx.Model)
@@ -305,7 +305,7 @@ func defaultRefusalBytes(provider string, decision Decision, ctx *RefusalContext
 		return buf.Bytes()
 
 	default:
-		return []byte("data: {\"error\":\"agentguard refusal\"}\n\n")
+		return []byte("data: {\"error\":\"vanzik refusal\"}\n\n")
 	}
 }
 
@@ -317,16 +317,16 @@ func defaultRefusalBytes(provider string, decision Decision, ctx *RefusalContext
 // produces the operator-grade copy with rule + approval URL.
 //
 // model carries the original request's model name when available;
-// empty falls back to "agentguard-refusal" so the JSON object remains
+// empty falls back to "vanzik-refusal" so the JSON object remains
 // decodable by SDK clients without nil-model errors.
 func defaultRefusalNonStreamingBytes(provider, full, model string) []byte {
 	if model == "" {
-		model = "agentguard-refusal"
+		model = "vanzik-refusal"
 	}
 	switch provider {
 	case "openai":
 		payload := map[string]interface{}{
-			"id":      "agentguard-refusal",
+			"id":      "vanzik-refusal",
 			"object":  "chat.completion",
 			"created": 0,
 			"model":   model,
@@ -343,12 +343,12 @@ func defaultRefusalNonStreamingBytes(provider, full, model string) []byte {
 		}
 		b, err := json.Marshal(payload)
 		if err != nil {
-			return []byte(`{"id":"agentguard-refusal","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"AgentGuard refusal"},"finish_reason":"stop"}]}`)
+			return []byte(`{"id":"vanzik-refusal","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"Vanzik refusal"},"finish_reason":"stop"}]}`)
 		}
 		return b
 	case "anthropic":
 		payload := map[string]interface{}{
-			"id":    "agentguard-refusal",
+			"id":    "vanzik-refusal",
 			"type":  "message",
 			"role":  "assistant",
 			"model": model,
@@ -362,11 +362,11 @@ func defaultRefusalNonStreamingBytes(provider, full, model string) []byte {
 		}
 		b, err := json.Marshal(payload)
 		if err != nil {
-			return []byte(`{"id":"agentguard-refusal","type":"message","role":"assistant","content":[{"type":"text","text":"AgentGuard refusal"}],"stop_reason":"end_turn"}`)
+			return []byte(`{"id":"vanzik-refusal","type":"message","role":"assistant","content":[{"type":"text","text":"Vanzik refusal"}],"stop_reason":"end_turn"}`)
 		}
 		return b
 	default:
-		return []byte(`{"error":{"message":"agentguard refusal","type":"agentguard_error"}}`)
+		return []byte(`{"error":{"message":"vanzik refusal","type":"vanzik_error"}}`)
 	}
 }
 

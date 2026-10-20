@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "AgentGuard dependency safety registry — the source of truth for the",
+    "Vanzik dependency safety registry — the source of truth for the",
     "TestDependencyAudit_Gate check. A dependency fails the gate only when its",
     "current version falls inside an advisory's affected range AND a fixed",
     "release exists (an upgrade would resolve it).",

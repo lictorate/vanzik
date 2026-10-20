@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // newGatedServer builds a proxy whose shell ALLOW for "write *" is gated on a

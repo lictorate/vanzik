@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/audit"
 )
 
 // slowAuditLogger is an audit.Logger whose Log() blocks for a fixed delay,
 // simulating a slow synchronous audit backend (e.g. an unbuffered file or DB
 // write). It lets the timing test prove that the audit cost is reflected in
-// X-AgentGuard-Total-Ms / the request-duration SLO metric.
+// X-Vanzik-Total-Ms / the request-duration SLO metric.
 type slowAuditLogger struct {
 	delay   time.Duration
 	mu      sync.Mutex
@@ -47,8 +47,8 @@ func parseMsHeader(t *testing.T, h http.Header, name string) float64 {
 }
 
 // TestHandleCheck_TimingHeaders_TotalIncludesAudit pins the contract documented
-// in docs/API.md and docs/OBSERVABILITY.md: X-AgentGuard-Total-Ms (and the
-// agentguard_request_duration_ms SLO histogram, which is fed the same value) is
+// in docs/API.md and docs/OBSERVABILITY.md: X-Vanzik-Total-Ms (and the
+// vanzik_request_duration_ms SLO histogram, which is fed the same value) is
 // the END-TO-END /v1/check processing time, including the audit write.
 //
 // Regression guard: a previous version computed Total from a timestamp captured
@@ -70,9 +70,9 @@ func TestHandleCheck_TimingHeaders_TotalIncludesAudit(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	policyMs := parseMsHeader(t, w.Header(), "X-AgentGuard-Policy-Ms")
-	auditMs := parseMsHeader(t, w.Header(), "X-AgentGuard-Audit-Ms")
-	totalMs := parseMsHeader(t, w.Header(), "X-AgentGuard-Total-Ms")
+	policyMs := parseMsHeader(t, w.Header(), "X-Vanzik-Policy-Ms")
+	auditMs := parseMsHeader(t, w.Header(), "X-Vanzik-Audit-Ms")
+	totalMs := parseMsHeader(t, w.Header(), "X-Vanzik-Total-Ms")
 	t.Logf("Policy-Ms=%.3f Audit-Ms=%.3f Total-Ms=%.3f (audit slept %v)", policyMs, auditMs, totalMs, auditDelay)
 
 	const wantAuditFloor = 20.0 // ms; the 25ms sleep, minus slack for timer coarseness.
@@ -111,9 +111,9 @@ func TestHandleCheck_TimingHeaders_FastAuditDecomposition(t *testing.T) {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 
-	policyMs := parseMsHeader(t, w.Header(), "X-AgentGuard-Policy-Ms")
-	auditMs := parseMsHeader(t, w.Header(), "X-AgentGuard-Audit-Ms")
-	totalMs := parseMsHeader(t, w.Header(), "X-AgentGuard-Total-Ms")
+	policyMs := parseMsHeader(t, w.Header(), "X-Vanzik-Policy-Ms")
+	auditMs := parseMsHeader(t, w.Header(), "X-Vanzik-Audit-Ms")
+	totalMs := parseMsHeader(t, w.Header(), "X-Vanzik-Total-Ms")
 
 	for name, v := range map[string]float64{"Policy-Ms": policyMs, "Audit-Ms": auditMs, "Total-Ms": totalMs} {
 		if v < 0 {

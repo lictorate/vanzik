@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // CurrentSchemaVersion is the schema version produced by this binary.
@@ -125,23 +125,23 @@ type Entry struct {
 const TransportSDK = "sdk"
 
 // TransportMCPGateway is the canonical transport string for entries
-// produced via the MCP Gateway (cmd/agentguard-mcp-gateway).
+// produced via the MCP Gateway (cmd/vanzik-mcp-gateway).
 const TransportMCPGateway = "mcp_gateway"
 
 // TransportLLMAPIProxy is the canonical transport string for entries
-// produced via the LLM API Proxy (cmd/agentguard-llm-proxy).
+// produced via the LLM API Proxy (cmd/vanzik-llm-proxy).
 const TransportLLMAPIProxy = "llm_api_proxy"
 
-// The coding-agent hooks (`agentguard hook <agent>`) stamp one transport
+// The coding-agent hooks (`vanzik hook <agent>`) stamp one transport
 // per agent, so the audit log and dashboard tell them apart.
 const (
-	// TransportClaudeCode: `agentguard hook claude-code`.
+	// TransportClaudeCode: `vanzik hook claude-code`.
 	TransportClaudeCode = "claude_code"
-	// TransportCursor: `agentguard hook cursor`.
+	// TransportCursor: `vanzik hook cursor`.
 	TransportCursor = "cursor"
-	// TransportGeminiCLI: `agentguard hook gemini-cli`.
+	// TransportGeminiCLI: `vanzik hook gemini-cli`.
 	TransportGeminiCLI = "gemini_cli"
-	// TransportCodexCLI: `agentguard hook codex`.
+	// TransportCodexCLI: `vanzik hook codex`.
 	TransportCodexCLI = "codex_cli"
 )
 

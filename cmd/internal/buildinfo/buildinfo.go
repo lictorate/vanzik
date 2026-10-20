@@ -1,5 +1,5 @@
 // Package buildinfo reads the Go build information stamped into the
-// AgentGuard binaries. Builds that skip the Makefile's -ldflags — `go
+// Vanzik binaries. Builds that skip the Makefile's -ldflags — `go
 // install …@vX.Y.Z`, a plain `go build`, a Docker build without a COMMIT
 // build arg — keep the "dev" commit placeholder; this package lets them
 // still report a meaningful identifier, and lets the update check tell a

@@ -1,7 +1,7 @@
 
   # --- Gemini CLI ---
-  # Rules for Gemini CLI's tool calls, which `agentguard hook gemini-cli`
-  # checks as agent "gemini-cli" (connect it with `agentguard setup`). A
+  # Rules for Gemini CLI's tool calls, which `vanzik hook gemini-cli`
+  # checks as agent "gemini-cli" (connect it with `vanzik setup`). A
   # coding agent works on your real project, so the sandbox rules above would
   # block most of its work: these replace them for Gemini CLI only, scope by
   # scope. Scopes not listed here (mcp_tool, browser) keep the rules above.

@@ -200,7 +200,7 @@ func TestStreamingDenyPath_RefusesAndCloses(t *testing.T) {
 		t.Errorf("buffered tool_call id leaked into client output: %q", gotStr)
 	}
 	// The synthetic refusal must mention "denied" (default builder text).
-	if !strings.Contains(gotStr, "AgentGuard denied") {
+	if !strings.Contains(gotStr, "Vanzik denied") {
 		t.Errorf("expected refusal text; got %q", gotStr)
 	}
 	if !strings.Contains(gotStr, "[DONE]") {
@@ -668,7 +668,7 @@ func TestStreamingAnthropicDenyPath(t *testing.T) {
 	if strings.Contains(gotStr, "toolu_xyz") {
 		t.Errorf("buffered tool_use id leaked into Anthropic deny path: %q", gotStr)
 	}
-	if !strings.Contains(gotStr, "AgentGuard denied") {
+	if !strings.Contains(gotStr, "Vanzik denied") {
 		t.Errorf("expected refusal text; got %q", gotStr)
 	}
 	if !strings.Contains(gotStr, "stop_reason") {

@@ -1,13 +1,13 @@
 /**
- * AgentGuard TypeScript SDK
+ * Vanzik TypeScript SDK
  *
- * Lightweight client for checking actions against AgentGuard policies.
+ * Lightweight client for checking actions against Vanzik policies.
  *
  * @example
  * ```ts
- * import { AgentGuard } from '@lictorate/agentguard';
+ * import { Vanzik } from '@lictorate/vanzik';
  *
- * const guard = new AgentGuard('http://localhost:8080');
+ * const guard = new Vanzik('http://localhost:8080');
  * const result = await guard.check('shell', { command: 'rm -rf ./data' });
  *
  * if (result.allowed) {
@@ -40,7 +40,7 @@ export interface CheckOptions {
   /**
    * Replay of a previously issued approval → request body `approval_id`.
    *
-   * Set it on the re-check after {@link AgentGuard.waitForApproval} resolved
+   * Set it on the re-check after {@link Vanzik.waitForApproval} resolved
    * ALLOW, with the same scope and fields as the original request. That
    * replay is what consumes the one-shot approval, enforces
    * `--approval-validity`, reserves cost for cost-scoped actions, and audits
@@ -86,8 +86,8 @@ interface StatusResponseJSON {
   reason?: string;
 }
 
-export interface AgentGuardOptions {
-  /** Base URL of the AgentGuard server (default: http://localhost:8080) */
+export interface VanzikOptions {
+  /** Base URL of the Vanzik server (default: http://localhost:8080) */
   baseUrl?: string;
   /** Agent identifier sent with every check */
   agentId?: string;
@@ -95,7 +95,7 @@ export interface AgentGuardOptions {
   apiKey?: string;
   /** Request timeout in milliseconds (default: 5000) */
   timeout?: number;
-  /** Behavior when AgentGuard is unreachable: 'deny' (default) or 'allow' */
+  /** Behavior when Vanzik is unreachable: 'deny' (default) or 'allow' */
   failMode?: "deny" | "allow";
   /**
    * Optional tenant identifier.
@@ -104,7 +104,7 @@ export interface AgentGuardOptions {
    * is routed through the tenant-aware `/v1/t/{tenantId}/...` URL family
    * instead of the legacy `/v1/...` path. Empty string, `undefined`, or
    * `"local"` selects the legacy URLs. Falls back to the
-   * `AGENTGUARD_TENANT_ID` env var when available (Node only).
+   * `VANZIK_TENANT_ID` env var when available (Node only).
    *
    * The bundled FilePolicyProvider only recognises `"local"`;
    * multi-tenant providers can register others.
@@ -144,6 +144,27 @@ function readEnv(name: string): string | undefined {
   }
 }
 
+const MIGRATION_URL =
+  "https://github.com/lictorate/vanzik/blob/master/docs/MIGRATION.md#v1x-to-v20";
+
+/**
+ * `VANZIK_<name>` from the environment, or undefined. `AGENTGUARD_<name>`
+ * (the variable's name before Vanzik 2.0) is never read: when it is set
+ * and `VANZIK_<name>` is not, this throws instead of falling back, since a
+ * client that ignored it would send no API key, or check calls against
+ * another server or tenant's policy, without saying so.
+ */
+function fromEnv(name: string): string | undefined {
+  const value = readEnv("VANZIK_" + name);
+  if (value === undefined && readEnv("AGENTGUARD_" + name) !== undefined) {
+    throw new TypeError(
+      `Vanzik: AGENTGUARD_${name} is set, but Vanzik reads VANZIK_${name}: ` +
+        `rename the variable (see ${MIGRATION_URL}).`
+    );
+  }
+  return value;
+}
+
 class CheckResultImpl implements CheckResult {
   decision: "ALLOW" | "DENY" | "REQUIRE_APPROVAL";
   reason: string;
@@ -171,19 +192,19 @@ class CheckResultImpl implements CheckResult {
 }
 
 /**
- * Base class for AgentGuard policy-failure errors thrown by {@link guarded}.
+ * Base class for Vanzik policy-failure errors thrown by {@link guarded}.
  *
- * Callers can `catch (e) { if (e instanceof AgentGuardDeniedError) ... }`
+ * Callers can `catch (e) { if (e instanceof VanzikDeniedError) ... }`
  * and read structured fields (`result`, `approvalId`, `approvalUrl`). Every
  * subclass extends the standard `Error`, so generic `catch { ... }`
  * handlers are unaffected.
  */
-export class AgentGuardError extends Error {
+export class VanzikError extends Error {
   readonly result?: CheckResult;
 
   constructor(message: string, result?: CheckResult) {
     super(message);
-    this.name = "AgentGuardError";
+    this.name = "VanzikError";
     this.result = result;
     // Fix instanceof across downstream transpile targets (ES5).
     Object.setPrototypeOf(this, new.target.prototype);
@@ -191,10 +212,10 @@ export class AgentGuardError extends Error {
 }
 
 /** Thrown when the policy decision was DENY. */
-export class AgentGuardDeniedError extends AgentGuardError {
+export class VanzikDeniedError extends VanzikError {
   constructor(message: string, result?: CheckResult) {
     super(message, result);
-    this.name = "AgentGuardDeniedError";
+    this.name = "VanzikDeniedError";
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
@@ -203,7 +224,7 @@ export class AgentGuardDeniedError extends AgentGuardError {
  * Thrown when the policy decision was REQUIRE_APPROVAL and the
  * decorator/HOF was not configured to wait for resolution.
  */
-export class AgentGuardApprovalRequiredError extends AgentGuardError {
+export class VanzikApprovalRequiredError extends VanzikError {
   readonly approvalId: string;
   readonly approvalUrl: string;
 
@@ -214,7 +235,7 @@ export class AgentGuardApprovalRequiredError extends AgentGuardError {
     approvalUrl = ""
   ) {
     super(message, result);
-    this.name = "AgentGuardApprovalRequiredError";
+    this.name = "VanzikApprovalRequiredError";
     this.approvalId = approvalId;
     this.approvalUrl = approvalUrl;
     Object.setPrototypeOf(this, new.target.prototype);
@@ -224,32 +245,32 @@ export class AgentGuardApprovalRequiredError extends AgentGuardError {
 /**
  * Thrown when `waitForApproval` was requested but the action did not resolve
  * before the deadline. `result` carries the synthetic DENY/"Approval timed
- * out" produced by {@link AgentGuard.waitForApproval}.
+ * out" produced by {@link Vanzik.waitForApproval}.
  */
-export class AgentGuardApprovalTimeoutError extends AgentGuardError {
+export class VanzikApprovalTimeoutError extends VanzikError {
   readonly approvalId: string;
 
   constructor(message: string, result?: CheckResult, approvalId = "") {
     super(message, result);
-    this.name = "AgentGuardApprovalTimeoutError";
+    this.name = "VanzikApprovalTimeoutError";
     this.approvalId = approvalId;
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
 
 /**
- * Thrown when an auth-gated AgentGuard endpoint (`/v1/approve`,
+ * Thrown when an auth-gated Vanzik endpoint (`/v1/approve`,
  * `/v1/deny`, `/v1/status`, `/v1/audit`) returns 401 or 403.
  *
  * Lets callers tell apart "API key wrong / expired" from "approval poll
  * timed out" so the operator-facing error surfaces the right cause.
  */
-export class AgentGuardAuthError extends AgentGuardError {
+export class VanzikAuthError extends VanzikError {
   readonly status: number;
 
   constructor(message: string, status: number, result?: CheckResult) {
     super(message, result);
-    this.name = "AgentGuardAuthError";
+    this.name = "VanzikAuthError";
     this.status = status;
     Object.setPrototypeOf(this, new.target.prototype);
   }
@@ -262,11 +283,11 @@ export class AgentGuardAuthError extends AgentGuardError {
 const VALID_FAIL_MODES = ["deny", "allow"] as const;
 
 /**
- * Allowed keys on `AgentGuardOptions`. Used to reject unknown options at
+ * Allowed keys on `VanzikOptions`. Used to reject unknown options at
  * construction time instead of silently ignoring them — typos like
  * `agnetId: "x"` should fail loudly, not silently default to `agentId=""`.
  */
-const VALID_AGENTGUARD_OPTION_KEYS: ReadonlySet<string> = new Set([
+const VALID_VANZIK_OPTION_KEYS: ReadonlySet<string> = new Set([
   "baseUrl",
   "agentId",
   "apiKey",
@@ -286,7 +307,7 @@ const VALID_GUARDED_OPTION_KEYS: ReadonlySet<string> = new Set([
   "approvalPollIntervalMs",
 ]);
 
-export class AgentGuard {
+export class Vanzik {
   private baseUrl: string;
   private agentId: string;
   private apiKey: string;
@@ -295,23 +316,21 @@ export class AgentGuard {
   private tenantId: string;
   private parentSessionId: string;
 
-  constructor(baseUrlOrOptions?: string | AgentGuardOptions) {
-    // Environment fallbacks mirror the Python SDK: AGENTGUARD_URL supplies
-    // baseUrl when the caller did not pass one; AGENTGUARD_API_KEY supplies
-    // apiKey; AGENTGUARD_TENANT_ID supplies tenantId. Explicit values in
+  constructor(baseUrlOrOptions?: string | VanzikOptions) {
+    // Environment fallbacks mirror the Python SDK: VANZIK_URL supplies
+    // baseUrl when the caller did not pass one; VANZIK_API_KEY supplies
+    // apiKey; VANZIK_TENANT_ID supplies tenantId. Explicit values in
     // the options object override the env var so callers that genuinely
     // want to disable a setting can pass an empty string.
-    const envBaseUrl = readEnv("AGENTGUARD_URL");
-    const envApiKey = readEnv("AGENTGUARD_API_KEY") ?? "";
-    const envTenantId = readEnv("AGENTGUARD_TENANT_ID") ?? "";
-
+    // Each is read only when the caller left the setting out, so a stale
+    // AGENTGUARD_* variable matters only where it would have been used.
     if (typeof baseUrlOrOptions === "string") {
       this.baseUrl = baseUrlOrOptions.replace(/\/$/, "");
       this.agentId = "";
-      this.apiKey = envApiKey;
+      this.apiKey = fromEnv("API_KEY") ?? "";
       this.timeout = 5000;
       this.failMode = "deny";
-      this.tenantId = envTenantId;
+      this.tenantId = fromEnv("TENANT_ID") ?? "";
       this.parentSessionId = "";
     } else {
       const opts = baseUrlOrOptions ?? {};
@@ -321,30 +340,30 @@ export class AgentGuard {
       // `agentId = ""` and surfacing as a confusing policy-decision
       // mystery later.
       const unknown = Object.keys(opts).filter(
-        (k) => !VALID_AGENTGUARD_OPTION_KEYS.has(k)
+        (k) => !VALID_VANZIK_OPTION_KEYS.has(k)
       );
       if (unknown.length > 0) {
         throw new TypeError(
-          `AgentGuard: unknown options ${JSON.stringify(unknown)}. ` +
+          `Vanzik: unknown options ${JSON.stringify(unknown)}. ` +
             `Valid options: ${JSON.stringify(
-              Array.from(VALID_AGENTGUARD_OPTION_KEYS).sort()
+              Array.from(VALID_VANZIK_OPTION_KEYS).sort()
             )}.`
         );
       }
 
-      this.baseUrl = (opts.baseUrl ?? envBaseUrl ?? "http://localhost:8080").replace(
+      this.baseUrl = (opts.baseUrl ?? fromEnv("URL") ?? "http://localhost:8080").replace(
         /\/$/,
         ""
       );
       this.agentId = opts.agentId ?? "";
-      this.apiKey = opts.apiKey ?? envApiKey;
+      this.apiKey = opts.apiKey ?? fromEnv("API_KEY") ?? "";
       this.timeout = opts.timeout ?? 5000;
       this.failMode = opts.failMode ?? "deny";
       // tenantId precedence: an explicit options field — including the
       // empty string — wins over the env var. Passing tenantId: "" is
       // the supported way to suppress an env-var-leaked tenant in a
       // scoped test or a sub-process that should hit the legacy URLs.
-      this.tenantId = opts.tenantId !== undefined ? opts.tenantId : envTenantId;
+      this.tenantId = opts.tenantId !== undefined ? opts.tenantId : fromEnv("TENANT_ID") ?? "";
       this.parentSessionId = opts.parentSessionId ?? "";
     }
 
@@ -356,7 +375,7 @@ export class AgentGuard {
       !(VALID_FAIL_MODES as readonly string[]).includes(this.failMode)
     ) {
       throw new TypeError(
-        `AgentGuard: invalid failMode ${JSON.stringify(this.failMode)}. ` +
+        `Vanzik: invalid failMode ${JSON.stringify(this.failMode)}. ` +
           `Expected one of ${JSON.stringify(VALID_FAIL_MODES)}.`
       );
     }
@@ -411,7 +430,7 @@ export class AgentGuard {
   }
 
   /**
-   * Check an action against the AgentGuard policy.
+   * Check an action against the Vanzik policy.
    */
   async check(scope: string, options: CheckOptions = {}): Promise<CheckResult> {
     const payload: Record<string, unknown> = {
@@ -447,14 +466,14 @@ export class AgentGuard {
           // layer.
           if (!response.ok) {
             return this.failModeResult(
-              `AgentGuard returned status ${response.status}`
+              `Vanzik returned status ${response.status}`
             );
           }
 
           const ctype = (response.headers.get("Content-Type") ?? "").toLowerCase();
           if (!ctype.startsWith("application/json")) {
             return this.failModeResult(
-              `AgentGuard returned unexpected content-type ${JSON.stringify(ctype)}`
+              `Vanzik returned unexpected content-type ${JSON.stringify(ctype)}`
             );
           }
 
@@ -463,7 +482,7 @@ export class AgentGuard {
             raw = await response.json();
           } catch (e) {
             return this.failModeResult(
-              `AgentGuard returned non-JSON body: ${
+              `Vanzik returned non-JSON body: ${
                 e instanceof Error ? e.message : String(e)
               }`
             );
@@ -475,7 +494,7 @@ export class AgentGuard {
             typeof (raw as { decision?: unknown }).decision !== "string"
           ) {
             return this.failModeResult(
-              `AgentGuard returned malformed response body (missing 'decision')`
+              `Vanzik returned malformed response body (missing 'decision')`
             );
           }
 
@@ -490,9 +509,9 @@ export class AgentGuard {
         }
       );
     } catch (err) {
-      // Fail closed (deny) by default when AgentGuard is unreachable.
+      // Fail closed (deny) by default when Vanzik is unreachable.
       return this.failModeResult(
-        `AgentGuard unreachable: ${err instanceof Error ? err.message : String(err)}`
+        `Vanzik unreachable: ${err instanceof Error ? err.message : String(err)}`
       );
     }
   }
@@ -503,7 +522,7 @@ export class AgentGuard {
    * Centralizes the fail-mode dispatch so transport failures and HTTP
    * contract violations (bad status, wrong content-type, malformed
    * body) all flow through one decision point. Without this a 200-OK
-   * with the wrong Content-Type would surface as an opaque "AgentGuard
+   * with the wrong Content-Type would surface as an opaque "Vanzik
    * unreachable" instead of a clean "wrong content-type" reason.
    */
   private failModeResult(reason: string): CheckResult {
@@ -567,8 +586,8 @@ export class AgentGuard {
             // would just spin until the deadline elapses and return a
             // synthetic "Approval timed out" DENY, hiding the real cause.
             if (res.status === 401 || res.status === 403) {
-              throw new AgentGuardAuthError(
-                `AgentGuard rejected status poll for ${approvalId} ` +
+              throw new VanzikAuthError(
+                `Vanzik rejected status poll for ${approvalId} ` +
                   `with HTTP ${res.status} (check apiKey)`,
                 res.status
               );
@@ -586,12 +605,12 @@ export class AgentGuard {
         );
         if (resolved) return resolved;
       } catch (e) {
-        // AgentGuardAuthError must propagate so the caller sees the auth
+        // VanzikAuthError must propagate so the caller sees the auth
         // failure immediately. Other transport errors (DNS, ECONNREFUSED,
         // 5xx surfaced above, a per-poll timeout, or a body that is not
         // JSON) are swallowed and retried until the deadline — a malformed
         // poll body must never reject out of the waiting agent.
-        if (e instanceof AgentGuardAuthError) throw e;
+        if (e instanceof VanzikAuthError) throw e;
       }
 
       // Jittered sleep — 80%..120% of pollIntervalMs. Avoids a
@@ -627,7 +646,7 @@ export interface GuardedOptions<T extends (...args: unknown[]) => Promise<unknow
 }
 
 /**
- * Higher-order function that wraps an async function with an AgentGuard check.
+ * Higher-order function that wraps an async function with a Vanzik check.
  *
  * Two overloads: callers can pass a fourth positional `getCheckOptions`
  * callback, or a typed options object that adds `waitForApproval`,
@@ -635,11 +654,11 @@ export interface GuardedOptions<T extends (...args: unknown[]) => Promise<unknow
  *
  * @example
  * ```ts
- * const guard = new AgentGuard('http://localhost:8080');
+ * const guard = new Vanzik('http://localhost:8080');
  * const safeExec = guarded(guard, 'shell', (cmd: string) => exec(cmd));
  *
  * await safeExec('ls -la');        // Allowed → runs
- * await safeExec('rm -rf /');      // DENY → throws AgentGuardDeniedError
+ * await safeExec('rm -rf /');      // DENY → throws VanzikDeniedError
  *
  * // Opt-in: block until a human approves.
  * const reviewed = guarded(guard, 'shell', (cmd: string) => exec(cmd), {
@@ -649,19 +668,19 @@ export interface GuardedOptions<T extends (...args: unknown[]) => Promise<unknow
  * ```
  */
 export function guarded<T extends (...args: unknown[]) => Promise<unknown>>(
-  guard: AgentGuard,
+  guard: Vanzik,
   scope: string,
   fn: T,
   getCheckOptions?: (...args: Parameters<T>) => CheckOptions
 ): T;
 export function guarded<T extends (...args: unknown[]) => Promise<unknown>>(
-  guard: AgentGuard,
+  guard: Vanzik,
   scope: string,
   fn: T,
   options: GuardedOptions<T>
 ): T;
 export function guarded<T extends (...args: unknown[]) => Promise<unknown>>(
-  guard: AgentGuard,
+  guard: Vanzik,
   scope: string,
   fn: T,
   optionsOrGetCheckOptions?:
@@ -728,32 +747,32 @@ export function guarded<T extends (...args: unknown[]) => Promise<unknown>>(
             // Consumed or expired: the server re-entered the approval flow
             // under a new id. Surface it rather than waiting again, or a
             // refused replay would loop forever.
-            throw new AgentGuardApprovalRequiredError(
+            throw new VanzikApprovalRequiredError(
               `Action requires approval. Approve at: ${replay.approvalUrl}`,
               replay,
               replay.approvalId ?? "",
               replay.approvalUrl ?? ""
             );
           }
-          throw new AgentGuardDeniedError(
-            `Action denied by AgentGuard: ${replay.reason}`,
+          throw new VanzikDeniedError(
+            `Action denied by Vanzik: ${replay.reason}`,
             replay
           );
         }
         if (resolved.denied && resolved.reason === "Approval timed out") {
-          throw new AgentGuardApprovalTimeoutError(
+          throw new VanzikApprovalTimeoutError(
             `Approval for ${result.approvalId ?? ""} timed out after ${approvalTimeoutMs}ms`,
             resolved,
             result.approvalId ?? ""
           );
         }
-        throw new AgentGuardDeniedError(
-          `Action denied by AgentGuard: ${resolved.reason}`,
+        throw new VanzikDeniedError(
+          `Action denied by Vanzik: ${resolved.reason}`,
           resolved
         );
       }
       // Stable message text — text-matchers in caller code depend on it.
-      throw new AgentGuardApprovalRequiredError(
+      throw new VanzikApprovalRequiredError(
         `Action requires approval. Approve at: ${result.approvalUrl}`,
         result,
         result.approvalId ?? "",
@@ -761,11 +780,11 @@ export function guarded<T extends (...args: unknown[]) => Promise<unknown>>(
       );
     }
 
-    throw new AgentGuardDeniedError(
-      `Action denied by AgentGuard: ${result.reason}`,
+    throw new VanzikDeniedError(
+      `Action denied by Vanzik: ${result.reason}`,
       result
     );
   }) as T;
 }
 
-export default AgentGuard;
+export default Vanzik;

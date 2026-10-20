@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
-// newTestPGStore opens a PostgresStore against AGENTGUARD_PG_DSN, skipping the
+// newTestPGStore opens a PostgresStore against VANZIK_PG_DSN, skipping the
 // test when the env var is unset so `go test ./...` stays deterministic and
 // green with no Postgres available. The four Store-managed tables are truncated
 // (RESTART IDENTITY, so the BIGSERIAL audit id ordering is fresh) before each
@@ -19,9 +19,9 @@ import (
 // at a throwaway test database.
 func newTestPGStore(t *testing.T) *PostgresStore {
 	t.Helper()
-	dsn := os.Getenv("AGENTGUARD_PG_DSN")
+	dsn := os.Getenv("VANZIK_PG_DSN")
 	if dsn == "" {
-		t.Skip("set AGENTGUARD_PG_DSN to run Postgres store tests")
+		t.Skip("set VANZIK_PG_DSN to run Postgres store tests")
 	}
 	s, err := NewPostgresStore(dsn)
 	if err != nil {
@@ -323,7 +323,7 @@ func TestPostgresStore_Purge(t *testing.T) {
 func TestPostgresStore_PersistenceAcrossReopen(t *testing.T) {
 	s := newTestPGStore(t) // truncates, then closes at cleanup
 	ctx := context.Background()
-	dsn := os.Getenv("AGENTGUARD_PG_DSN")
+	dsn := os.Getenv("VANZIK_PG_DSN")
 	now := time.Now().UTC().Truncate(time.Millisecond)
 
 	if err := s.UpsertCosts(ctx, []CostState{{TenantID: "acme", SessionID: "s1", Cost: 7.5, LastUpdated: now}}); err != nil {

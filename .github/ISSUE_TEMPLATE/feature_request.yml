@@ -1,5 +1,5 @@
 name: Feature request
-description: Propose a new capability or enhancement to AgentGuard.
+description: Propose a new capability or enhancement to Vanzik.
 title: "[feat] "
 labels: ["enhancement", "triage"]
 body:
@@ -16,7 +16,7 @@ body:
       label: Problem
       description: What problem are you trying to solve? Who is affected?
       placeholder: |
-        I'm running AgentGuard in front of a CrewAI swarm and ...
+        I'm running Vanzik in front of a CrewAI swarm and ...
     validations:
       required: true
 
@@ -24,7 +24,7 @@ body:
     id: proposed
     attributes:
       label: Proposed solution
-      description: How would you like AgentGuard to behave? API shape, CLI flag, policy field, etc.
+      description: How would you like Vanzik to behave? API shape, CLI flag, policy field, etc.
     validations:
       required: true
 

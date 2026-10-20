@@ -12,7 +12,7 @@ import (
 // LoadFromFileWithWarnings loads and validates a policy file like
 // LoadFromFile, and also returns the non-fatal warnings it found (merged
 // duplicate scope blocks, likely-misspelled scope names, recursive path
-// globs) instead of only logging them. `agentguard validate` prints them, and `--strict` fails on them.
+// globs) instead of only logging them. `vanzik validate` prints them, and `--strict` fails on them.
 func LoadFromFileWithWarnings(path string) (*Policy, []string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

@@ -1,4 +1,4 @@
-# AgentGuard Default Policy
+# Vanzik Default Policy
 # Safe defaults for development and testing.
 #
 # Evaluation order (see docs/POLICY_REFERENCE.md):
@@ -154,7 +154,7 @@ rules:
   #     - domain: "*.internal.local"              # form submissions to internal sites only
 
   # --- MCP Gateway (tools/call gating) ---
-  # The MCP Gateway (agentguard-mcp-gateway) routes every host
+  # The MCP Gateway (vanzik-mcp-gateway) routes every host
   # tools/call through Engine.Check with scope=mcp_tool. In
   # --policy-mode strict (default) it ALSO fires a second Engine.Check
   # against the mapped existing scope (filesystem, network, shell,
@@ -286,7 +286,7 @@ tool_scope_map:
 #   `approval_required` only fires on REQUIRE_APPROVAL decisions.
 #   `on_deny`           only fires on DENY decisions (including rate-limit denies).
 # Drops on slow notifiers are counted in
-# `agentguard_notify_events_dropped_total{notifier,reason="queue_full"}`.
+# `vanzik_notify_events_dropped_total{notifier,reason="queue_full"}`.
 #
 # Example webhook stanza — uncomment and replace the example.invalid URLs
 # with real endpoints before deploying. The .invalid TLD (RFC 6761) is
@@ -311,8 +311,8 @@ notifications:
 # --- Per-agent rules ---
 agents:
   # --- Claude Code ---
-  # Rules for Claude Code's tool calls, which `agentguard hook claude-code`
-  # checks as agent "claude-code" (connect it with `agentguard setup`). A
+  # Rules for Claude Code's tool calls, which `vanzik hook claude-code`
+  # checks as agent "claude-code" (connect it with `vanzik setup`). A
   # coding agent works on your real project, so the sandbox rules above would
   # block most of its work: these replace them for Claude Code only, scope by
   # scope. Scopes not listed here (mcp_tool, browser) keep the rules above.

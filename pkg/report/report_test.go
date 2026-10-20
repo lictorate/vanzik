@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden files in testdata/")
@@ -74,12 +74,12 @@ func fixtureEntries() []audit.Entry {
 // sealed with a key that verified.
 func fixtureReport() *Report {
 	r := &Report{
-		GeneratedAt:       at(7*24*time.Hour + time.Hour),
-		AgentGuardVersion: "1.4.0 (test)",
-		Period:            period,
+		GeneratedAt:   at(7*24*time.Hour + time.Hour),
+		VanzikVersion: "1.4.0 (test)",
+		Period:        period,
 		Source: Source{
 			Mode:     SourceFile,
-			AuditLog: "/var/lib/agentguard/audit.jsonl",
+			AuditLog: "/var/lib/vanzik/audit.jsonl",
 			Files:    []string{"audit.jsonl.20260930T120000Z.gz", "audit.jsonl"},
 		},
 		Policy: &PolicyFile{Path: "configs/default.yaml", SHA256: strings.Repeat("ab", 32), Found: "--policy"},
@@ -191,7 +191,7 @@ func TestJSON_TopLevelKeys(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &m); err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"format_version", "generated_at", "agentguard_version", "period", "source", "policy",
+	for _, k := range []string{"format_version", "generated_at", "vanzik_version", "period", "source", "policy",
 		"integrity", "activity", "approvals", "posture", "controls", "limits"} {
 		if _, ok := m[k]; !ok {
 			t.Errorf("JSON lacks %q", k)

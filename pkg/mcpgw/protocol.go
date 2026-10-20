@@ -1,7 +1,7 @@
-// Package mcpgw implements the AgentGuard MCP Gateway: a stdio JSON-RPC
+// Package mcpgw implements the Vanzik MCP Gateway: a stdio JSON-RPC
 // bridge that sits between an MCP host (Claude Desktop, Cursor, IDE
 // plugins) and one or more downstream MCP servers, gating every
-// tools/call through the AgentGuard policy engine.
+// tools/call through the Vanzik policy engine.
 //
 // This file owns the wire-format types: JSON-RPC 2.0 envelopes, the
 // MCP-specific request/result shapes for the methods the gateway
@@ -51,7 +51,7 @@ const (
 	ErrCodeInternalError  = -32603
 )
 
-// AgentGuard server-defined error codes. JSON-RPC 2.0 reserves
+// Vanzik server-defined error codes. JSON-RPC 2.0 reserves
 // -32000..-32099 for server-defined errors. Per docs/MCP_GATEWAY.md
 // § 11, denial and approval-required are surfaced as tool execution
 // errors (`isError: true`) at the application layer, not as JSON-RPC
@@ -181,7 +181,7 @@ type InitializeResult struct {
 
 // ServerInfo identifies the gateway (or, when received from an
 // upstream, that upstream). The gateway's own ServerInfo.Name is
-// always "agentguard-mcp-gateway" — we do not impersonate downstreams.
+// always "vanzik-mcp-gateway" — we do not impersonate downstreams.
 type ServerInfo struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`

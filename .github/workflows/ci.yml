@@ -68,24 +68,24 @@ jobs:
 
       - name: Validate default policy
         shell: bash
-        run: go run ./cmd/agentguard validate --strict --policy configs/default.yaml
+        run: go run ./cmd/vanzik validate --strict --policy configs/default.yaml
 
       - name: Validate example policies
         shell: bash
         run: |
           for f in configs/examples/*.yaml; do
             echo "Validating $f..."
-            go run ./cmd/agentguard validate --strict --policy "$f"
+            go run ./cmd/vanzik validate --strict --policy "$f"
           done
 
       # The shipped policies' fixture cases (configs/tests/*_test.yaml): a
       # policy edit that changes a verdict fails here, with the case named.
       - name: Test shipped policies
         shell: bash
-        run: go run ./cmd/agentguard test configs/tests
+        run: go run ./cmd/vanzik test configs/tests
 
   setup-service:
-    # `agentguard setup` starts the server at login with the OS's own
+    # `vanzik setup` starts the server at login with the OS's own
     # service manager: a systemd user service, a LaunchAgent, a Task
     # Scheduler task. Unit tests check what it writes; this job installs the
     # real thing on a throwaway runner, checks the server answers, restarts
@@ -117,8 +117,8 @@ jobs:
       - name: Install, restart and remove the real login service
         shell: bash
         env:
-          AGENTGUARD_TEST_REAL_SERVICE: '1'
-        run: go test -run '^TestLoginService_Real$' -count=1 -v ./cmd/agentguard
+          VANZIK_TEST_REAL_SERVICE: '1'
+        run: go test -run '^TestLoginService_Real$' -count=1 -v ./cmd/vanzik
 
   lint:
     runs-on: ubuntu-latest
@@ -138,7 +138,7 @@ jobs:
   # CVE scan with reachability analysis. govulncheck only flags advisories
   # whose vulnerable symbol is actually called from our code, so it stays
   # quiet on theoretical issues in unused transitive code paths. Blocking
-  # on purpose: AgentGuard is a security product and cannot ship with a
+  # on purpose: Vanzik is a security product and cannot ship with a
   # known-reachable advisory. If govulncheck fires, fix the advisory before
   # merging (bump the dep, or refactor away the call site).
   vulncheck:
@@ -236,7 +236,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Go is needed so we can build the agentguard binary. The Python E2E
+      # Go is needed so we can build the vanzik binary. The Python E2E
       # tests (tests/test_end_to_end_real_server.py) spawn the real binary
       # and drive it through the Python SDK; without Go, those tests SKIP
       # silently and pretend to be green.
@@ -245,8 +245,8 @@ jobs:
         with:
           go-version: '1.26.9'
 
-      - name: Build agentguard binary for E2E tests
-        run: go build -o agentguard ./cmd/agentguard
+      - name: Build vanzik binary for E2E tests
+        run: go build -o vanzik ./cmd/vanzik
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -278,7 +278,7 @@ jobs:
         # (`integration-tests`) below. The integration job installs the
         # framework extras; this job stays lean.
         run: |
-          pytest -v --tb=short -m "not integration" --cov=agentguard --cov-report=term-missing -p no:cacheprovider
+          pytest -v --tb=short -m "not integration" --cov=vanzik --cov-report=term-missing -p no:cacheprovider
 
       - name: Assert E2E tests actually ran (no silent skip)
         working-directory: plugins/python
@@ -306,10 +306,10 @@ jobs:
   #
   # Rationale for keeping browser-use advisory (carried from v0.9): these tests
   # pin to LIVE upstream framework releases, so a red browser-use leg usually
-  # means upstream drift, not an AgentGuard regression — gating merges on it
+  # means upstream drift, not a Vanzik regression — gating merges on it
   # would let an unrelated framework release block every merge. Failures still
   # surface (the red leg + the weekly cron run) and the per-framework matrix
-  # isolates which one broke. The AgentGuard-owned contract is covered by the
+  # isolates which one broke. The Vanzik-owned contract is covered by the
   # BLOCKING `python-test` job's adapter unit tests AND — new in v1.0 — by the
   # now-required langchain/crewai legs here; this job is the higher-fidelity,
   # lower-stability coupon.
@@ -344,23 +344,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Go (build agentguard binary)
+      - name: Set up Go (build vanzik binary)
         uses: actions/setup-go@v5
         with:
           go-version: '1.26.9'
 
-      - name: Build agentguard binaries
+      - name: Build vanzik binaries
         run: |
-          go build -o agentguard ./cmd/agentguard
+          go build -o vanzik ./cmd/vanzik
           # test_at_llm_proxy_e2e.py (langchain leg) drives the real proxy.
-          go build -o agentguard-llm-proxy ./cmd/agentguard-llm-proxy
+          go build -o vanzik-llm-proxy ./cmd/vanzik-llm-proxy
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install AgentGuard SDK + framework extra (${{ matrix.framework }})
+      - name: Install Vanzik SDK + framework extra (${{ matrix.framework }})
         working-directory: plugins/python
         run: |
           pip install --upgrade pip
@@ -378,12 +378,12 @@ jobs:
       - name: Run integration tests (${{ matrix.framework }})
         working-directory: plugins/python
         env:
-          # The integration tests assume the SDK can find the AgentGuard
+          # The integration tests assume the SDK can find the Vanzik
           # mock URL via the per-test fixture — but a few helpers fall
-          # back to AGENTGUARD_URL. Pin it so a leaked env var from the
+          # back to VANZIK_URL. Pin it so a leaked env var from the
           # runner image doesn't smuggle in a real proxy.
-          AGENTGUARD_URL: http://127.0.0.1:0
-          AGENTGUARD_LLM_PROXY_BIN: ${{ github.workspace }}/agentguard-llm-proxy
+          VANZIK_URL: http://127.0.0.1:0
+          VANZIK_LLM_PROXY_BIN: ${{ github.workspace }}/vanzik-llm-proxy
         run: |
           # Each framework's integration files run in isolation — this
           # makes the matrix output cleaner and surfaces a per-framework
@@ -414,10 +414,10 @@ jobs:
         with:
           go-version: '1.26.9'
 
-      - name: Build agentguard binaries
+      - name: Build vanzik binaries
         run: |
-          go build -o agentguard ./cmd/agentguard
-          go build -o agentguard-llm-proxy ./cmd/agentguard-llm-proxy
+          go build -o vanzik ./cmd/vanzik
+          go build -o vanzik-llm-proxy ./cmd/vanzik-llm-proxy
 
       - uses: actions/setup-python@v5
         with:
@@ -438,8 +438,8 @@ jobs:
       - name: Unit and integration suites
         working-directory: plugins/python
         env:
-          AGENTGUARD_URL: http://127.0.0.1:0
-          AGENTGUARD_LLM_PROXY_BIN: ${{ github.workspace }}/agentguard-llm-proxy
+          VANZIK_URL: http://127.0.0.1:0
+          VANZIK_LLM_PROXY_BIN: ${{ github.workspace }}/vanzik-llm-proxy
         run: pytest -q -rs -p no:cacheprovider tests
 
   typescript-build:
@@ -478,19 +478,19 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build -t agentguard:ci .
+        run: docker build -t vanzik:ci .
 
       - name: Smoke test the container
         run: |
           # Start the image with --api-key so it binds to 0.0.0.0 (reachable
           # from the host via port publish). Then poll /health until it
           # responds, and tear down.
-          docker run -d --name agentguard-ci -p 18080:8080 agentguard:ci \
+          docker run -d --name vanzik-ci -p 18080:8080 vanzik:ci \
             server \
-              --policy /etc/agentguard/default.yaml \
+              --policy /etc/vanzik/default.yaml \
               --port 8080 \
               --api-key ci-smoke-key \
-              --audit-log /var/lib/agentguard/audit.jsonl \
+              --audit-log /var/lib/vanzik/audit.jsonl \
               --dashboard
           for i in {1..20}; do
             if curl -sf http://127.0.0.1:18080/health >/dev/null; then
@@ -500,14 +500,14 @@ jobs:
             sleep 1
             if [ "$i" = "20" ]; then
               echo "server failed to start; logs:"
-              docker logs agentguard-ci
+              docker logs vanzik-ci
               exit 1
             fi
           done
-          docker rm -f agentguard-ci
+          docker rm -f vanzik-ci
 
   # Postgres-backed integration tests. The pg-gated tests in pkg/store
-  # (postgres_test.go, consumption_test.go) SKIP when AGENTGUARD_PG_DSN is unset;
+  # (postgres_test.go, consumption_test.go) SKIP when VANZIK_PG_DSN is unset;
   # here we stand up a real Postgres 16 service container and point the DSN at it
   # so those tests — plus the reconcile tests in pkg/persist — actually run.
   # Blocking (NOT continue-on-error): multi-node correctness (tenant isolation +
@@ -520,13 +520,13 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: agentguard
+          POSTGRES_DB: vanzik
         ports:
           - 5432:5432
         # Gate the job's steps on the container being ready to accept
         # connections, so the first test does not race the DB coming up.
         options: >-
-          --health-cmd "pg_isready -U postgres -d agentguard"
+          --health-cmd "pg_isready -U postgres -d vanzik"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -542,7 +542,7 @@ jobs:
         env:
           # Matches the service container above; sslmode=disable because the
           # postgres:16-alpine image serves plaintext on the runner-local network.
-          AGENTGUARD_PG_DSN: postgres://postgres:postgres@localhost:5432/agentguard?sslmode=disable
+          VANZIK_PG_DSN: postgres://postgres:postgres@localhost:5432/vanzik?sslmode=disable
         run: go test ./pkg/store/... ./pkg/persist/... -count=1
 
   # Hot-path latency gates (p99 < 3ms; docs/CONTRIBUTING.md § Latency budget). Run WITHOUT -race so the
@@ -563,11 +563,11 @@ jobs:
         # Three blocking gates: the persistence integration hot path, the pure
         # Engine.Check hot path, and the concurrent soak — all asserting
         # p99 < 3ms in-test. The soak's p99 assert enforces only under
-        # AGENTGUARD_SOAK_P99_GATE=1, set here where the test runs ISOLATED;
+        # VANZIK_SOAK_P99_GATE=1, set here where the test runs ISOLATED;
         # inside the main `test` job's parallel `go test ./...` it is advisory,
         # because sibling test binaries co-scheduling on the runner inflate the
         # tail without indicting the hot path.
         run: |
           go test ./pkg/persist/ -run TestIntegration_HotPathLatencyWithPersistence -v -count=1
           go test ./pkg/policy/ -run TestEngineCheck_P99LatencyGate -v -count=1
-          AGENTGUARD_SOAK_P99_GATE=1 go test ./pkg/persist/ -run TestIntegration_ConcurrentHotPathLatencyWithPersistence -v -count=1
+          VANZIK_SOAK_P99_GATE=1 go test ./pkg/persist/ -run TestIntegration_ConcurrentHotPathLatencyWithPersistence -v -count=1

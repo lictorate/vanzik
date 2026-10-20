@@ -1,6 +1,6 @@
 # Security Policy
 
-AgentGuard is a defensive-security tool, so we take vulnerabilities in the
+Vanzik is a defensive-security tool, so we take vulnerabilities in the
 proxy, SDKs, and adapters seriously. This document explains which versions
 receive security fixes and how to report a vulnerability privately.
 
@@ -8,18 +8,20 @@ receive security fixes and how to report a vulnerability privately.
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 1.4.x   | Yes                |
-| < 1.4   | No                 |
+| 2.0.x   | Yes                |
+| < 2.0   | No                 |
 
-Security fixes ship on the latest minor release line (currently 1.4.x).
-Older lines, including 1.3.x, do not receive backports — upgrade to the
-latest 1.4.x release. Releases within 1.x follow the compatibility policy
-in [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md); each release's
-CHANGELOG entry lists any behaviour changes.
+Security fixes ship on the latest minor release line (currently 2.0.x).
+Older lines, including AgentGuard 1.4.x (this project's name before 2.0),
+do not receive backports — upgrade to the latest 2.0.x release; see
+[`docs/MIGRATION.md`](docs/MIGRATION.md#v1x-to-v20). Releases within 2.x
+follow the compatibility policy in
+[`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md); each release's CHANGELOG
+entry lists any behaviour changes.
 
 ## Reporting a Vulnerability
 
-Please report suspected vulnerabilities by email to **cauaferrazp@gmail.com**.
+Please report suspected vulnerabilities by email to **security@lictorate.com**.
 
 Do **not** open a public GitHub issue, pull request, or discussion thread for
 security reports. Public reports give attackers a head start before a fix is
@@ -29,7 +31,7 @@ When reporting, include as much of the following as you can:
 
 - A description of the issue and its impact.
 - Reproduction steps, including a minimal policy / request / configuration.
-- The AgentGuard version (`agentguard version`) and SDK version, if relevant.
+- The Vanzik version (`vanzik version`) and SDK version, if relevant.
 - Any proof-of-concept code or logs.
 - Whether you have already disclosed the issue elsewhere.
 
@@ -47,9 +49,9 @@ otherwise.
 
 ## Out of Scope
 
-The following are generally not treated as vulnerabilities in AgentGuard:
+The following are generally not treated as vulnerabilities in Vanzik:
 
-- Running AgentGuard without `--api-key` and exposing the dashboard
+- Running Vanzik without `--api-key` and exposing the dashboard
   publicly. Without an API key the server intentionally binds to
   `127.0.0.1` only; remote exposure requires an explicit reverse-proxy
   setup, which is the operator's responsibility.

@@ -16,8 +16,8 @@ func newTestFlagSet() (*flag.FlagSet, *GateFlags) {
 }
 
 func TestGateFlags_DefaultsAndOverrides(t *testing.T) {
-	t.Setenv("AGENTGUARD_API_KEY", "")
-	t.Setenv("AGENTGUARD_URL", "")
+	t.Setenv("VANZIK_API_KEY", "")
+	t.Setenv("VANZIK_URL", "")
 
 	fs, gf := newTestFlagSet()
 	if err := fs.Parse(nil); err != nil {
@@ -51,11 +51,11 @@ func TestGateFlags_DefaultsAndOverrides(t *testing.T) {
 	}
 }
 
-// AGENTGUARD_URL (read by the SDKs and the agentguard client commands)
+// VANZIK_URL (read by the SDKs and the vanzik client commands)
 // fills --guard-url when the flag isn't given; the flag always wins.
 func TestGateFlags_GuardURLFromEnv(t *testing.T) {
-	t.Setenv("AGENTGUARD_API_KEY", "")
-	t.Setenv("AGENTGUARD_URL", "http://env-guard:9000")
+	t.Setenv("VANZIK_API_KEY", "")
+	t.Setenv("VANZIK_URL", "http://env-guard:9000")
 
 	fs, gf := newTestFlagSet()
 	if err := fs.Parse(nil); err != nil {
@@ -101,7 +101,7 @@ func TestRejectArgs(t *testing.T) {
 }
 
 // noSavedKey points the config folder at an empty temp folder, so a key
-// `agentguard setup` saved on the test machine can't leak in.
+// `vanzik setup` saved on the test machine can't leak in.
 func noSavedKey(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -112,14 +112,14 @@ func noSavedKey(t *testing.T) string {
 
 func TestResolveAPIKey_FlagWinsOverEnv(t *testing.T) {
 	noSavedKey(t)
-	t.Setenv("AGENTGUARD_API_KEY", "env-token")
+	t.Setenv("VANZIK_API_KEY", "env-token")
 	if got := ResolveAPIKey("flag-token"); got != "flag-token" {
 		t.Errorf("flag must win: got %q", got)
 	}
 	if got := ResolveAPIKey(""); got != "env-token" {
 		t.Errorf("env fallback: got %q", got)
 	}
-	t.Setenv("AGENTGUARD_API_KEY", "")
+	t.Setenv("VANZIK_API_KEY", "")
 	if got := ResolveAPIKey(""); got != "" {
 		t.Errorf("no flag no env: got %q", got)
 	}
@@ -156,25 +156,61 @@ func TestValidateGateConfig(t *testing.T) {
 	}
 }
 
-// The key `agentguard setup` saves is the last fallback, after the flag and
-// AGENTGUARD_API_KEY.
+// The key `vanzik setup` saves is the last fallback, after the flag and
+// VANZIK_API_KEY.
 func TestResolveAPIKey_SavedKeyIsLastFallback(t *testing.T) {
 	dir := noSavedKey(t)
-	if err := os.MkdirAll(filepath.Join(dir, "agentguard"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "vanzik"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "agentguard", "api-key"), []byte("saved-key\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "vanzik", "api-key"), []byte("saved-key\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("AGENTGUARD_API_KEY", "")
+	t.Setenv("VANZIK_API_KEY", "")
 	if got := ResolveAPIKey(""); got != "saved-key" {
 		t.Errorf("saved key fallback: got %q", got)
 	}
-	t.Setenv("AGENTGUARD_API_KEY", "env-token")
+	t.Setenv("VANZIK_API_KEY", "env-token")
 	if got := ResolveAPIKey(""); got != "env-token" {
 		t.Errorf("env must win over the saved key: got %q", got)
 	}
 	if got := ResolveAPIKey("flag-token"); got != "flag-token" {
 		t.Errorf("flag must win: got %q", got)
+	}
+}
+
+// A gate whose URL or key would come from the environment doesn't start
+// when only the AgentGuard 1.x name of the variable is set: it would check
+// calls against the default server, or without the key. A flag, or the
+// VANZIK_ variable, makes the old one irrelevant.
+func TestGateFlags_RefuseAgentGuardVariables(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		env  map[string]string
+		args []string
+		want string // in the error; "" for none
+	}{
+		{"old key", map[string]string{"AGENTGUARD_API_KEY": "k"}, nil, "VANZIK_API_KEY"},
+		{"old url", map[string]string{"AGENTGUARD_URL": "http://old:8080"}, nil, "VANZIK_URL"},
+		{"old key, --api-key given", map[string]string{"AGENTGUARD_API_KEY": "k"}, []string{"--api-key", "k"}, ""},
+		{"old url, --guard-url given", map[string]string{"AGENTGUARD_URL": "http://old:8080"}, []string{"--guard-url", "http://new:8080"}, ""},
+		{"both names set", map[string]string{"AGENTGUARD_URL": "http://old:8080", "VANZIK_URL": "http://new:8080"}, nil, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			for _, n := range []string{"VANZIK_API_KEY", "VANZIK_URL", "AGENTGUARD_API_KEY", "AGENTGUARD_URL"} {
+				t.Setenv(n, c.env[n])
+			}
+			fs, gf := newTestFlagSet()
+			if err := fs.Parse(c.args); err != nil {
+				t.Fatal(err)
+			}
+			err := gf.Resolve()
+			switch {
+			case c.want == "" && err != nil:
+				t.Fatalf("unexpected error: %v", err)
+			case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+				t.Fatalf("want an error naming %s, got %v", c.want, err)
+			}
+		})
 	}
 }

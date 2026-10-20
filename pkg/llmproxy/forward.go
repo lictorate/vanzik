@@ -44,7 +44,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/metrics"
 )
 
 // hopByHopHeaders are the HTTP/1.1 headers that MUST NOT be forwarded
@@ -544,10 +544,10 @@ func copyForwardableHeaders(src, dst http.Header) {
 func rewriteUserAgent(h http.Header, original string) {
 	original = strings.TrimSpace(original)
 	if original == "" {
-		h.Set("User-Agent", "agentguard-llm-proxy/"+BuildVersion)
+		h.Set("User-Agent", "vanzik-llm-proxy/"+BuildVersion)
 		return
 	}
-	h.Set("User-Agent", "agentguard-llm-proxy/"+BuildVersion+" "+original)
+	h.Set("User-Agent", "vanzik-llm-proxy/"+BuildVersion+" "+original)
 }
 
 // joinPath concatenates a base URL path with a route path. Avoids

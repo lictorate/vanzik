@@ -1,10 +1,10 @@
 """
-AgentGuard OpenAI Agents SDK adapter example.
+Vanzik OpenAI Agents SDK adapter example.
 
 Runs a real OpenAI Agents SDK agent (PyPI ``openai-agents``, import name
-``agents``) whose function tool is gated by AgentGuard with
+``agents``) whose function tool is gated by Vanzik with
 ``guard_tools``. Every tool call is checked against the central
-AgentGuard server's ``/v1/check`` before the tool body runs; a DENY or
+Vanzik server's ``/v1/check`` before the tool body runs; a DENY or
 REQUIRE_APPROVAL stops the run and raises to this script.
 
 Verified against:
@@ -14,29 +14,29 @@ Verified against:
     2026-10-14).
 
 Setup:
-  pip install 'agentguardproxy[openai-agents]'
+  pip install 'vanzik[openai-agents]'
   export OPENAI_API_KEY=sk-...
-  export AGENTGUARD_API_KEY="$(openssl rand -hex 32)"   # same key as the server
+  export VANZIK_API_KEY="$(openssl rand -hex 32)"   # same key as the server
 
-Run the AgentGuard server (one terminal):
+Run the Vanzik server (one terminal):
 
-  agentguard server \\
+  vanzik server \\
       --policy configs/default.yaml \\
       --dashboard \\
       --watch \\
-      --api-key "$AGENTGUARD_API_KEY"
+      --api-key "$VANZIK_API_KEY"
 
 Then run this script:
   python examples/openai-agents-config.py "list the files in /tmp"
-  python examples/openai-agents-config.py "delete /tmp/agentguard-demo recursively"
+  python examples/openai-agents-config.py "delete /tmp/vanzik-demo recursively"
 
 Expected behaviour with configs/default.yaml:
   - ``ls /tmp`` matches ``allow: ls *`` in the shell scope: the tool
     runs and the agent answers with the listing.
-  - ``rm -rf /tmp/agentguard-demo`` matches ``require_approval: rm -rf *``:
+  - ``rm -rf /tmp/vanzik-demo`` matches ``require_approval: rm -rf *``:
     the tool does not run, and Runner.run raises
-    AgentGuardApprovalRequired carrying the approval id and URL.
-  - Anything the policy denies raises AgentGuardDenied; the tool does
+    VanzikApprovalRequired carrying the approval id and URL.
+  - Anything the policy denies raises VanzikDenied; the tool does
     not run and the model never sees a result.
   The dashboard (http://localhost:8080/dashboard) shows each decision.
 """
@@ -54,12 +54,12 @@ try:
 except ImportError:  # pragma: no cover
     sys.stderr.write(
         "openai-agents-config.py: the 'openai-agents' package is not installed.\n"
-        "Install with:  pip install 'agentguardproxy[openai-agents]'\n"
+        "Install with:  pip install 'vanzik[openai-agents]'\n"
     )
     sys.exit(2)
 
-from agentguard import AgentGuardApprovalRequired, AgentGuardDenied, Guard
-from agentguard.adapters.openai_agents import guard_tools
+from vanzik import VanzikApprovalRequired, VanzikDenied, Guard
+from vanzik.adapters.openai_agents import guard_tools
 
 
 @function_tool
@@ -102,12 +102,12 @@ async def run(prompt: str, guard: Guard, model: Optional[Any] = None) -> int:
     agent = build_agent(guard, model)
     try:
         result = await Runner.run(agent, prompt)
-    except AgentGuardApprovalRequired as e:
-        print(f"[agentguard] approval required: {e.result.reason}")
-        print(f"[agentguard] approve at: {e.approval_url}")
+    except VanzikApprovalRequired as e:
+        print(f"[vanzik] approval required: {e.result.reason}")
+        print(f"[vanzik] approve at: {e.approval_url}")
         return 3
-    except AgentGuardDenied as e:
-        print(f"[agentguard] denied: {e.result.reason}")
+    except VanzikDenied as e:
+        print(f"[vanzik] denied: {e.result.reason}")
         return 1
     print(result.final_output)
     return 0
@@ -117,13 +117,13 @@ def main() -> None:
     if not os.environ.get("OPENAI_API_KEY"):
         sys.stderr.write(
             "openai-agents-config.py: OPENAI_API_KEY is not set.\n"
-            "The agent's model runs on OpenAI; AgentGuard only gates the tools.\n"
+            "The agent's model runs on OpenAI; Vanzik only gates the tools.\n"
         )
         sys.exit(2)
 
     prompt = " ".join(sys.argv[1:]) or "List the files in /tmp."
     guard = Guard(
-        os.environ.get("AGENTGUARD_URL", "http://localhost:8080"),
+        os.environ.get("VANZIK_URL", "http://localhost:8080"),
         agent_id="openai-agents-example",
     )
     print(f"[user] {prompt}\n")

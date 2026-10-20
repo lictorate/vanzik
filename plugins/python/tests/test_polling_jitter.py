@@ -14,7 +14,7 @@ Why patch ``time.sleep``?
 -------------------------
 The real loop sleeps 0.5 s × 30 polls ≈ 15 s. We capture the requested
 duration but actually sleep zero so the test runs in well under a second.
-The SDK accesses ``time.sleep`` via ``agentguard.time.sleep`` (rebound at
+The SDK accesses ``time.sleep`` via ``vanzik.time.sleep`` (rebound at
 import time), so the patch is on that name.
 
 Note on flake-resistance
@@ -34,8 +34,8 @@ from unittest.mock import patch
 
 import pytest
 
-from agentguard import Guard
-from tests.conftest import MockAgentGuardHandler
+from vanzik import Guard
+from tests.conftest import MockVanzikHandler
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +46,7 @@ from tests.conftest import MockAgentGuardHandler
 def _capture_sleeps(num_polls: int, poll_interval: float, mock_server: str) -> list[float]:
     """Drive ``wait_for_approval`` for at least ``num_polls`` iterations and
     return the list of requested sleep durations."""
-    MockAgentGuardHandler.status_response = {"id": "ap_jit", "status": "pending"}
+    MockVanzikHandler.status_response = {"id": "ap_jit", "status": "pending"}
 
     sleeps: list[float] = []
 
@@ -81,7 +81,7 @@ def _capture_sleeps(num_polls: int, poll_interval: float, mock_server: str) -> l
         pass
 
     try:
-        with patch("agentguard.time.sleep", side_effect=short_circuit_sleep):
+        with patch("vanzik.time.sleep", side_effect=short_circuit_sleep):
             try:
                 g.wait_for_approval(
                     "ap_jit",

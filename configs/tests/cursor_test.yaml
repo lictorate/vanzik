@@ -3,9 +3,9 @@
 # coding-agents.yaml: the starter policy with every agent's block. Run them
 # with:
 #
-#   agentguard test configs/tests
+#   vanzik test configs/tests
 #
-# Each case is the input Cursor sends to `agentguard hook cursor`. Cursor's
+# Each case is the input Cursor sends to `vanzik hook cursor`. Cursor's
 # input says which event it is (hook_event_name), and the hook reads each
 # event differently, so every case gives one. See
 # docs/POLICY_REFERENCE.md § Testing policies.

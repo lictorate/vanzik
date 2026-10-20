@@ -10,7 +10,7 @@ package proxy
 //   2. POST /v1/check with an ALLOW-shaped request.
 //   3. POST /v1/check with a DENY-shaped request.
 //   4. GET /health -> 200 + version field.
-//   5. GET /metrics -> contains agentguard_checks_total advanced by >=2.
+//   5. GET /metrics -> contains vanzik_checks_total advanced by >=2.
 //   6. GET /v1/audit?limit=10 -> contains both decisions.
 //   7. Tear down within a deadline (httptest.Close + Logger.Close).
 //
@@ -25,10 +25,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
-	"github.com/Caua-ferraz/AgentGuard/pkg/notify"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/notify"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // TestATSmoke_FullServerHappyPath is the full-stack happy-path smoke test:
@@ -126,8 +126,8 @@ func TestATSmoke_FullServerHappyPath(t *testing.T) {
 	// 4. /metrics — counter must have advanced by at least 2.
 	r = srv.getWith("/metrics", nil)
 	body := readBody(t, r)
-	if !strings.Contains(body, "agentguard_checks_total") {
-		t.Errorf("/metrics missing agentguard_checks_total; got first 200 chars:\n%s",
+	if !strings.Contains(body, "vanzik_checks_total") {
+		t.Errorf("/metrics missing vanzik_checks_total; got first 200 chars:\n%s",
 			body[:min(len(body), 200)])
 	}
 	checksAfter := metrics.ChecksTotal()

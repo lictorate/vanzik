@@ -9,12 +9,12 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/Caua-ferraz/AgentGuard/internal/clihelp"
+	"lictorate.com/vanzik/v2/internal/clihelp"
 )
 
 func TestConfig_Defaults(t *testing.T) {
-	t.Setenv("AGENTGUARD_API_KEY", "")
-	t.Setenv("AGENTGUARD_URL", "")
+	t.Setenv("VANZIK_API_KEY", "")
+	t.Setenv("VANZIK_URL", "")
 	cfg, err := ParseConfigWithOutput(nil, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -40,7 +40,7 @@ func TestConfig_Defaults(t *testing.T) {
 }
 
 func TestConfig_APIKeyEnvFallback(t *testing.T) {
-	t.Setenv("AGENTGUARD_API_KEY", "env-token")
+	t.Setenv("VANZIK_API_KEY", "env-token")
 	cfg, err := ParseConfigWithOutput(nil, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -59,14 +59,14 @@ func TestConfig_APIKeyEnvFallback(t *testing.T) {
 }
 
 func TestConfig_GuardURLEnvFallback(t *testing.T) {
-	t.Setenv("AGENTGUARD_API_KEY", "")
-	t.Setenv("AGENTGUARD_URL", "http://guard.internal:8080")
+	t.Setenv("VANZIK_API_KEY", "")
+	t.Setenv("VANZIK_URL", "http://guard.internal:8080")
 	cfg, err := ParseConfigWithOutput(nil, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	if cfg.GuardURL != "http://guard.internal:8080" {
-		t.Errorf("GuardURL = %q, want the AGENTGUARD_URL value", cfg.GuardURL)
+		t.Errorf("GuardURL = %q, want the VANZIK_URL value", cfg.GuardURL)
 	}
 	cfg, err = ParseConfigWithOutput([]string{"--guard-url", "http://flag:1"}, &bytes.Buffer{})
 	if err != nil {
@@ -77,10 +77,10 @@ func TestConfig_GuardURLEnvFallback(t *testing.T) {
 	}
 }
 
-// A positional argument used to be ignored: `agentguard-llm-proxy version`
+// A positional argument used to be ignored: `vanzik-llm-proxy version`
 // started the proxy.
 func TestConfig_RejectsPositionalArgs(t *testing.T) {
-	t.Setenv("AGENTGUARD_API_KEY", "")
+	t.Setenv("VANZIK_API_KEY", "")
 	for _, args := range [][]string{{"version"}, {"--listen", "127.0.0.1:9", "extra"}} {
 		if _, err := ParseConfigWithOutput(args, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "unexpected argument") {
 			t.Errorf("ParseConfig(%q) err = %v, want unexpected argument", args, err)
@@ -89,7 +89,7 @@ func TestConfig_RejectsPositionalArgs(t *testing.T) {
 }
 
 func TestConfig_ValidationErrors(t *testing.T) {
-	t.Setenv("AGENTGUARD_API_KEY", "")
+	t.Setenv("VANZIK_API_KEY", "")
 	cases := []struct {
 		name    string
 		args    []string
@@ -120,7 +120,7 @@ func TestConfig_ValidationErrors(t *testing.T) {
 // docs/LLM_API_PROXY.md § 8.1 (avoid accidental internet-exposed
 // proxies).
 func TestConfig_NonLoopbackBindRequiresProxyAuth(t *testing.T) {
-	t.Setenv("AGENTGUARD_API_KEY", "")
+	t.Setenv("VANZIK_API_KEY", "")
 	_, err := ParseConfigWithOutput([]string{"--listen", "0.0.0.0:8081"}, &bytes.Buffer{})
 	if err == nil {
 		t.Fatalf("want error refusing non-loopback bind without proxy-api-key")
@@ -140,7 +140,7 @@ func TestConfig_NonLoopbackBindRequiresProxyAuth(t *testing.T) {
 // pass validation as "loopback" and start an unauthenticated proxy on all
 // interfaces.
 func TestConfig_EmptyHostBindRequiresProxyAuth(t *testing.T) {
-	t.Setenv("AGENTGUARD_API_KEY", "")
+	t.Setenv("VANZIK_API_KEY", "")
 	for _, l := range []string{":8081", "[::]:8081"} {
 		t.Run(l, func(t *testing.T) {
 			_, err := ParseConfigWithOutput([]string{"--listen", l}, &bytes.Buffer{})
@@ -162,7 +162,7 @@ func TestConfig_EmptyHostBindRequiresProxyAuth(t *testing.T) {
 }
 
 func TestConfig_LoopbackVariants(t *testing.T) {
-	t.Setenv("AGENTGUARD_API_KEY", "")
+	t.Setenv("VANZIK_API_KEY", "")
 	loopbacks := []string{"127.0.0.1:8081", "[::1]:8081", "localhost:8081"}
 	for _, l := range loopbacks {
 		t.Run(l, func(t *testing.T) {
@@ -178,7 +178,7 @@ func TestConfig_HelpDoesNotPanic(t *testing.T) {
 	// flag.ContinueOnError returns ErrHelp for --help; we just want
 	// to make sure ParseConfigWithOutput surfaces that without
 	// crashing.
-	t.Setenv("AGENTGUARD_API_KEY", "")
+	t.Setenv("VANZIK_API_KEY", "")
 	var buf bytes.Buffer
 	_, err := ParseConfigWithOutput([]string{"--help"}, &buf)
 	if err == nil {
@@ -213,7 +213,7 @@ func TestConfig_DirectValidate(t *testing.T) {
 // Ensure the package compiles cleanly with no environment leakage.
 func TestConfig_OSEnvIsolation(t *testing.T) {
 	// Save and restore the env var to keep this test reentrant.
-	const env = "AGENTGUARD_API_KEY"
+	const env = "VANZIK_API_KEY"
 	prev, hadPrev := os.LookupEnv(env)
 	defer func() {
 		if hadPrev {
@@ -232,7 +232,7 @@ func TestConfig_OSEnvIsolation(t *testing.T) {
 	}
 }
 
-// agentguard-llm-proxy -h prints every flag in a group, as --flag, within 80 columns.
+// vanzik-llm-proxy -h prints every flag in a group, as --flag, within 80 columns.
 func TestConfig_HelpGroupsEveryFlag(t *testing.T) {
 	var out bytes.Buffer
 	_, err := ParseConfigWithOutput([]string{"-h"}, &out)
@@ -243,7 +243,7 @@ func TestConfig_HelpGroupsEveryFlag(t *testing.T) {
 	if strings.Contains(help, clihelp.Ungrouped+":") {
 		t.Errorf("a flag is missing from the help groups:\n%s", help)
 	}
-	for _, want := range []string{"--listen string", "--guard-url string", "--version", "AGENTGUARD_URL"} {
+	for _, want := range []string{"--listen string", "--guard-url string", "--version", "VANZIK_URL"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("help lacks %q", want)
 		}

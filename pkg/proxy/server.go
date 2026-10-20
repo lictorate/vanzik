@@ -17,11 +17,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
-	"github.com/Caua-ferraz/AgentGuard/pkg/notify"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
-	"github.com/Caua-ferraz/AgentGuard/pkg/ratelimit"
+	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/notify"
+	"lictorate.com/vanzik/v2/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/ratelimit"
 )
 
 const (
@@ -94,7 +94,7 @@ type Config struct {
 	Version string
 	// TLSTerminatedUpstream tells the server that session cookies should be
 	// issued with Secure set regardless of whether the incoming request has
-	// r.TLS populated. Set this when AgentGuard runs behind a reverse proxy
+	// r.TLS populated. Set this when Vanzik runs behind a reverse proxy
 	// that terminates TLS and does not forward X-Forwarded-Proto. Default
 	// false keys cookie Secure to r.TLS only.
 	TLSTerminatedUpstream bool
@@ -138,7 +138,7 @@ type Config struct {
 	ApprovalValidity time.Duration
 }
 
-// Server is the AgentGuard HTTP proxy.
+// Server is the Vanzik HTTP proxy.
 type Server struct {
 	cfg      Config
 	http     *http.Server
@@ -506,7 +506,7 @@ func NewServer(cfg Config) *Server {
 
 		// Tenant-aware mirrors of the dashboard data endpoints. The
 		// dashboard HTML itself is intentionally NOT remapped to a
-		// tenant-aware URL — there is one operator UI per AgentGuard
+		// tenant-aware URL — there is one operator UI per Vanzik
 		// instance. SDK / CLI consumers that need per-tenant lists hit
 		// these JSON endpoints.
 		mux.HandleFunc("GET /v1/t/{tenant}/api/pending",
@@ -921,7 +921,7 @@ func (s *Server) logAndRespond(w http.ResponseWriter, req policy.ActionRequest, 
 	// notify/SSE enqueue, so it is the true end-to-end server processing time —
 	// the only work left is serializing the response body below. Measuring it
 	// here (not from the pre-audit `duration`) keeps the
-	// agentguard_request_duration_ms SLO histogram and the X-AgentGuard-Total-Ms
+	// vanzik_request_duration_ms SLO histogram and the X-Vanzik-Total-Ms
 	// header honest: a slow synchronous audit backend now shows up in Total
 	// instead of being silently dropped. Headers must be set before the first
 	// body write below.
@@ -930,9 +930,9 @@ func (s *Server) logAndRespond(w http.ResponseWriter, req policy.ActionRequest, 
 	metrics.IncDecision(string(result.Decision))
 
 	// Expose per-phase timing as response headers for easy curl inspection.
-	w.Header().Set("X-AgentGuard-Policy-Ms", fmt.Sprintf("%.3f", policyMs))
-	w.Header().Set("X-AgentGuard-Audit-Ms", fmt.Sprintf("%.3f", auditMs))
-	w.Header().Set("X-AgentGuard-Total-Ms", fmt.Sprintf("%.3f", totalMs))
+	w.Header().Set("X-Vanzik-Policy-Ms", fmt.Sprintf("%.3f", policyMs))
+	w.Header().Set("X-Vanzik-Audit-Ms", fmt.Sprintf("%.3f", auditMs))
+	w.Header().Set("X-Vanzik-Total-Ms", fmt.Sprintf("%.3f", totalMs))
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(result); err != nil {
@@ -1116,7 +1116,7 @@ func resolutionActor(r *http.Request) (via, from string) {
 	return via, from
 }
 
-// hasSessionCookie reports whether the request carries an ag_session cookie.
+// hasSessionCookie reports whether the request carries an vanzik_session cookie.
 func hasSessionCookie(r *http.Request) bool {
 	_, err := r.Cookie(SessionCookieName)
 	return err == nil
@@ -2139,7 +2139,7 @@ func (q *ApprovalQueue) broadcastLocked(event AuditEvent) {
 //
 //  1. Strict (allowedOrigin != ""): reflect an Origin header ONLY when it
 //     EXACTLY matches the configured AllowedOrigin. Use this in production
-//     deployments where a specific frontend needs to talk to AgentGuard.
+//     deployments where a specific frontend needs to talk to Vanzik.
 //
 //  2. Permissive-localhost (allowedOrigin == ""): accept any
 //     http://localhost:* or http://127.0.0.1:* origin. This is the historical
@@ -2278,7 +2278,7 @@ func recoverPanic(next http.Handler) http.Handler {
 }
 
 // goRecover runs fn in a fresh goroutine wrapped with a recover that logs
-// the panic stack and a caller-supplied label. Used for AgentGuard's own
+// the panic stack and a caller-supplied label. Used for Vanzik's own
 // background workers — the session-cost sweeper, dispatcher workers, and
 // any future periodic goroutine — so a panic in one of them does not take
 // the whole process down.
@@ -2298,7 +2298,7 @@ var dashboardHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>AgentGuard Dashboard</title>
+  <title>Vanzik Dashboard</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, 'SF Mono', 'Fira Code', monospace; background: #0a0a0a; color: #e0e0e0; }
@@ -2377,7 +2377,7 @@ var dashboardHTML = `<!DOCTYPE html>
 </head>
 <body>
   <div class="header">
-    <h1>AgentGuard</h1>
+    <h1>Vanzik</h1>
     <span class="badge" id="status-badge">● LIVE</span>
     <span class="transport-legend" title="Integration path that produced each entry">
       Transport:
@@ -2429,10 +2429,10 @@ var dashboardHTML = `<!DOCTYPE html>
     const feed = document.getElementById('feed');
     const pendingEl = document.getElementById('pending');
     const MAX_FEED_ENTRIES = 200;
-    // CSRF token is sourced from a server-rendered cookie named ag_csrf on page
+    // CSRF token is sourced from a server-rendered cookie named vanzik_csrf on page
     // load. We no longer embed the API key in HTML.
     function getCsrf() {
-      return (document.cookie.split('; ').find(c => c.startsWith('ag_csrf=')) || '').split('=')[1] || '';
+      return (document.cookie.split('; ').find(c => c.startsWith('vanzik_csrf=')) || '').split('=')[1] || '';
     }
 
     // Escape HTML to prevent XSS when inserting user-controlled data.
@@ -2942,7 +2942,7 @@ var loginHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>AgentGuard — Sign in</title>
+  <title>Vanzik — Sign in</title>
   <style>
     body { font-family: -apple-system, 'SF Mono', 'Fira Code', monospace; background: #0a0a0a; color: #e0e0e0; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
     .box { background: #111; border: 1px solid #222; border-radius: 10px; padding: 28px 32px; width: 360px; }
@@ -2957,7 +2957,7 @@ var loginHTML = `<!DOCTYPE html>
 </head>
 <body>
   <form class="box" id="f" autocomplete="off">
-    <h1>AgentGuard</h1>
+    <h1>Vanzik</h1>
     <p>Sign in with the server API key.</p>
     <label for="k">API key</label>
     <input id="k" type="password" autocomplete="off" required>

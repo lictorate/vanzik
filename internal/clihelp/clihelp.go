@@ -1,10 +1,10 @@
 // Package clihelp prints the flag section of a command's --help the same
-// way for every AgentGuard binary: flags written as --flag, grouped under
+// way for every Vanzik binary: flags written as --flag, grouped under
 // titles, descriptions wrapped to 80 columns, an alias on its flag's line,
 // and a note saying how to turn off a bool flag that is on by default.
 //
-// It is internal to the module: agentguard, agentguard-mcp-gateway and
-// agentguard-llm-proxy share it, and nothing outside imports it.
+// It is internal to the module: vanzik, vanzik-mcp-gateway and
+// vanzik-llm-proxy share it, and nothing outside imports it.
 package clihelp
 
 import (

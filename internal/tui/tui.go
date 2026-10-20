@@ -1,4 +1,4 @@
-// Package tui draws the small interactive menus of `agentguard setup`: a
+// Package tui draws the small interactive menus of `vanzik setup`: a
 // list you move through with the arrow keys and pick from with Enter. It
 // draws in place in the normal terminal (no full-screen mode) and leaves a
 // one-line record of each answer, so the scrollback reads like a log of

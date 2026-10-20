@@ -27,7 +27,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // captured records what the fake central server received.

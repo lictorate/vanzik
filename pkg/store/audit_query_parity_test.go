@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 var parityBase = time.Date(2026, 6, 10, 10, 0, 0, 0, time.UTC)
@@ -103,7 +103,7 @@ func newParityLoggers(t *testing.T) (file, store audit.Logger) {
 	}
 	t.Cleanup(func() { _ = fileLogger.Close() })
 
-	st, err := NewSQLiteStore(filepath.Join(dir, "agentguard.db"))
+	st, err := NewSQLiteStore(filepath.Join(dir, "vanzik.db"))
 	if err != nil {
 		t.Fatalf("store: %v", err)
 	}

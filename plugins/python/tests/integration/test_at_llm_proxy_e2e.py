@@ -1,4 +1,4 @@
-"""End-to-end LangChain agent against the AgentGuard LLM API Proxy
+"""End-to-end LangChain agent against the Vanzik LLM API Proxy
 (Phase 4C — AT).
 
 Plan brief (v0.5 plan, AT-Phase-4C item "E2E LangChain test"):
@@ -10,27 +10,27 @@ Plan brief (v0.5 plan, AT-Phase-4C item "E2E LangChain test"):
 
 There are two ways to honour this brief offline-deterministically:
 
-    A. Subprocess the Go binary `agentguard-llm-proxy`, drive a real
+    A. Subprocess the Go binary `vanzik-llm-proxy`, drive a real
        OpenAI-shape mock upstream, point a real `langchain-openai`
        `ChatOpenAI` at the proxy via `base_url`, and observe agent
        behavior end-to-end. Highest fidelity; flaky on CI runners
        that lack a built binary or have port-binding restrictions.
 
-    B. Drive the Python `agentguard.adapters.langchain.GuardedTool`
+    B. Drive the Python `vanzik.adapters.langchain.GuardedTool`
        against a real `langchain-core` agent loop with a mock central
        server returning DENY for the tool. Lower fidelity — exercises
        the Python SDK's gating path rather than the Go LLM proxy
        streaming pipeline — but offline-deterministic and CI-stable.
 
 This file ships path B and a SKIPPED placeholder for path A. Path A
-is gated on `AGENTGUARD_LLM_PROXY_BIN` pointing at a built binary;
+is gated on `VANZIK_LLM_PROXY_BIN` pointing at a built binary;
 when set, the placeholder runs the binary against an httptest-style
 mock OpenAI upstream and asserts the same behavioural property as
 path B (agent receives the synthetic refusal text and stops).
 
 The behavioural property pinned (under both paths):
     The LangChain agent's `tool_result` content for a DENY tool call
-    is the AgentGuard refusal text. The agent loop does NOT raise on
+    is the Vanzik refusal text. The agent loop does NOT raise on
     the refusal (the refusal is a normal tool_result) but it also does
     not silently retry — the next iteration sees the refusal as the
     tool's response and the agent's downstream logic is responsible
@@ -72,21 +72,21 @@ def _find_free_port() -> int:
 
 
 def _llm_proxy_binary() -> Optional[str]:
-    """Locate the agentguard-llm-proxy binary.
+    """Locate the vanzik-llm-proxy binary.
 
     Looks at the env var first (CI override), then falls back to the
     repo root (next to the Makefile).
     """
-    env_path = os.environ.get("AGENTGUARD_LLM_PROXY_BIN")
+    env_path = os.environ.get("VANZIK_LLM_PROXY_BIN")
     if env_path and os.path.isfile(env_path):
         return env_path
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
-    for candidate in ("agentguard-llm-proxy", "agentguard-llm-proxy.exe"):
+    for candidate in ("vanzik-llm-proxy", "vanzik-llm-proxy.exe"):
         full = os.path.join(repo_root, candidate)
         if os.path.isfile(full):
             return full
-    if shutil.which("agentguard-llm-proxy"):
-        return "agentguard-llm-proxy"
+    if shutil.which("vanzik-llm-proxy"):
+        return "vanzik-llm-proxy"
     return None
 
 
@@ -103,8 +103,8 @@ from langchain_core.messages import AIMessage, BaseMessage, ToolMessage  # noqa:
 from langchain_core.outputs import ChatGeneration, ChatResult  # noqa: E402
 from langchain_core.tools import Tool  # noqa: E402
 
-from agentguard import Guard  # noqa: E402
-from agentguard.adapters.langchain import GuardedTool  # noqa: E402
+from vanzik import Guard  # noqa: E402
+from vanzik.adapters.langchain import GuardedTool  # noqa: E402
 
 from .conftest import allow, deny  # noqa: E402
 
@@ -158,7 +158,7 @@ def _make_guarded_tool(guard: Guard, scope: str = "shell") -> Tool:
         try:
             return str(guarded.run(cmd))
         except PermissionError as exc:
-            return f"AgentGuard denied this action: {exc}"
+            return f"Vanzik denied this action: {exc}"
 
     return Tool.from_function(
         name="bash",
@@ -260,8 +260,8 @@ class TestAT_LLMProxy_LangChain_E2E_PathB:
 @pytest.mark.skipif(
     _llm_proxy_binary() is None,
     reason=(
-        "agentguard-llm-proxy binary not found; build with "
-        "`make build-llm-proxy` or set AGENTGUARD_LLM_PROXY_BIN. "
+        "vanzik-llm-proxy binary not found; build with "
+        "`make build-llm-proxy` or set VANZIK_LLM_PROXY_BIN. "
         "Path B (Python SDK + LangChain) provides offline-deterministic "
         "coverage of the same behavioural property."
     ),

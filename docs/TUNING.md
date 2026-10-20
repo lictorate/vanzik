@@ -1,6 +1,6 @@
 # Tuning Knobs
 
-Every setting that changes AgentGuard's runtime behavior, grouped by how you change it. Ordered from safest to most surgical.
+Every setting that changes Vanzik's runtime behavior, grouped by how you change it. Ordered from safest to most surgical.
 
 ---
 
@@ -87,17 +87,17 @@ rules:
 ## CLI flags (restart to apply)
 
 ```bash
-agentguard server \
-  --policy /etc/agentguard/policy.yaml \
+vanzik server \
+  --policy /etc/vanzik/policy.yaml \
   --port 8080 \
   --api-key $KEY \
   --base-url https://guardrails.example \
   --allowed-origin https://app.example \
   --tls-terminated-upstream \
-  --audit-log /var/lib/agentguard/audit.jsonl \
+  --audit-log /var/lib/vanzik/audit.jsonl \
   --session-cost-ttl 24h \
   --session-cost-sweep-interval 1h \
-  --data-dir /var/lib/agentguard \
+  --data-dir /var/lib/vanzik \
   --audit-backend file \
   --watch \
   --dashboard
@@ -137,8 +137,8 @@ If you need any of these configurable in YAML, open an issue with the use case.
 
 | Var | Consumed by | Default |
 |---|---|---|
-| `AGENTGUARD_API_KEY` | CLI client subcommands | empty |
-| `AGENTGUARD_URL` | Python + TypeScript SDKs | `http://localhost:8080` |
+| `VANZIK_API_KEY` | CLI client subcommands | empty |
+| `VANZIK_URL` | Python + TypeScript SDKs | `http://localhost:8080` |
 
 The server process does **not** read these. CLI-server flags are the source of truth on the server side.
 

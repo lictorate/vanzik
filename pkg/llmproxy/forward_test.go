@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/metrics"
 )
 
 // TestForward_BodyRoundTripsByteIdentical confirms the proxy's forward
@@ -54,7 +54,7 @@ func TestForward_BodyRoundTripsByteIdentical(t *testing.T) {
 
 // TestForward_UpstreamErrorPassthrough checks that 5xx upstream
 // responses are reflected back to the client (not transformed into
-// AgentGuard errors). docs/PROXY_ARCHITECTURE.md § 6.3.
+// Vanzik errors). docs/PROXY_ARCHITECTURE.md § 6.3.
 func TestForward_UpstreamErrorPassthrough(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -534,7 +534,7 @@ func TestForwardChatCompletion_NonStreamingApprovalPath_IncludesApprovalURL(t *t
 		t.Fatalf("refusal missing content: %q", string(got))
 	}
 	content := *refusal.Choices[0].Message.Content
-	for _, want := range []string{"ap_xyz789", "http://127.0.0.1:8080/dashboard?approval=ap_xyz789", "_meta.dev.agentguard/approval_id"} {
+	for _, want := range []string{"ap_xyz789", "http://127.0.0.1:8080/dashboard?approval=ap_xyz789", "_meta.dev.vanzik/approval_id"} {
 		if !strings.Contains(content, want) {
 			t.Errorf("approval refusal content missing %q: %q", want, content)
 		}

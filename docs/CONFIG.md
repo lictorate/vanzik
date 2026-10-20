@@ -1,6 +1,6 @@
-# AgentGuard Policy Configuration Reference
+# Vanzik Policy Configuration Reference
 
-This document is the reference for the **non-rule** keys in an AgentGuard policy YAML file — the `proxy:` and `notifications:` server-side tunables — with each key's default, validation rules, and runtime effect. Rule-level fields (`scope`, `allow`, `deny`, `require_approval`, `pattern`, `paths`, `domain`, `action`, `conditions`, `rate_limit`, `limits`, `tool_scope_map`) are covered in [`POLICY_REFERENCE.md`](POLICY_REFERENCE.md) and the examples under `configs/`.
+This document is the reference for the **non-rule** keys in a Vanzik policy YAML file — the `proxy:` and `notifications:` server-side tunables — with each key's default, validation rules, and runtime effect. Rule-level fields (`scope`, `allow`, `deny`, `require_approval`, `pattern`, `paths`, `domain`, `action`, `conditions`, `rate_limit`, `limits`, `tool_scope_map`) are covered in [`POLICY_REFERENCE.md`](POLICY_REFERENCE.md) and the examples under `configs/`.
 
 Every key listed here is optional — each unset key falls back to a compile-time default, so a policy file that only contains rules is always valid. [`TUNING.md`](TUNING.md) covers when to change these; this file covers what they do.
 
@@ -42,7 +42,7 @@ Server-side tunables that apply to the HTTP surface itself — not to policy eva
 | **Affects** | Dashboard session cookie lifetime |
 | **Validation** | Must parse cleanly and be `> 0`. Invalid values fail at policy load. |
 
-Controls how long an `ag_session` cookie stays valid after `/auth/login` succeeds. Shorter values force dashboard operators to re-authenticate more often; longer values reduce login friction but extend the window where a stolen laptop can act on approvals. The `ag_csrf` companion cookie is issued with the same expiry.
+Controls how long an `vanzik_session` cookie stays valid after `/auth/login` succeeds. Shorter values force dashboard operators to re-authenticate more often; longer values reduce login friction but extend the window where a stolen laptop can act on approvals. The `vanzik_csrf` companion cookie is issued with the same expiry.
 
 ### `proxy.request.max_body_bytes`
 
@@ -53,7 +53,7 @@ Controls how long an `ag_session` cookie stays valid after `/auth/login` succeed
 | **Affects** | `POST /v1/check` body acceptance |
 | **Validation** | Must be `> 0` when present. Invalid values fail at policy load. |
 
-Caps the size of `/v1/check` request bodies. Requests larger than this receive HTTP `413 Request Entity Too Large`, a warning log line including the source, `Content-Length`, and the effective limit, and an increment on the Prometheus counter `agentguard_request_rejected_total{reason="body_too_large"}`. Tune down in hostile environments where a small request surface is part of the threat model; tune up only if a legitimate agent produces genuinely large `meta` payloads.
+Caps the size of `/v1/check` request bodies. Requests larger than this receive HTTP `413 Request Entity Too Large`, a warning log line including the source, `Content-Length`, and the effective limit, and an increment on the Prometheus counter `vanzik_request_rejected_total{reason="body_too_large"}`. Tune down in hostile environments where a small request surface is part of the threat model; tune up only if a legitimate agent produces genuinely large `meta` payloads.
 
 ### `proxy.audit.default_limit`
 
@@ -64,7 +64,7 @@ Caps the size of `/v1/check` request bodies. Requests larger than this receive H
 | **Affects** | `GET /v1/audit` when `?limit=` is omitted |
 | **Validation** | Must be `> 0` when present. Must be `<= proxy.audit.max_limit`. |
 
-The row count returned by `/v1/audit` when the caller does not pass `?limit=`. The dashboard, SDKs, and `agentguard audit` CLI call through this endpoint; tuning this sizes the default page everywhere.
+The row count returned by `/v1/audit` when the caller does not pass `?limit=`. The dashboard, SDKs, and `vanzik audit` CLI call through this endpoint; tuning this sizes the default page everywhere.
 
 ### `proxy.audit.max_limit`
 
@@ -111,7 +111,7 @@ Rule-level keys (allow/deny/require_approval, rate limits, cost limits) continue
 
 ## Validation errors
 
-`agentguard validate <policy.yaml>` and `agentguard server` both run the same validators. A failure prints the offending YAML path:
+`vanzik validate <policy.yaml>` and `vanzik server` both run the same validators. A failure prints the offending YAML path:
 
 ```
 INVALID: proxy.session.ttl: time: unknown unit "hr" in duration "1hr"
@@ -119,7 +119,7 @@ INVALID: proxy.audit.max_limit (50) must be >= proxy.audit.default_limit (200)
 INVALID: notifications.dispatch_timeout: must be > 0, got "0s"
 ```
 
-Operators can run `agentguard validate` in CI to reject bad configs before they reach a server.
+Operators can run `vanzik validate` in CI to reject bad configs before they reach a server.
 
 ## Defaults, at a glance
 

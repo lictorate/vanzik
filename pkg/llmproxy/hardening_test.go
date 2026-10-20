@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/metrics"
 )
 
 // ----- H2: recoverPanic middleware -----
@@ -94,8 +94,8 @@ func TestServer_RecoverPanic_PerRequestIsolation(t *testing.T) {
 	if !strings.Contains(string(body), "internal server error") {
 		t.Errorf("panic body = %q, want contains 'internal server error'", string(body))
 	}
-	if !strings.Contains(string(body), "agentguard_error") {
-		t.Errorf("panic body = %q, want contains 'agentguard_error' type", string(body))
+	if !strings.Contains(string(body), "vanzik_error") {
+		t.Errorf("panic body = %q, want contains 'vanzik_error' type", string(body))
 	}
 
 	// 2. Nil-pointer panic also recovers (runtime.Error path).
@@ -241,7 +241,7 @@ func TestServer_RecoverPanic_DoesNotAppendToCommittedBody(t *testing.T) {
 	if got != committed {
 		t.Errorf("body = %q, want exactly the committed bytes %q — an error envelope was appended onto a partial response (B20)", got, committed)
 	}
-	if strings.Contains(got, "agentguard_error") || strings.Contains(got, "internal server error") {
+	if strings.Contains(got, "vanzik_error") || strings.Contains(got, "internal server error") {
 		t.Errorf("error envelope leaked into a committed response body: %q", got)
 	}
 }
@@ -265,7 +265,7 @@ func TestServer_RecoverPanic_UncommittedStillGets500(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json", ct)
 	}
-	if !strings.Contains(rec.Body.String(), "agentguard_error") {
+	if !strings.Contains(rec.Body.String(), "vanzik_error") {
 		t.Errorf("body = %q, want the JSON error envelope", rec.Body.String())
 	}
 }
@@ -299,7 +299,7 @@ func TestServer_RecoverPanic_ImplicitWriteCommits(t *testing.T) {
 // an error. The handler then called writeJSONError(502), whose second
 // WriteHeader net/http drops as superfluous while the JSON body it writes still
 // lands appended to the partial response. The client received
-// `<partial valid body><AgentGuard JSON error>` — malformed.
+// `<partial valid body><Vanzik JSON error>` — malformed.
 func TestPassThrough_UpstreamAbortsMidBodyAppendsNoEnvelope(t *testing.T) {
 	const partial = `{"data":[{"embedding":[0.1,0.2`
 
@@ -330,8 +330,8 @@ func TestPassThrough_UpstreamAbortsMidBodyAppendsNoEnvelope(t *testing.T) {
 	// What matters is what DID arrive.
 	got, _ := io.ReadAll(resp.Body)
 
-	if strings.Contains(string(got), "agentguard_error") {
-		t.Errorf("an AgentGuard error envelope was appended onto a committed, partially-sent body: %q", got)
+	if strings.Contains(string(got), "vanzik_error") {
+		t.Errorf("a Vanzik error envelope was appended onto a committed, partially-sent body: %q", got)
 	}
 	if strings.Contains(string(got), `"error"`) {
 		t.Errorf("an error object was appended onto a committed body: %q", got)
@@ -577,8 +577,8 @@ func TestServer_MaxConcurrentStreams_RejectsOverflow(t *testing.T) {
 	if !strings.Contains(string(respBody), "too many concurrent streams") {
 		t.Errorf("503 body = %q, want contains 'too many concurrent streams'", string(respBody))
 	}
-	if !strings.Contains(string(respBody), "agentguard_error") {
-		t.Errorf("503 body = %q, want contains 'agentguard_error' type", string(respBody))
+	if !strings.Contains(string(respBody), "vanzik_error") {
+		t.Errorf("503 body = %q, want contains 'vanzik_error' type", string(respBody))
 	}
 
 	// Metric incremented at least twice (for the two refused
@@ -786,7 +786,7 @@ func TestAdmitStream_NoCapStillTracksGauge(t *testing.T) {
 // flag parser accepts the new --max-concurrent-streams flag and rejects
 // negative values. Zero must be permitted (disable-cap sentinel).
 func TestConfig_MaxConcurrentStreams_DefaultAndValidation(t *testing.T) {
-	t.Setenv("AGENTGUARD_API_KEY", "")
+	t.Setenv("VANZIK_API_KEY", "")
 
 	// Default value is wired.
 	cfg := &Config{

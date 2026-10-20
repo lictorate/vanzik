@@ -7,7 +7,7 @@
  * must not carry the key.
  */
 
-import { AgentGuard } from "../index";
+import { Vanzik } from "../index";
 
 type FetchArgs = [string | URL, RequestInit?];
 type FetchMock = jest.Mock<Promise<Response>, FetchArgs>;
@@ -29,7 +29,7 @@ function sentBody(m: FetchMock): Record<string, unknown> {
   return JSON.parse(String(init?.body));
 }
 
-describe("AgentGuard parentSessionId", () => {
+describe("Vanzik parentSessionId", () => {
   const cases: Array<[string, string | undefined, string | undefined, string | undefined]> = [
     ["neither set", undefined, undefined, undefined],
     ["client option", "orch-1", undefined, "orch-1"],
@@ -38,7 +38,7 @@ describe("AgentGuard parentSessionId", () => {
   ];
   test.each(cases)("%s", async (_name, clientParent, callParent, want) => {
     const fetchMock = installFetchMock();
-    const guard = new AgentGuard({
+    const guard = new Vanzik({
       baseUrl: "http://example.test",
       agentId: "sub",
       ...(clientParent !== undefined ? { parentSessionId: clientParent } : {}),
@@ -58,6 +58,6 @@ describe("AgentGuard parentSessionId", () => {
   });
 
   test("parentSessionId is a known constructor option", () => {
-    expect(() => new AgentGuard({ parentSessionId: "orch" })).not.toThrow();
+    expect(() => new Vanzik({ parentSessionId: "orch" })).not.toThrow();
   });
 });

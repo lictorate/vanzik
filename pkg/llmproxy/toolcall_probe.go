@@ -5,7 +5,7 @@ package llmproxy
 // The non-streaming gated path decodes an upstream response into
 // ChatCompletionResponse / AnthropicMessagesResponse and gates whatever
 // tool calls it finds. When that decode fails the body is forwarded
-// verbatim, on the deliberate principle that AgentGuard never rewrites an
+// verbatim, on the deliberate principle that Vanzik never rewrites an
 // already-corrupt wire.
 //
 // The gap is that "fails Go's strict decode" is a NARROWER condition than

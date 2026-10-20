@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // CheckpointSuffix is appended to an audit log path to produce the companion
@@ -103,7 +103,7 @@ type Checkpoint struct {
 
 // CheckpointPath returns the companion checkpoint file path for an audit
 // log: `<audit-log-path>` + CheckpointSuffix. Every reader and writer of the
-// checkpoint — the server's startup seeder, the `agentguard migrate`
+// checkpoint — the server's startup seeder, the `vanzik migrate`
 // subcommand, and the startup migration that invalidates it — MUST derive
 // the path through this function so they can never disagree about where the
 // file lives.
@@ -198,7 +198,7 @@ func ReplayFrom(auditPath string, cp *Checkpoint, fn func(Entry)) (int64, error)
 // The returned Checkpoint.Counts is the LIFETIME decision tally: cp.Counts
 // carried forward plus every entry replayed in this call. Seeding the
 // decision counters from it — rather than incrementing per replayed entry —
-// is what makes `agentguard_checks_total` and `/api/stats` survive restarts
+// is what makes `vanzik_checks_total` and `/api/stats` survive restarts
 // with the same totals a never-restarted process would show.
 //
 // Resume rules, in order:
@@ -429,7 +429,7 @@ func scanFile(path string, start int64, fn func(Entry), bad func(error)) error {
 // scanReader is the shared line scanner: skips blank and `_meta` lines,
 // hands unparseable lines to bad and skips them, and invokes fn for every
 // well-formed entry. With a nil bad (the startup replay) they are counted
-// on /metrics as agentguard_audit_corrupt_lines_total, exactly as Query
+// on /metrics as vanzik_audit_corrupt_lines_total, exactly as Query
 // reports them, and the first is logged; with a caller's bad nothing is
 // logged or counted: the caller reports them.
 func scanReader(r io.Reader, name string, fn func(Entry), bad func(error)) error {

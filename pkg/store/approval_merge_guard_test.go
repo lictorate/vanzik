@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 func runUpsertApprovalsMonotonicMerge(t *testing.T, s Store) {

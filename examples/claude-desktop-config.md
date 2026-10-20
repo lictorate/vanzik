@@ -1,8 +1,8 @@
-# Claude Desktop — AgentGuard MCP Gateway
+# Claude Desktop — Vanzik MCP Gateway
 
 Drop-in `claude_desktop_config.json` that routes Claude Desktop's MCP tool
-calls through `agentguard-mcp-gateway`, which gates every tool call against
-your AgentGuard policy before forwarding to the real downstream MCP server.
+calls through `vanzik-mcp-gateway`, which gates every tool call against
+your Vanzik policy before forwarding to the real downstream MCP server.
 
 > Source: <https://modelcontextprotocol.io/quickstart/user> (verified
 > 2026-05-05). The Claude Desktop config format is stable; verify against
@@ -23,12 +23,12 @@ opens it in your default editor.
 ## What this config does
 
 ```
-Claude Desktop ──stdio──► agentguard-mcp-gateway ──stdio──► server-filesystem (npx)
+Claude Desktop ──stdio──► vanzik-mcp-gateway ──stdio──► server-filesystem (npx)
                                   │                       ──stdio──► mcp-server-fetch (uvx)
                                   │                       ──stdio──► github-mcp-server (docker)
                                   │
                                   └─HTTP──► http://127.0.0.1:8080/v1/check
-                                            (the central AgentGuard server,
+                                            (the central Vanzik server,
                                              which evaluates policy + writes
                                              the audit log + surfaces approvals
                                              on the dashboard)
@@ -61,48 +61,48 @@ into the container.
 1. **Install the binaries** (Go 1.25+):
 
    ```bash
-   go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard@latest
-   go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard-mcp-gateway@latest
+   go install lictorate.com/vanzik/v2/cmd/vanzik@latest
+   go install lictorate.com/vanzik/v2/cmd/vanzik-mcp-gateway@latest
    ```
 
    Confirm both end up on `PATH`:
 
    ```bash
-   which agentguard agentguard-mcp-gateway
+   which vanzik vanzik-mcp-gateway
    ```
 
    Claude Desktop spawns the gateway as a subprocess and inherits its `PATH`
    from the parent shell that launched the app — if `which` fails, replace
-   `"command": "agentguard-mcp-gateway"` in the JSON with the absolute path
+   `"command": "vanzik-mcp-gateway"` in the JSON with the absolute path
    to the binary.
 
 2. **Pick a policy.** A starter is `configs/default.yaml` in this repo.
    Copy it somewhere stable:
 
    ```bash
-   sudo mkdir -p /etc/agentguard
-   sudo cp configs/default.yaml /etc/agentguard/policy.yaml
+   sudo mkdir -p /etc/vanzik
+   sudo cp configs/default.yaml /etc/vanzik/policy.yaml
    ```
 
-   Then update `--policy /etc/agentguard/policy.yaml` in the JSON to match.
+   Then update `--policy /etc/vanzik/policy.yaml` in the JSON to match.
 
 3. **Generate an API key** and put it in the `env` block of the JSON
-   (the gateway reads `AGENTGUARD_API_KEY` from the subprocess
+   (the gateway reads `VANZIK_API_KEY` from the subprocess
    environment when the `--api-key` flag is absent — see "API key
    handling" below):
 
    ```bash
-   export AGENTGUARD_API_KEY="$(openssl rand -hex 32)"
+   export VANZIK_API_KEY="$(openssl rand -hex 32)"
    ```
 
-4. **Start the central AgentGuard server:**
+4. **Start the central Vanzik server:**
 
    ```bash
-   agentguard server \
-     --policy /etc/agentguard/policy.yaml \
+   vanzik server \
+     --policy /etc/vanzik/policy.yaml \
      --dashboard \
      --watch \
-     --api-key "$AGENTGUARD_API_KEY"
+     --api-key "$VANZIK_API_KEY"
    ```
 
    Open the dashboard at <http://127.0.0.1:8080/dashboard>.
@@ -115,7 +115,7 @@ into the container.
 
 In a Claude Desktop chat:
 
-- "Read `/tmp/hello.txt`" → AgentGuard's default policy allows reads under
+- "Read `/tmp/hello.txt`" → Vanzik's default policy allows reads under
   `/tmp`, the call succeeds, and the dashboard shows an `ALLOW` event.
 - "Read `/etc/passwd`" → policy denies, Claude reports the tool returned an
   error, the dashboard shows a `DENY` event.
@@ -131,12 +131,12 @@ If actions appear in Claude but never show on the dashboard, see the
 
 ## API key handling
 
-Do **not** pass `--api-key "$AGENTGUARD_API_KEY"` as an `args` entry.
+Do **not** pass `--api-key "$VANZIK_API_KEY"` as an `args` entry.
 Claude Desktop does **not** shell-expand `$VAR` references inside the
 JSON `args` array — the gateway would receive the literal string
-`$AGENTGUARD_API_KEY` and authentication would fail. Instead, use the
+`$VANZIK_API_KEY` and authentication would fail. Instead, use the
 `env` block above to inject the key as an environment variable; the
-gateway picks up `AGENTGUARD_API_KEY` automatically when the
+gateway picks up `VANZIK_API_KEY` automatically when the
 `--api-key` flag is absent.
 
 If you really must pass the key on the command line, write the literal
@@ -149,7 +149,7 @@ file, so prefer the `env` block.
 calls (they go to `/v1/t/<tenant>/check`). Keep `local` — the policy
 the server loads with `--policy` — unless you've registered another
 tenant on the central server with
-`agentguard tenant put <id> --policy <file.yaml>`. A tenant the server
+`vanzik tenant put <id> --policy <file.yaml>`. A tenant the server
 doesn't know answers `404`, which the gateway
 treats like an unreachable server: `--fail-mode` decides, so with `deny`
 every call is refused.
@@ -167,10 +167,10 @@ block and reference it from `--upstream-header`; the gateway expands
   "--upstream-http", "docs:https://mcp.example.com/mcp",
   "--upstream-header", "docs:Authorization=Bearer ${DOCS_TOKEN}",
   "--guard-url", "http://127.0.0.1:8080",
-  "--policy", "/etc/agentguard/policy.yaml"
+  "--policy", "/etc/vanzik/policy.yaml"
 ],
 "env": {
-  "AGENTGUARD_API_KEY": "set-from-shell-or-secret-store",
+  "VANZIK_API_KEY": "set-from-shell-or-secret-store",
   "DOCS_TOKEN": "set-from-shell-or-secret-store"
 }
 ```

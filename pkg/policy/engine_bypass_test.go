@@ -350,7 +350,7 @@ rules:
 
 // TestPolicyLoadValidatesDurations closes R3 #5 / R3 #15. Malformed durations
 // or non-positive counts in rate-limit and condition.time_window must be
-// rejected at load time so `agentguard validate` actually validates.
+// rejected at load time so `vanzik validate` actually validates.
 func TestPolicyLoadValidatesDurations(t *testing.T) {
 	cases := []struct {
 		name string

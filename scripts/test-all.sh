@@ -10,8 +10,8 @@
 #
 # Suites:
 #   go       — go test -race -coverprofile=coverage.out ./...
-#   policy   — agentguard validate --strict on every YAML in configs/ and configs/examples/
-#   python   — pip install -e ".[dev]" + pytest -v --cov=agentguard in plugins/python
+#   policy   — vanzik validate --strict on every YAML in configs/ and configs/examples/
+#   python   — pip install -e ".[dev]" + pytest -v --cov=vanzik in plugins/python
 #   ts       — npm install + npm run build + npm test in plugins/typescript
 #
 # Behavior:
@@ -24,7 +24,7 @@
 #     plugins/typescript/coverage/ if the suites produce them.
 #
 # Portability: bash 3.2+. Works under Git Bash on Windows, macOS, and
-# Linux. The agentguard binary used by the policy suite is detected with
+# Linux. The vanzik binary used by the policy suite is detected with
 # a .exe suffix when $OS=Windows_NT so the script does not assume the
 # Linux binary name.
 
@@ -79,10 +79,10 @@ SUITES=()
 RESULTS=()
 DURATIONS=()
 
-# Where to find the agentguard binary on this OS.
-AGENTGUARD_BIN="./agentguard"
+# Where to find the vanzik binary on this OS.
+VANZIK_BIN="./vanzik"
 if [ "${OS:-}" = "Windows_NT" ]; then
-  AGENTGUARD_BIN="./agentguard.exe"
+  VANZIK_BIN="./vanzik.exe"
 fi
 
 # run_suite NAME SKIP_FLAG SUITE_FN
@@ -126,8 +126,8 @@ run_suite() {
 
 # Always rebuild: a binary left over from an older checkout may lack commands
 # the suites run (such as `test`). Go's build cache keeps this cheap.
-ensure_agentguard_built() {
-  go build -o "$AGENTGUARD_BIN" ./cmd/agentguard
+ensure_vanzik_built() {
+  go build -o "$VANZIK_BIN" ./cmd/vanzik
 }
 
 go_suite() {
@@ -141,20 +141,20 @@ go_suite() {
 
 policy_suite() {
   set -e
-  ensure_agentguard_built
+  ensure_vanzik_built
   local f any=0
   for f in configs/*.yaml configs/examples/*.yaml; do
     [ -f "$f" ] || continue
     any=1
     echo "  validate $f"
-    "$AGENTGUARD_BIN" validate --strict --policy "$f"
+    "$VANZIK_BIN" validate --strict --policy "$f"
   done
   if [ "$any" -eq 0 ]; then
     echo "  no policy files found under configs/ — nothing to validate" >&2
   fi
   if [ -d configs/tests ]; then
     echo "  test configs/tests"
-    "$AGENTGUARD_BIN" test configs/tests
+    "$VANZIK_BIN" test configs/tests
   fi
 }
 
@@ -170,7 +170,7 @@ python_suite() {
   # it is tried explicitly because on Windows `python3` is usually a Microsoft
   # Store stub that fails and `python` may be any venv that happens to be
   # first on PATH. Matches this script's existing Windows support (see the
-  # .exe handling for AGENTGUARD_BIN).
+  # .exe handling for VANZIK_BIN).
   PY_CMD=()
   local c
   for c in python3 python py; do
@@ -192,12 +192,12 @@ python_suite() {
   fi
 
   set -e
-  ensure_agentguard_built
+  ensure_vanzik_built
 
   (
     cd plugins/python &&
     "${PY_CMD[@]}" -m pip install --quiet -e ".[dev]" &&
-    "${PY_CMD[@]}" -m pytest -v --cov=agentguard
+    "${PY_CMD[@]}" -m pytest -v --cov=vanzik
   )
 }
 

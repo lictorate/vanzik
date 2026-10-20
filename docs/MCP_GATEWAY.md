@@ -1,6 +1,6 @@
 # MCP Gateway
 
-The `agentguard-mcp-gateway` binary brokers JSON-RPC between an MCP
+The `vanzik-mcp-gateway` binary brokers JSON-RPC between an MCP
 host (Claude Desktop, Cursor, Cline, Continue, Zed) and one or more
 downstream MCP servers, gating every `tools/call` through the policy
 engine. It supports multi-upstream configurations, capability merging,
@@ -10,7 +10,7 @@ responses.
 For cross-cutting concerns (binary structure, audit transport tag,
 deployment topologies, fail-mode flag) see
 [`docs/PROXY_ARCHITECTURE.md`](./PROXY_ARCHITECTURE.md). A Python
-preview shipped earlier in `plugins/python/agentguard/adapters/mcp.py`
+preview shipped earlier in `plugins/python/vanzik/adapters/mcp.py`
 remains as a fallback for environments that cannot run a Go binary.
 
 ---
@@ -25,7 +25,7 @@ remains as a fallback for environments that cannot run a Go binary.
                                            │ stdio (JSON-RPC, newline-delimited UTF-8)
                                            │
                        ┌───────────────────▼──────────────────┐
-                       │       agentguard-mcp-gateway        │
+                       │       vanzik-mcp-gateway        │
                        │                                      │
                        │  • dispatcher: route by ns prefix   │
                        │  • policy: Engine.Check via         │
@@ -51,14 +51,14 @@ and N stdio out subprocesses (downstream MCP servers). Remote servers
 can also be reached over Streamable HTTP with `--upstream-http`
 (§ 8.5). It does **not** embed an HTTP server for client-facing
 traffic — the MCP host always talks stdio. It does open an HTTP client
-to call the central AgentGuard server's `/v1/check`.
+to call the central Vanzik server's `/v1/check`.
 
 ### 1.1 Why Go (not Python)
 
 The Go gateway shares `pkg/policy`, `pkg/audit`,
 `pkg/proxy.ApprovalQueue`, and `pkg/notify` with the rest of the
-AgentGuard daemons (no HTTP hop required when running in-process). The
-Python `GuardedMCPGateway` in `plugins/python/agentguard/adapters/mcp.py`
+Vanzik daemons (no HTTP hop required when running in-process). The
+Python `GuardedMCPGateway` in `plugins/python/vanzik/adapters/mcp.py`
 remains as a fallback for environments that can't run a Go binary, but
 the docs default to the Go binary.
 
@@ -67,13 +67,13 @@ the docs default to the Go binary.
 ## 2. CLI surface
 
 ```
-agentguard-mcp-gateway \
+vanzik-mcp-gateway \
   --upstream "fs:npx -y @modelcontextprotocol/server-filesystem /tmp" \
   --upstream "github:docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server" \
   --upstream "everything:npx -y @modelcontextprotocol/server-everything" \
   --guard-url http://127.0.0.1:8080 \
-  --policy /etc/agentguard/policy.yaml \
-  --api-key $AGENTGUARD_API_KEY \
+  --policy /etc/vanzik/policy.yaml \
+  --api-key $VANZIK_API_KEY \
   --tenant-id local \
   --fail-mode deny \
   --log-level info
@@ -84,12 +84,12 @@ agentguard-mcp-gateway \
 | `--upstream "<ns>:<cmd>"` | yes  | Downstream MCP server. `ns` is the namespace prefix; `cmd` is tokenized by the gateway's own `SplitCommandLine` (double quotes and `\` escapes only — no single quotes, `$VAR` expansion, or pipes). If `ns:` is omitted, the namespace defaults to the first whitespace-delimited token of `cmd`. |
 | `--upstream-http "<ns>:<url>"` | yes | Remote MCP server reached over Streamable HTTP (§ 8.5). `ns` is required and follows the `--upstream` rules; namespaces are unique across both flags. The URL must be `https`, or `http` to `localhost`, `127.0.0.1` or `[::1]`. Credentials in the URL are refused; use `--upstream-header`. |
 | `--upstream-header "<ns>:<Name>=<Value>"` | yes | Extra HTTP header sent on every request to the `--upstream-http` server `ns`. `${VAR}` in the value is read from the gateway's environment, so a token can live in the client config's `env` block instead of `args`. An unset variable, an unknown or stdio namespace, and headers the transport sets itself (`Accept`, `Content-Type`, `Mcp-Session-Id`, `MCP-Protocol-Version`, ...) are errors. Header values are never logged. |
-| `--guard-url`       | no         | central server URL. Falls back to `AGENTGUARD_URL` env, then `http://127.0.0.1:8080`. Must be an `http`/`https` URL with a host. |
-| `--api-key`         | no         | bearer for `/v1/check`. Falls back to `AGENTGUARD_API_KEY` env, then to the key `agentguard setup` saved — so an MCP client config needs no secret in it. |
+| `--guard-url`       | no         | central server URL. Falls back to `VANZIK_URL` env, then `http://127.0.0.1:8080`. Must be an `http`/`https` URL with a host. |
+| `--api-key`         | no         | bearer for `/v1/check`. Falls back to `VANZIK_API_KEY` env, then to the key `vanzik setup` saved — so an MCP client config needs no secret in it. |
 | `--tenant-id`       | no         | default `local`. Must be non-empty.             |
 | `--fail-mode`       | no         | `deny` / `allow` / `fail-closed-with-audit`. Default `deny`. `fail-closed-with-audit` denies with the distinct Rule `deny:gateway:fail_closed_audit` **and** records the denial in the local `--fail-audit-log` file. See [`PROXY_ARCHITECTURE.md`](./PROXY_ARCHITECTURE.md) § 6.1. |
-| `--fail-audit-log`  | no         | local JSONL fallback audit file for `fail-closed-with-audit` denials. Default `agentguard-fail-audit.jsonl`; empty disables. |
-| `--policy`          | no         | Path to AgentGuard policy YAML. **Required** when `--policy-mode strict` (the default). Used to resolve `tool_scope_map` overrides for the dual-check (`mcp_tool` + mapped scope). |
+| `--fail-audit-log`  | no         | local JSONL fallback audit file for `fail-closed-with-audit` denials. Default `vanzik-fail-audit.jsonl`; empty disables. |
+| `--policy`          | no         | Path to Vanzik policy YAML. **Required** when `--policy-mode strict` (the default). Used to resolve `tool_scope_map` overrides for the dual-check (`mcp_tool` + mapped scope). |
 | `--policy-mode`     | no         | `strict` (default) or `fast`. `strict` requires `--policy` and fails closed if the file is missing/invalid; `fast` runs only the `mcp_tool` check and never consults `tool_scope_map` (`--policy` is optional). |
 | `--log-level`       | no         | stderr verbosity. Default `info`.               |
 | `--upstream-timeout`| no         | per-frame upstream-response timeout. Default `30s`. |
@@ -97,7 +97,7 @@ agentguard-mcp-gateway \
 | `--version`         | no         | print version and exit. Checked before any other flag is parsed, so it works without `--upstream`. |
 
 The gateway takes flags only. A stray word is an error (exit 2) instead of
-being ignored: `agentguard-mcp-gateway version` answers `did you mean
+being ignored: `vanzik-mcp-gateway version` answers `did you mean
 --version?`, and an unquoted `--upstream fs:npx … /tmp` reports the lost
 `/tmp` rather than launching the server without it. Quote each `--upstream`
 command.
@@ -106,11 +106,11 @@ A remote MCP server joins the same way, with its token taken from the
 environment:
 
 ```
-DOCS_TOKEN=... agentguard-mcp-gateway \
+DOCS_TOKEN=... vanzik-mcp-gateway \
   --upstream "fs:npx -y @modelcontextprotocol/server-filesystem /tmp" \
   --upstream-http "docs:https://mcp.example.com/mcp" \
   --upstream-header 'docs:Authorization=Bearer ${DOCS_TOKEN}' \
-  --policy /etc/agentguard/policy.yaml
+  --policy /etc/vanzik/policy.yaml
 ```
 
 The host still talks to the gateway over stdio. Its tools appear as
@@ -135,7 +135,7 @@ var SupportedProtocolVersions = []string{
 ```
 
 The Python SDK adapter is pinned to `2024-11-05` (`MCP_PROTOCOL_VERSION`
-in `plugins/python/agentguard/adapters/mcp.py`). The Go gateway
+in `plugins/python/vanzik/adapters/mcp.py`). The Go gateway
 deliberately accepts a wider set so it can sit between a recent client
 and an older downstream (or vice versa).
 
@@ -181,7 +181,7 @@ Sequence:
      "id": 1,
      "result": {
        "protocolVersion": "2025-11-25",
-       "serverInfo": { "name": "agentguard-mcp-gateway", "version": "1.4.0" },
+       "serverInfo": { "name": "vanzik-mcp-gateway", "version": "2.0.0" },
        "capabilities": {
          "tools": { "listChanged": true }
        }
@@ -189,7 +189,7 @@ Sequence:
    }
    ```
    The gateway does **not** pretend to be the downstream — its
-   `serverInfo` always identifies it as `agentguard-mcp-gateway`.
+   `serverInfo` always identifies it as `vanzik-mcp-gateway`.
 5. Host sends the `notifications/initialized` notification (no id, no
    response). The gateway forwards this to every upstream.
 
@@ -339,8 +339,8 @@ to a downstream MCP server. The cost is acceptable.
 #### 4.4.3 Configurable, but on by default
 
 ```
-agentguard-mcp-gateway --policy-mode strict   # dual-check (default)
-agentguard-mcp-gateway --policy-mode fast     # single-check (mcp_tool only)
+vanzik-mcp-gateway --policy-mode strict   # dual-check (default)
+vanzik-mcp-gateway --policy-mode fast     # single-check (mcp_tool only)
 ```
 
 `fast` mode dispatches one check with `scope: "mcp_tool"` and never
@@ -498,7 +498,7 @@ The gateway returns:
   "result": {
     "content": [{
       "type": "text",
-      "text": "[AgentGuard] Action requires approval.\nReason: <reason>\nApproval ID: ap_<hex>\nApprove at: http://127.0.0.1:8080/v1/approve/ap_<hex>"
+      "text": "[Vanzik] Action requires approval.\nReason: <reason>\nApproval ID: ap_<hex>\nApprove at: http://127.0.0.1:8080/v1/approve/ap_<hex>"
     }],
     "isError": true
   }
@@ -513,7 +513,7 @@ or surfaces the URL to the user.
 
 The MCP spec's `_meta` reservation makes this clean. After the operator
 approves on the dashboard, the model retries the same `tools/call` with
-`_meta.dev.agentguard/approval_id` populated:
+`_meta.dev.vanzik/approval_id` populated:
 
 ```json
 {
@@ -521,7 +521,7 @@ approves on the dashboard, the model retries the same `tools/call` with
   "params": {
     "name": "fs:write_file",
     "arguments": { "path": "/tmp/output.txt", "content": "..." },
-    "_meta": { "dev.agentguard/approval_id": "ap_<hex>" }
+    "_meta": { "dev.vanzik/approval_id": "ap_<hex>" }
   }
 }
 ```
@@ -529,7 +529,7 @@ approves on the dashboard, the model retries the same `tools/call` with
 The round-trip is single-hop and stateless on the gateway — the
 central server owns the truth:
 
-1. The bridge reads `_meta["dev.agentguard/approval_id"]` and stamps
+1. The bridge reads `_meta["dev.vanzik/approval_id"]` and stamps
    it on the internal `ToolsCallRequest.ApprovalID`.
 2. `HTTPPolicyClient.Check` propagates the value as a top-level
    `approval_id` field on the `/v1/check` body (alongside the existing
@@ -560,7 +560,7 @@ pattern (mcp_tool + mapped scope) preserves the approval id on both
 calls so a resolved approval short-circuits whichever scope the
 policy used to require it.
 
-The reserved `_meta` prefix `dev.agentguard/` follows the MCP
+The reserved `_meta` prefix `dev.vanzik/` follows the MCP
 `2025-11-25` `_meta` rules: reverse-DNS-style label, recommended
 form. We **do not** use `io.modelcontextprotocol/` or `dev.mcp/` —
 those are explicitly reserved for MCP itself.
@@ -794,7 +794,7 @@ network and give deterministic replies. They run in the blocking Go
 
 ## 11. Client integration
 
-AgentGuard ships working configs for the five MCP clients with the
+Vanzik ships working configs for the five MCP clients with the
 largest user bases. Each `examples/<client>-config.json` is the
 authoritative copy-paste, and each has a sibling `<client>-config.md`
 with the OS-specific config-file path, the source-doc URL, and a
@@ -829,7 +829,7 @@ Once the config is saved and the client restarted (or, for Cline /
 Continue, reloaded — they pick up changes live):
 
 1. **The MCP indicator appears.** Claude Desktop shows a small slider in
-   the chat input; Cursor's MCP panel lists `agentguard`; Cline's
+   the chat input; Cursor's MCP panel lists `vanzik`; Cline's
    MCP-Servers tab shows green; Continue's tools list populates in agent
    mode; Zed's Assistant shows the merged tools.
 2. **Tools/list aggregation works.** Ask the model "what tools do you
@@ -843,9 +843,9 @@ Continue, reloaded — they pick up changes live):
    `/etc/passwd`. The dashboard shows a `DENY` event; the model reports
    the tool errored with the policy reason embedded.
 
-If actions never reach AgentGuard, the gateway is probably failing to
+If actions never reach Vanzik, the gateway is probably failing to
 launch — see § 11.3 below. If actions reach the gateway but never reach
-AgentGuard's `/v1/check`, check that `--guard-url` is reachable from the
+Vanzik's `/v1/check`, check that `--guard-url` is reachable from the
 gateway's process (loopback issues on Docker bridge networks bite here).
 
 ### 11.3 Common gotchas
@@ -853,12 +853,12 @@ gateway's process (loopback issues on Docker bridge networks bite here).
 **Binary not on PATH.** Claude Desktop / Cursor / Zed / Cline launched
 from the Finder (macOS) or the Start menu (Windows) inherit a sparse
 PATH that does not include `$(go env GOPATH)/bin`. If `which
-agentguard-mcp-gateway` works in your terminal but the MCP indicator
-never appears, replace `"command": "agentguard-mcp-gateway"` with the
+vanzik-mcp-gateway` works in your terminal but the MCP indicator
+never appears, replace `"command": "vanzik-mcp-gateway"` with the
 absolute path to the binary.
 
 **Shell-var expansion in flag strings.** None of the supported clients
-expand `$AGENTGUARD_API_KEY` or `$VAR` inside flag-string arguments.
+expand `$VANZIK_API_KEY` or `$VAR` inside flag-string arguments.
 The recommended pattern is:
 
 - Set the variable in the `env` block of the server entry (which **is**
@@ -885,7 +885,7 @@ visible in Claude Desktop's `mcp.log` and equivalents — while the other
 upstreams keep working. Check the launcher on its own (`npx --version`,
 `uvx --version`, `docker version`) before debugging deeper.
 
-**Cookie-based auth on macOS.** AgentGuard's session cookies depend on
+**Cookie-based auth on macOS.** Vanzik's session cookies depend on
 the connection's TLS state. When the central server runs on plain HTTP
 on `127.0.0.1` (the dev default) and Claude Desktop talks to it from
 the gateway, the API key is sent as `Authorization: Bearer …` — no
@@ -898,7 +898,7 @@ you log in to the dashboard from a browser, in which case use
 The gateway is launched as a subprocess by the MCP client and trusts
 its parent — there is no inbound HTTP for the gateway. The
 `--api-key` flag is only used for the gateway's outbound
-`/v1/check` calls to the central AgentGuard server.
+`/v1/check` calls to the central Vanzik server.
 
 ---
 
@@ -911,9 +911,9 @@ its parent — there is no inbound HTTP for the gateway. The
   - <https://modelcontextprotocol.io/specification/2025-11-25/server/tools>
 - MCP error codes: JSON-RPC 2.0 reserved range (-32768 to -32000); MCP
   uses `-32602` for invalid params, `-32603` for internal errors,
-  `-32700` for parse errors. AgentGuard does not introduce custom
+  `-32700` for parse errors. Vanzik does not introduce custom
   error codes — denial and approval-required are returned as **tool
   execution errors** (`isError: true`), not JSON-RPC protocol errors.
-- Python preview: `plugins/python/agentguard/adapters/mcp.py`
+- Python preview: `plugins/python/vanzik/adapters/mcp.py`
   (`GuardedMCPGateway`).
 - Cross-cutting design: [`docs/PROXY_ARCHITECTURE.md`](./PROXY_ARCHITECTURE.md).

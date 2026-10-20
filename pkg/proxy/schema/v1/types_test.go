@@ -14,7 +14,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // TestActionRequest_RoundTrip asserts that an ActionRequest with every

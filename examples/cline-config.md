@@ -1,7 +1,7 @@
-# Cline — AgentGuard MCP Gateway
+# Cline — Vanzik MCP Gateway
 
 Drop-in `cline_mcp_settings.json` that routes Cline's MCP tool calls
-through the AgentGuard gateway. Cline (formerly Claude Dev) is a VS Code
+through the Vanzik gateway. Cline (formerly Claude Dev) is a VS Code
 extension that exposes an autonomous agent in the editor; this config
 gates every tool call against your policy.
 
@@ -37,7 +37,7 @@ forks of VS Code use a different parent directory (e.g.
 ## What this config does
 
 ```
-VS Code (Cline panel) ──stdio──► agentguard-mcp-gateway ──► fs / fetch / github upstreams
+VS Code (Cline panel) ──stdio──► vanzik-mcp-gateway ──► fs / fetch / github upstreams
                                           │
                                           └─HTTP──► http://127.0.0.1:8080/v1/check
                                                     (policy / audit / dashboard)
@@ -48,9 +48,9 @@ The Cline-specific keys:
 - `disabled: false` — leave the server enabled. Set `true` to skip without
   removing the entry.
 - `alwaysAllow: []` — names of tools Cline will auto-approve in its own UI.
-  Leave empty so Cline's per-action prompts still fire **and** AgentGuard's
+  Leave empty so Cline's per-action prompts still fire **and** Vanzik's
   policy is the authoritative gate. Adding tool names here only suppresses
-  Cline's prompt; it does **not** bypass the AgentGuard policy.
+  Cline's prompt; it does **not** bypass the Vanzik policy.
 
 ## Setup
 
@@ -75,8 +75,8 @@ into the container.
 1. **Install binaries** (Go 1.25+):
 
    ```bash
-   go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard@latest
-   go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard-mcp-gateway@latest
+   go install lictorate.com/vanzik/v2/cmd/vanzik@latest
+   go install lictorate.com/vanzik/v2/cmd/vanzik-mcp-gateway@latest
    ```
 
 2. **Pick a policy file** and update `--policy` in the JSON. `configs/default.yaml`
@@ -85,33 +85,33 @@ into the container.
 3. **Export the API key** in the shell that launches VS Code:
 
    ```bash
-   export AGENTGUARD_API_KEY="$(openssl rand -hex 32)"
+   export VANZIK_API_KEY="$(openssl rand -hex 32)"
    ```
 
    On macOS, VS Code launched from Finder/Spotlight does not see your
    `~/.zshrc` exports. Either launch VS Code from a terminal (`code .`) or
-   put `AGENTGUARD_API_KEY` in your VS Code `terminal.integrated.env.*`
+   put `VANZIK_API_KEY` in your VS Code `terminal.integrated.env.*`
    settings, then mirror it into the `env` block of the config above.
 
-4. **Start the central AgentGuard server:**
+4. **Start the central Vanzik server:**
 
    ```bash
-   agentguard server \
-     --policy /etc/agentguard/policy.yaml \
+   vanzik server \
+     --policy /etc/vanzik/policy.yaml \
      --dashboard \
      --watch \
-     --api-key "$AGENTGUARD_API_KEY"
+     --api-key "$VANZIK_API_KEY"
    ```
 
 5. **Save the JSON.** Cline picks up MCP-config changes immediately — the
-   server panel shows `agentguard` once the file parses cleanly.
+   server panel shows `vanzik` once the file parses cleanly.
 
 ## Verification
 
 Open the Cline chat in VS Code and ask:
 
 - "Read `/tmp/test.txt`" — Cline calls `fs:read_text_file` through the
-  gateway, AgentGuard's default policy ALLOWs it, dashboard shows the
+  gateway, Vanzik's default policy ALLOWs it, dashboard shows the
   event.
 - "List recent issues from `<your repo>`" — gateway routes via `github:`;
   the default policy requires approval for every `github:*` call, so the
@@ -121,12 +121,12 @@ Open the Cline chat in VS Code and ask:
 
 ## API key handling
 
-Do **not** pass `--api-key "$AGENTGUARD_API_KEY"` as an `args` entry.
+Do **not** pass `--api-key "$VANZIK_API_KEY"` as an `args` entry.
 Cline (like Claude Desktop) does **not** shell-expand `$VAR`
 references inside JSON `args` — the gateway would receive the literal
-string `$AGENTGUARD_API_KEY` and authentication would fail. Instead,
+string `$VANZIK_API_KEY` and authentication would fail. Instead,
 use the `env` block above to inject the key as an environment
-variable; the gateway picks up `AGENTGUARD_API_KEY` automatically
+variable; the gateway picks up `VANZIK_API_KEY` automatically
 when the `--api-key` flag is absent.
 
 ## Tenant ID
@@ -135,17 +135,17 @@ when the `--api-key` flag is absent.
 calls (they go to `/v1/t/<tenant>/check`). Keep `local` — the policy
 the server loads with `--policy` — unless you've registered another
 tenant on the central server with
-`agentguard tenant put <id> --policy <file.yaml>`. A tenant the server
+`vanzik tenant put <id> --policy <file.yaml>`. A tenant the server
 doesn't know answers `404`, which the gateway
 treats like an unreachable server: `--fail-mode` decides, so with `deny`
 every call is refused.
 
 ## Notes
 
-- If your VS Code window doesn't have the AgentGuard API key in its
+- If your VS Code window doesn't have the Vanzik API key in its
   environment, the gateway still works (it falls back to whatever is in
   the JSON's `env` block). Don't paste raw keys — pull from a secret
   manager instead.
 - Cline auto-approves tools in `alwaysAllow` at its own layer, but
-  AgentGuard's policy still gates them. The two layers compose: Cline
-  trusts the tool, AgentGuard verifies the call against the policy.
+  Vanzik's policy still gates them. The two layers compose: Cline
+  trusts the tool, Vanzik verifies the call against the policy.

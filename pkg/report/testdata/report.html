@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AgentGuard compliance evidence report</title>
+<title>Vanzik compliance evidence report</title>
 <style>
 :root { --fg: #1d1d1f; --muted: #5f6368; --bg: #fff; --line: #d9d9de; --head: #f4f4f6;
   --pass: #1e7b34; --warn: #9a6200; --fail: #b3261e; --unknown: #5f6368; }
@@ -32,24 +32,24 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
 </style>
 </head>
 <body>
-<h1>AgentGuard compliance evidence report</h1>
+<h1>Vanzik compliance evidence report</h1>
 <p class="disclaimer">Supporting evidence only. This report is not a SOC 2 report, a certification or an audit opinion; an auditor decides what it shows and whether it is enough.</p>
 
 <h2>Summary</h2>
 <table>
 <tr><th>Period</th><td>2026-10-01T00:00:00Z (inclusive) to 2026-10-08T00:00:00Z (exclusive)</td></tr>
 <tr><th>Generated</th><td>2026-10-08T01:00:00Z</td></tr>
-<tr><th>AgentGuard</th><td>1.4.0 (test)</td></tr>
-<tr><th>Source</th><td>audit log files: /var/lib/agentguard/audit.jsonl (2 files, unreadable lines: 0)</td></tr>
+<tr><th>Vanzik</th><td>1.4.0 (test)</td></tr>
+<tr><th>Source</th><td>audit log files: /var/lib/vanzik/audit.jsonl (2 files, unreadable lines: 0)</td></tr>
 <tr><th>Policy</th><td>configs/default.yaml (--policy), SHA-256 abababababababababababababababababababababababababababababababab</td></tr>
 <tr><th>Decisions</th><td>12 (ALLOW 5, DENY 3, REQUIRE_APPROVAL 4)</td></tr>
 <tr><th>Audit log</th><td><span class="status intact">intact</span></td></tr>
 </table>
 
 <h2>Audit log integrity</h2>
-<p><span class="status intact">intact</span> agentguard audit verify checked 14 sealed entries (seq 1 to 14): the chain is intact.</p>
+<p><span class="status intact">intact</span> vanzik audit verify checked 14 sealed entries (seq 1 to 14): the chain is intact.</p>
 <ul>
-<li>Checked with: agentguard audit verify, over the log files</li>
+<li>Checked with: vanzik audit verify, over the log files</li>
 <li>Sealed with: hmac-sha256 key 0123456789abcdef</li>
 <li>Latest seal anchor: <code>seq 14, hash cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd</code></li>
 <li>Files, oldest first: audit.jsonl.20260930T120000Z.gz, audit.jsonl</li>
@@ -130,7 +130,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
 <tr><th>Check</th><th>Status</th><th>Detail</th></tr>
 <tr><td>Audit log sealed</td><td><span class="status pass">pass</span></td><td>Yes, and the chain verified: every sealed entry carries seq, prev_hash and hash.</td></tr>
 <tr><td>Seal uses a secret key</td><td><span class="status pass">pass</span></td><td>HMAC-SHA256, verified with the key: only a holder of the key can write a chain that verifies.</td></tr>
-<tr><td>Seal chain verified</td><td><span class="status pass">pass</span></td><td>agentguard audit verify checked 14 sealed entries (seq 1 to 14): the chain is intact.</td></tr>
+<tr><td>Seal chain verified</td><td><span class="status pass">pass</span></td><td>vanzik audit verify checked 14 sealed entries (seq 1 to 14): the chain is intact.</td></tr>
 <tr><td>Entries outside the seal chain</td><td><span class="status pass">pass</span></td><td>None.</td></tr>
 <tr><td>Unreadable lines</td><td><span class="status pass">pass</span></td><td>Every line of the log files is an audit entry.</td></tr>
 <tr><td>Secrets masked in the log</td><td><span class="status fail">fail</span></td><td>Entries holding text that looks like a secret (an API key, token or password): 1. Is the server running with --audit-redact=false?</td></tr>
@@ -141,8 +141,8 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
 <p class="disclaimer">Supporting evidence only. This report is not a SOC 2 report, a certification or an audit opinion; an auditor decides what it shows and whether it is enough.</p>
 <table>
 <tr><th>Criterion</th><th>What this report shows</th><th>Where</th></tr>
-<tr><td><strong>CC6.1</strong> Logical access to protected assets is restricted</td><td>Agent actions that reached AgentGuard were checked against a policy (the policy file&#39;s SHA-256 abababababab…): 12 decisions, 3 denied, broken down by scope and agent.</td><td>Summary, Activity, Top rules, Posture checks</td></tr>
-<tr><td><strong>CC6.6</strong> Access from outside the system boundary is controlled</td><td>Actions reaching outside the agent (network, browser, MCP tools, LLM tool calls) went through AgentGuard; the scope and transport breakdowns and the deny rules show what was let through and what was blocked (2 scopes, 3 transports).</td><td>Activity, Top rules</td></tr>
+<tr><td><strong>CC6.1</strong> Logical access to protected assets is restricted</td><td>Agent actions that reached Vanzik were checked against a policy (the policy file&#39;s SHA-256 abababababab…): 12 decisions, 3 denied, broken down by scope and agent.</td><td>Summary, Activity, Top rules, Posture checks</td></tr>
+<tr><td><strong>CC6.6</strong> Access from outside the system boundary is controlled</td><td>Actions reaching outside the agent (network, browser, MCP tools, LLM tool calls) went through Vanzik; the scope and transport breakdowns and the deny rules show what was let through and what was blocked (2 scopes, 3 transports).</td><td>Activity, Top rules</td></tr>
 <tr><td><strong>CC7.2</strong> System components are monitored for anomalies</td><td>Every decision is recorded in the audit log; its seal status is &#34;intact&#34;, and the posture checks cover unreadable lines and unmasked secrets.</td><td>Audit log integrity, Activity, Posture checks</td></tr>
 <tr><td><strong>CC7.3</strong> Security events are evaluated</td><td>Entries sending an action to a person for approval: 4 (3 approval ids). On record as approved by a person: 1; denied by a person: 1. The top deny rules show which risky actions were stopped.</td><td>Approvals, Top rules</td></tr>
 <tr><td><strong>CC8.1</strong> Changes are authorized</td><td>The report names the policy file&#39;s SHA-256 abababababab…, so a reviewer can match it to an approved change. Actions the policy sends for approval (deploys, writes) needed a person&#39;s yes: see Approvals.</td><td>Summary, Approvals</td></tr>
@@ -150,7 +150,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
 
 <h2>Limits</h2>
 <ul>
-<li>The report counts what the audit log recorded. An action that never reached AgentGuard is not in it.</li>
+<li>The report counts what the audit log recorded. An action that never reached Vanzik is not in it.</li>
 <li>Approval outcomes show only when the agent came back with the approval id after a person decided. The log does not record the decision itself, who made it, or a request that timed out.</li>
 <li>The policy SHA-256 is of the file as it was when the report was made. The audit log does not record which version of the policy made each decision.</li>
 <li>The secret check uses the built-in patterns only, not a policy&#39;s notifications.redaction.extra_patterns.</li>

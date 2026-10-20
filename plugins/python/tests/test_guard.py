@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from agentguard import (
+from vanzik import (
     CheckResult,
     Guard,
     DECISION_ALLOW,
@@ -15,7 +15,7 @@ from agentguard import (
     FAIL_MODE_ALLOW,
     FAIL_MODE_DENY,
 )
-from tests.conftest import MockAgentGuardHandler
+from tests.conftest import MockVanzikHandler
 
 
 # ---------------------------------------------------------------------------
@@ -54,9 +54,9 @@ class TestCheckResult:
 
 class TestGuardInit:
     def test_default_url(self, monkeypatch):
-        # Guard() falls back to AGENTGUARD_URL, which CI jobs and developer
+        # Guard() falls back to VANZIK_URL, which CI jobs and developer
         # shells may set; the default only applies without it.
-        monkeypatch.delenv("AGENTGUARD_URL", raising=False)
+        monkeypatch.delenv("VANZIK_URL", raising=False)
         g = Guard()
         assert g.base_url == DEFAULT_BASE_URL
 
@@ -69,12 +69,12 @@ class TestGuardInit:
         assert g.base_url == "http://custom:9090"
 
     def test_env_var_url(self, monkeypatch):
-        monkeypatch.setenv("AGENTGUARD_URL", "http://env-host:1234")
+        monkeypatch.setenv("VANZIK_URL", "http://env-host:1234")
         g = Guard()
         assert g.base_url == "http://env-host:1234"
 
     def test_explicit_url_overrides_env(self, monkeypatch):
-        monkeypatch.setenv("AGENTGUARD_URL", "http://env-host:1234")
+        monkeypatch.setenv("VANZIK_URL", "http://env-host:1234")
         g = Guard("http://explicit:5555")
         assert g.base_url == "http://explicit:5555"
 
@@ -93,7 +93,7 @@ class TestGuardInit:
 
 class TestGuardCheck:
     def test_check_allow(self, mock_server):
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "ALLOW",
             "reason": "allowed by policy",
             "matched_rule": "allow:shell:*",
@@ -105,7 +105,7 @@ class TestGuardCheck:
         assert result.matched_rule == "allow:shell:*"
 
     def test_check_deny(self, mock_server):
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "DENY",
             "reason": "blocked by policy",
             "matched_rule": "deny:shell:rm",
@@ -116,7 +116,7 @@ class TestGuardCheck:
         assert result.reason == "blocked by policy"
 
     def test_check_require_approval(self, mock_server):
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "REQUIRE_APPROVAL",
             "reason": "needs human review",
             "approval_id": "ap_abc123",
@@ -158,7 +158,7 @@ class TestGuardCheck:
     def test_check_sends_correct_payload(self, mock_server):
         g = Guard(mock_server, agent_id="test-agent")
         g.check("filesystem", action="write", path="/tmp/test.txt", meta={"key": "val"})
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body["scope"] == "filesystem"
         assert body["agent_id"] == "test-agent"
         assert body["action"] == "write"
@@ -168,7 +168,7 @@ class TestGuardCheck:
     def test_check_omits_empty_fields(self, mock_server):
         g = Guard(mock_server)
         g.check("shell", command="ls")
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert "path" not in body
         assert "domain" not in body
         assert "url" not in body
@@ -205,29 +205,29 @@ class TestGuardAuth:
     def test_approve_sends_auth_header(self, mock_server):
         g = Guard(mock_server, api_key="my-secret")
         g.approve("ap_123")
-        assert MockAgentGuardHandler.last_request_headers is not None
-        assert MockAgentGuardHandler.last_request_headers.get("Authorization") == "Bearer my-secret"
+        assert MockVanzikHandler.last_request_headers is not None
+        assert MockVanzikHandler.last_request_headers.get("Authorization") == "Bearer my-secret"
 
     def test_deny_sends_auth_header(self, mock_server):
         g = Guard(mock_server, api_key="my-secret")
         g.deny("ap_123")
-        assert MockAgentGuardHandler.last_request_headers is not None
-        assert MockAgentGuardHandler.last_request_headers.get("Authorization") == "Bearer my-secret"
+        assert MockVanzikHandler.last_request_headers is not None
+        assert MockVanzikHandler.last_request_headers.get("Authorization") == "Bearer my-secret"
 
     def test_approve_no_auth_header_without_key(self, mock_server):
         g = Guard(mock_server)
         g.approve("ap_123")
-        assert MockAgentGuardHandler.last_request_headers is not None
-        assert MockAgentGuardHandler.last_request_headers.get("Authorization") is None
+        assert MockVanzikHandler.last_request_headers is not None
+        assert MockVanzikHandler.last_request_headers.get("Authorization") is None
 
     def test_api_key_from_env(self, mock_server, monkeypatch):
-        monkeypatch.setenv("AGENTGUARD_API_KEY", "env-secret")
+        monkeypatch.setenv("VANZIK_API_KEY", "env-secret")
         g = Guard(mock_server)
         g.approve("ap_123")
-        assert MockAgentGuardHandler.last_request_headers.get("Authorization") == "Bearer env-secret"
+        assert MockVanzikHandler.last_request_headers.get("Authorization") == "Bearer env-secret"
 
     def test_explicit_key_overrides_env(self, mock_server, monkeypatch):
-        monkeypatch.setenv("AGENTGUARD_API_KEY", "env-secret")
+        monkeypatch.setenv("VANZIK_API_KEY", "env-secret")
         g = Guard(mock_server, api_key="explicit-secret")
         g.approve("ap_123")
-        assert MockAgentGuardHandler.last_request_headers.get("Authorization") == "Bearer explicit-secret"
+        assert MockVanzikHandler.last_request_headers.get("Authorization") == "Bearer explicit-secret"

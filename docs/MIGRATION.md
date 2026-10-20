@@ -1,6 +1,8 @@
 # Migration Guide
 
-This document tells operators what to expect when upgrading between AgentGuard releases. Every release that changes on-disk state, default behavior, or a contract operators may depend on gets a section here.
+This document tells operators what to expect when upgrading between Vanzik releases. Every release that changes on-disk state, default behavior, or a contract operators may depend on gets a section here.
+
+**Upgrading from AgentGuard 1.x?** Before 2.0 this project was called AgentGuard. Read [v1.x to v2.0](#v1x-to-v20): it explains what the 2.0 installers move for you, including the coding-agent hooks that still run the `agentguard` program. The sections before it describe releases made under the AgentGuard name and use the names of their time.
 
 For a single-line summary of each change, see `CHANGELOG.md`. For deep-dive release notes, see `docs/releases/`. For the format-version contract, see `docs/FILE_FORMATS.md`.
 
@@ -844,3 +846,227 @@ the server's command line if you added them by hand. A login service written
 by 1.4's `setup` passes `--audit-seal`; choose *Change settings* → start at
 login: *No* first, then set it up again after installing 1.3 with
 `AGENTGUARD_VERSION=1.3.0` and the one-line installer.
+
+---
+
+## v1.x to v2.0
+
+2.0.0 renames the project from AgentGuard to Vanzik. Every name that said
+AgentGuard says Vanzik now, and the old names are gone: no alias, no second
+binary, no fallback variable. Nothing else about the product changed. The
+policy schema, the `/v1/*` wire protocol, the audit log format with its hash
+chain and seal, and every command's flags are as in 1.4.0, so your policy,
+audit log and database carry over as they are.
+
+The rename has one risk worth reading this section for. The coding-agent
+hooks that `agentguard setup` connected live in each agent's own settings
+(`~/.claude/settings.json`, `~/.cursor/hooks.json`,
+`~/.gemini/settings.json`, `~/.codex/hooks.json`) and run the `agentguard`
+program by its path. Most agents let a tool call through, unchecked, when a
+hook's program is missing. A hook left pointing at `agentguard` keeps
+working only as long as that program does, and stops checking anything the
+day it's deleted. The 2.0 installers and `vanzik setup` therefore migrate
+for you.
+
+### Upgrading a computer set up with `agentguard setup` or the installers
+
+Run the 2.0 installer as the user who set AgentGuard up (not with sudo):
+
+```bash
+curl -fsSL https://github.com/lictorate/vanzik/releases/latest/download/install.sh | sh
+```
+
+```powershell
+irm https://github.com/lictorate/vanzik/releases/latest/download/install.ps1 | iex
+```
+
+Once the new programs are installed, the installer runs
+`vanzik migrate --from-agentguard`. That command, which `vanzik setup` also
+runs before its menu (and which you can run yourself), does this, in order:
+
+1. **Stops the AgentGuard server and removes its login service**: the
+   systemd user unit `agentguard.service`, the LaunchAgent
+   `com.lictorate.agentguard`, or the Task Scheduler task `AgentGuard`. If
+   that fails, it stops and changes nothing: AgentGuard keeps running as it
+   was.
+2. **Moves the folders**, renaming them, so every file keeps its bytes:
+   `~/.config/agentguard` → `~/.config/vanzik` (policy, API key,
+   `setup.json`), and `~/.local/share/agentguard` → `~/.local/share/vanzik`
+   (audit log and its rotated files, seal key, database, server log). On
+   Windows: `%APPDATA%\agentguard` → `%APPDATA%\vanzik` and
+   `%LOCALAPPDATA%\AgentGuard\data` → `%LOCALAPPDATA%\Vanzik\data`. If the
+   Vanzik folder already has a file of the same name, the Vanzik copy is
+   kept, AgentGuard's stays where it was, and the step is reported as
+   failed for you to compare them. (A starter policy nobody edited is the
+   exception: your policy replaces it.)
+3. **Leaves a link** `~/.config/agentguard` → `vanzik` (a junction on
+   Windows). An agent session that is open during the upgrade read its
+   hooks when it started and keeps calling `agentguard` until it restarts;
+   through the link, that program still finds its API key and port, so its
+   calls are still checked. Delete the link once you've restarted your
+   agents.
+4. **Updates `setup.json`**: paths into the moved folders point into the new
+   ones. Nothing else in it changes.
+5. **Renames the database** `agentguard.db` to `vanzik.db`, with its
+   `-wal`/`-shm` files. (`vanzik server` does the same by itself when it
+   starts on the default database of a `--data-dir` holding an
+   `agentguard.db`, so a server you run by hand keeps its approvals,
+   rate-limit state and tenant policies too.)
+6. **Points the hooks at `vanzik`.** In each agent's settings, every entry
+   AgentGuard wrote, `"<…>/agentguard" hook <agent>`, gets the `vanzik`
+   program's path instead; `--fail-closed` and PowerShell's `& ` stay, and
+   so does every other key (the matcher, a timeout you changed, your own
+   hooks beside it). The labels AgentGuard gave its Gemini CLI and Codex
+   entries are renamed too. Each file that changes keeps its old copy as
+   `<file>.vanzik-backup`. An entry is only touched if it is exactly what
+   AgentGuard wrote, so a wrapper of your own such as
+   `/opt/agentguard-wrapper.sh hook cursor` is left alone. A file that
+   isn't plain JSON (Gemini CLI allows comments) can't be edited and is
+   reported, with what to change by hand.
+7. **Starts the server at login again**, as `vanzik.service`,
+   `com.lictorate.vanzik` or the task `Vanzik`, with the migrated settings,
+   and waits for it to answer.
+
+Run again, it finds nothing and says so. The old `agentguard` programs are
+not deleted, and neither are the old `.agentguard-backup` files; the summary
+lists what is left for you.
+
+If any step fails, the installer still installs Vanzik but exits non-zero,
+and `vanzik setup` stops before its menu. Fix what the step says, then run
+`vanzik migrate --from-agentguard` again.
+
+### What you should do afterwards
+
+1. **Restart your agent sessions** (Claude Code, Cursor, Gemini CLI, Codex)
+   so they load the new hook.
+2. **Trust the hook again in Codex**: type `/hooks` and trust Vanzik's.
+   Codex runs a changed hook only once it is trusted, so until then its tool
+   calls are not checked. The migration reminds you when it changed Codex's
+   hook.
+3. **Rename your environment variables**, wherever you set them (shell
+   startup files, services, CI, container definitions). The migration lists
+   the ones set in its own environment.
+4. **Update MCP client configs** that start `agentguard-mcp-gateway` or
+   `agentguard-llm-proxy`: Claude Desktop, Cursor's `mcp.json`, Cline,
+   Continue, Zed, Codex's `config.toml`. Change the program to
+   `vanzik-mcp-gateway` / `vanzik-llm-proxy`. The migration lists the ones it
+   finds, but doesn't edit them.
+5. **Delete the old programs** once nothing runs them:
+   `~/.local/bin/agentguard*` (or `/usr/local/bin`, or
+   `%LOCALAPPDATA%\Programs\AgentGuard\bin` and its PATH entry), then the
+   link `~/.config/agentguard`.
+6. **Upgrade the SDKs**: `pip uninstall agentguardproxy && pip install
+   vanzik`, and `npm uninstall @lictorate/agentguard && npm install
+   @lictorate/vanzik`. Change the imports and class names (table below).
+7. **Update what reads Vanzik's output**: Prometheus queries, dashboards and
+   alerts (`agentguard_*` → `vanzik_*`; the old series stop, they don't
+   rename), webhook receivers that match the `User-Agent`, scripts that
+   read `X-AgentGuard-*` response headers or a report's
+   `agentguard_version`, and MCP or LLM clients that look for
+   `dev.agentguard/` or `agentguard-refusal`.
+
+### Servers you deployed yourself
+
+The migration changes nothing for a system-wide install: run as root it
+only lists what it finds (`/etc/agentguard`, `/var/lib/agentguard`, an
+`agentguard.service` system unit), because a unit or manifest you wrote
+names those paths, and moving them from under it would stop the server at
+its next restart. Move it when you're ready:
+
+- **A systemd system unit** (as in [`DEPLOYMENT.md`](DEPLOYMENT.md)): stop
+  it; `mv /etc/agentguard /etc/vanzik` and `mv /var/lib/agentguard
+  /var/lib/vanzik`; install the `vanzik` binaries; rename the unit to
+  `vanzik.service` and change its `ExecStart`, paths, `User=` and
+  environment to the new names; `systemctl daemon-reload`; start it. The
+  server renames `agentguard.db` itself on its first start.
+- **The container image** is `ghcr.io/lictorate/vanzik`. Inside it the
+  policy is `/etc/vanzik/default.yaml`, the data folder `/var/lib/vanzik`,
+  and the user `vanzik` (the same uid, 10001, so a volume's permissions
+  still fit). Mount your existing volume at `/var/lib/vanzik` instead of
+  `/var/lib/agentguard`, mount your policy at `/etc/vanzik/default.yaml`,
+  and rename `-e AGENTGUARD_*` to `-e VANZIK_*`.
+- **PostgreSQL** is unaffected: the store's tables have no product name in
+  them, and your DSN names whatever database you created.
+- **Multi-node**: upgrade every node before relying on 2.0 dashboards or
+  metrics; the wire protocol didn't change, so mixed 1.4/2.0 nodes check
+  calls the same way meanwhile.
+
+### Behavior changes worth knowing about
+
+- **An `AGENTGUARD_*` variable that would be used stops the program.**
+  Vanzik never reads the old variables. But a `vanzik server` started with
+  `AGENTGUARD_API_KEY` set (and no `--api-key`, `--api-key-file` or
+  `VANZIK_API_KEY`) would otherwise run without the key its operator
+  meant, so it exits naming `VANZIK_API_KEY` instead. The same goes for
+  `AGENTGUARD_POLICY` (server, `validate`, `check`, `test`),
+  `AGENTGUARD_URL` (the client commands, `vanzik-mcp-gateway`,
+  `vanzik-llm-proxy`), and `AGENTGUARD_URL`, `AGENTGUARD_API_KEY` and
+  `AGENTGUARD_TENANT_ID` in the SDKs (a `ValueError` from `Guard()`, a
+  `TypeError` from `new Vanzik()`). A flag, an explicit argument, or the
+  `VANZIK_*` variable makes the old one irrelevant. `vanzik hook` never
+  refuses to run, since an agent lets the call through when its hook
+  fails; when it can't check a call, its message names the old variable.
+- **The dashboard's cookies are `vanzik_session` and `vanzik_csrf`.**
+  Upgrading restarts the server, so you sign in again either way.
+- **An approval id kept in `_meta["dev.agentguard/approval_id"]`** is not
+  read; MCP clients retrying after an approval must send
+  `dev.vanzik/approval_id`. A retry with the old key asks for a new
+  approval.
+- **The LLM proxy's own auth header is `X-Vanzik-Proxy-Auth`.** A client
+  still sending `X-AgentGuard-Proxy-Auth` gets 401 until it changes.
+
+### Renamed
+
+| AgentGuard 1.x | Vanzik 2.0 |
+| --- | --- |
+| `agentguard`, `agentguard-mcp-gateway`, `agentguard-llm-proxy` | `vanzik`, `vanzik-mcp-gateway`, `vanzik-llm-proxy` |
+| `AGENTGUARD_API_KEY`, `_URL`, `_POLICY`, `_TENANT_ID`, `_NO_UPDATE_CHECK`, `_DISTRIBUTION`, `_VERSION`, `_INSTALL_DIR`, `_DOWNLOAD_URL`, `_NO_MODIFY_PATH`, `_UNINSTALL`, `_PURGE` | `VANZIK_API_KEY`, `_URL`, `_POLICY`, `_TENANT_ID`, `_NO_UPDATE_CHECK`, `_DISTRIBUTION`, `_VERSION`, `_INSTALL_DIR`, `_DOWNLOAD_URL`, `_NO_MODIFY_PATH`, `_UNINSTALL`, `_PURGE` |
+| `~/.config/agentguard`, `~/.local/share/agentguard` | `~/.config/vanzik`, `~/.local/share/vanzik` |
+| `/etc/agentguard`, `/var/lib/agentguard` | `/etc/vanzik`, `/var/lib/vanzik` |
+| `%APPDATA%\agentguard`, `%LOCALAPPDATA%\AgentGuard\data`, `%LOCALAPPDATA%\Programs\AgentGuard\bin` | `%APPDATA%\vanzik`, `%LOCALAPPDATA%\Vanzik\data`, `%LOCALAPPDATA%\Programs\Vanzik\bin` |
+| `agentguard.db` | `vanzik.db` |
+| `agentguard.service`, `com.lictorate.agentguard`, task `AgentGuard` | `vanzik.service`, `com.lictorate.vanzik`, task `Vanzik` |
+| `<file>.agentguard-backup` | `<file>.vanzik-backup` |
+| `X-AgentGuard-Policy-Ms`, `-Audit-Ms`, `-Total-Ms`, `-Parent-Session`, `-Proxy-Auth` | `X-Vanzik-Policy-Ms`, `-Audit-Ms`, `-Total-Ms`, `-Parent-Session`, `-Proxy-Auth` |
+| MCP `_meta` prefix `dev.agentguard/` | `dev.vanzik/` |
+| LLM proxy refusal id `agentguard-refusal`, error type `agentguard_error`, `User-Agent: agentguard-llm-proxy/…` | `vanzik-refusal`, `vanzik_error`, `vanzik-llm-proxy/…` |
+| Webhook `User-Agent: AgentGuard/1.0` | `Vanzik/2.0` |
+| Report field `agentguard_version` | `vanzik_version` |
+| Metrics `agentguard_*`; example alerts `AgentGuard*` | `vanzik_*`; `Vanzik*` |
+| Dashboard cookies `ag_session`, `ag_csrf` | `vanzik_session`, `vanzik_csrf` |
+| Go module `github.com/Caua-ferraz/AgentGuard` | `lictorate.com/vanzik/v2` |
+| Go `mcpgw.MetaPrefixAgentGuard`, `report.Report.AgentGuardVersion` | `mcpgw.MetaPrefixVanzik`, `report.Report.VanzikVersion` |
+| PyPI `agentguardproxy`, `import agentguard` | PyPI `vanzik`, `import vanzik` |
+| Python `AgentGuardError`, `AgentGuardDenied`, `AgentGuardApprovalRequired`, `AgentGuardApprovalTimeout`, `AgentGuardAuthError`, `AgentGuardTimeoutError`; `agentguard_tool_guardrail` | `VanzikError`, `VanzikDenied`, `VanzikApprovalRequired`, `VanzikApprovalTimeout`, `VanzikAuthError`, `VanzikTimeoutError`; `vanzik_tool_guardrail` |
+| npm `@lictorate/agentguard` | `@lictorate/vanzik` |
+| TypeScript `AgentGuard`, `AgentGuardOptions`, `AgentGuardError`, `AgentGuardDeniedError`, `AgentGuardApprovalRequiredError`, `AgentGuardApprovalTimeoutError`, `AgentGuardAuthError` | `Vanzik`, `VanzikOptions`, `VanzikError`, `VanzikDeniedError`, `VanzikApprovalRequiredError`, `VanzikApprovalTimeoutError`, `VanzikAuthError` |
+| Image `ghcr.io/caua-ferraz/agentguard` | `ghcr.io/lictorate/vanzik` |
+| `github.com/Caua-ferraz/AgentGuard`, `agentguard.lictorate.com` | `github.com/lictorate/vanzik`, `vanzik.lictorate.com` |
+| Release archives `agentguard_<v>_<os>_<arch>` | `vanzik_<v>_<os>_<arch>` |
+
+`go install lictorate.com/vanzik/v2/cmd/...@v2.0.0` replaces
+`go install github.com/Caua-ferraz/AgentGuard/cmd/...`; a Go program that
+imports the packages changes its import paths to `lictorate.com/vanzik/v2/…`.
+
+1.x's own update path doesn't reach 2.0: `agentguard setup` → *Update* looks
+for an `agentguard_*` archive, which 2.0 doesn't publish, and stops with an
+error without changing anything. Use the 2.0 installer.
+
+### Rollback to v1.4.x
+
+1. Stop Vanzik and its login service: `vanzik setup` → *Uninstall…* →
+   *Stop the server and don't start it at login*.
+2. Put the folders back: delete the link `~/.config/agentguard`, then move
+   `~/.config/vanzik` → `~/.config/agentguard` and
+   `~/.local/share/vanzik` → `~/.local/share/agentguard` (on Windows, the
+   `%APPDATA%` and `%LOCALAPPDATA%` folders above), and rename `vanzik.db`
+   (and its `-wal`/`-shm` files) back to `agentguard.db`. Change the paths in
+   `setup.json` back.
+3. Restore each agent's settings from `<file>.vanzik-backup`, if you haven't
+   changed them since, or change `vanzik` back to `agentguard` in the hook
+   entries.
+4. Install 1.4: the 1.x installer with `AGENTGUARD_VERSION=1.4.0`, then
+   `agentguard setup` → *Change settings* to start it at login again.
+
+The policy, audit log and database are the same formats in both, so 1.4
+reads everything 2.0 wrote.

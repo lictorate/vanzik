@@ -18,7 +18,7 @@ from typing import List
 
 import pytest
 
-from agentguard import Guard, LOCAL_TENANT_ID
+from vanzik import Guard, LOCAL_TENANT_ID
 
 
 # ---------- Direct URL-builder tests ----------
@@ -63,16 +63,16 @@ def test_tenant_id_is_url_quoted():
 
 
 def test_env_var_default(monkeypatch):
-    """AGENTGUARD_TENANT_ID populates tenant_id when no explicit kwarg."""
-    monkeypatch.setenv("AGENTGUARD_TENANT_ID", "fromenv")
+    """VANZIK_TENANT_ID populates tenant_id when no explicit kwarg."""
+    monkeypatch.setenv("VANZIK_TENANT_ID", "fromenv")
     g = Guard(base_url="http://example.test:8080")
     assert g.tenant_id == "fromenv"
     assert g._url("/check") == "http://example.test:8080/v1/t/fromenv/check"
 
 
 def test_explicit_tenant_overrides_env(monkeypatch):
-    """An explicit tenant_id kwarg wins over AGENTGUARD_TENANT_ID."""
-    monkeypatch.setenv("AGENTGUARD_TENANT_ID", "fromenv")
+    """An explicit tenant_id kwarg wins over VANZIK_TENANT_ID."""
+    monkeypatch.setenv("VANZIK_TENANT_ID", "fromenv")
     g = Guard(base_url="http://example.test:8080", tenant_id="explicit")
     assert g.tenant_id == "explicit"
     assert g._url("/check") == "http://example.test:8080/v1/t/explicit/check"
@@ -84,9 +84,9 @@ def test_explicit_empty_string_disables_env(monkeypatch):
     Passing the literal empty string is distinct from passing None: it
     suppresses the env-var lookup so a scoped test can revert to the
     legacy URL family even when the developer machine has
-    AGENTGUARD_TENANT_ID exported.
+    VANZIK_TENANT_ID exported.
     """
-    monkeypatch.setenv("AGENTGUARD_TENANT_ID", "fromenv")
+    monkeypatch.setenv("VANZIK_TENANT_ID", "fromenv")
     g = Guard(base_url="http://example.test:8080", tenant_id="")
     assert g.tenant_id == ""
     assert g._url("/check") == "http://example.test:8080/v1/check"
@@ -95,7 +95,7 @@ def test_explicit_empty_string_disables_env(monkeypatch):
 def test_local_alias_after_env(monkeypatch):
     """tenant_id="local" suppresses the /v1/t/local prefix even when the
     env var would otherwise route through the tenant-aware family."""
-    monkeypatch.setenv("AGENTGUARD_TENANT_ID", "acme")
+    monkeypatch.setenv("VANZIK_TENANT_ID", "acme")
     g = Guard(base_url="http://example.test:8080", tenant_id="local")
     # Caller explicitly chose "local"; the URL is the legacy form.
     assert g._url("/check") == "http://example.test:8080/v1/check"

@@ -7,7 +7,7 @@ sequence of ALLOW / DENY / REQUIRE_APPROVAL decisions without flipping a
 class-level slot in the middle of the run.
 
 We do NOT mock the framework libraries themselves — that is the whole point
-of these tests. We only mock the AgentGuard HTTP server.
+of these tests. We only mock the Vanzik HTTP server.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import pytest
 
 # ---------------------------------------------------------------------------
 # A queue-driven mock that lets each test enqueue a sequence of responses
-# AgentGuard would have returned. Index by call N -> response. A test that
+# Vanzik would have returned. Index by call N -> response. A test that
 # enqueues ``[ALLOW, DENY]`` will see the first /v1/check call return ALLOW
 # and the second return DENY.
 # ---------------------------------------------------------------------------
@@ -145,7 +145,7 @@ class IntegrationMock:
 
 @pytest.fixture()
 def integration_mock():
-    """Boot a per-test AgentGuard mock with response queues.
+    """Boot a per-test Vanzik mock with response queues.
 
     Yields an :class:`IntegrationMock` exposing ``base_url``, queue helpers
     and a list of captured requests.

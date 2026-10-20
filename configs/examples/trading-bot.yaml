@@ -3,7 +3,7 @@
 # Webhook URLs and secrets in this file are placeholders.
 # Replace any https://example.invalid/... URL before deploying.
 # ============================================================
-# AgentGuard Policy: Trading Bot
+# Vanzik Policy: Trading Bot
 # Strict guardrails for AI agents interacting with financial APIs.
 #
 # See docs/POLICY_REFERENCE.md. Evaluation inside a scope is:

@@ -1,6 +1,6 @@
 package llmproxy
 
-// server.go is the HTTP server skeleton for agentguard-llm-proxy. It
+// server.go is the HTTP server skeleton for vanzik-llm-proxy. It
 // wires routes, the non-streaming forward path, the streaming
 // pause/resume/rewrite path, scope mapping, and the policy gate +
 // refusal construction hooks.
@@ -26,8 +26,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/internal/gateclient"
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/internal/gateclient"
+	"lictorate.com/vanzik/v2/pkg/metrics"
 )
 
 // BuildVersion is overridden via -ldflags by the binary entry point.
@@ -44,13 +44,13 @@ var BuildVersion = "dev"
 // HTTP/1.1 anyway). SDK callers wishing to authenticate with the
 // proxy set this header in addition to (not instead of) the
 // upstream's Authorization.
-const ProxyAuthHeader = "X-AgentGuard-Proxy-Auth"
+const ProxyAuthHeader = "X-Vanzik-Proxy-Auth"
 
 // ParentSessionHeader names the session that started the caller's session
 // (X-Session-ID): an orchestrator's session for a sub-agent. The proxy sends
 // it to /v1/check as parent_session_id; like X-Session-ID it is also
 // forwarded upstream unchanged.
-const ParentSessionHeader = "X-AgentGuard-Parent-Session"
+const ParentSessionHeader = "X-Vanzik-Parent-Session"
 
 // ----- Hook input/output types -----
 
@@ -94,7 +94,7 @@ type ToolCallCheck struct {
 	TenantID   string
 	ApprovalID string
 
-	// ParentSessionID is the X-AgentGuard-Parent-Session header: the
+	// ParentSessionID is the X-Vanzik-Parent-Session header: the
 	// session that started this one, recorded in the audit log so the
 	// sessions API can group them. Policy ignores it.
 	ParentSessionID string
@@ -201,7 +201,7 @@ type Server struct {
 	// streamingActive counts in-flight streaming requests across the
 	// whole server process. Enforced against cfg.MaxConcurrentStreams
 	// in the streaming dispatch path; exposed via the
-	// agentguard_llmproxy_streams_active gauge. Read-only outside the
+	// vanzik_llmproxy_streams_active gauge. Read-only outside the
 	// streaming entry/exit fences.
 	streamingActive atomic.Int64
 }
@@ -386,7 +386,7 @@ func (s *Server) recoverPanic(next http.HandlerFunc) http.HandlerFunc {
 				}
 				cw.Header().Set("Content-Type", "application/json")
 				cw.WriteHeader(http.StatusInternalServerError)
-				_, _ = cw.Write([]byte(`{"error":{"message":"internal server error","type":"agentguard_error"}}`))
+				_, _ = cw.Write([]byte(`{"error":{"message":"internal server error","type":"vanzik_error"}}`))
 			}
 		}()
 		next(cw, r)
@@ -424,7 +424,7 @@ func (s *Server) admitStream(w http.ResponseWriter) bool {
 		w.Header().Set("Retry-After", "5")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte(`{"error":{"message":"server overloaded; too many concurrent streams","type":"agentguard_error"}}`))
+		_, _ = w.Write([]byte(`{"error":{"message":"server overloaded; too many concurrent streams","type":"vanzik_error"}}`))
 		return false
 	}
 	metrics.AddLLMProxyStreamsActive(1)
@@ -455,7 +455,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// authMiddleware enforces the proxy's own bearer (X-AgentGuard-Proxy-Auth)
+// authMiddleware enforces the proxy's own bearer (X-Vanzik-Proxy-Auth)
 // when --proxy-api-key is set. When unset (the default for
 // loopback-only deployments) it's a no-op.
 //
@@ -677,7 +677,7 @@ func writeJSONError(w http.ResponseWriter, status int, err error) {
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"error": map[string]interface{}{
 			"message": err.Error(),
-			"type":    "agentguard_error",
+			"type":    "vanzik_error",
 		},
 	})
 }
@@ -717,7 +717,7 @@ func readRequestBody(r *http.Request, maxBytes int) ([]byte, error) {
 var errBodyTooLarge = errors.New("request body exceeds --max-buffer-bytes")
 
 // Run is the package-level convenience entry point invoked by
-// cmd/agentguard-llm-proxy/main.go. Mirrors mcpgw.Run.
+// cmd/vanzik-llm-proxy/main.go. Mirrors mcpgw.Run.
 func Run(ctx context.Context, cfg *Config) error {
 	srv, err := NewServer(cfg)
 	if err != nil {

@@ -1,4 +1,4 @@
-// Package depaudit is AgentGuard's dependency safety auditor.
+// Package depaudit is Vanzik's dependency safety auditor.
 //
 // It answers one question across every ecosystem the project ships
 // (Go module, Python SDK, TypeScript SDK): is each dependency on a *safe*
@@ -548,7 +548,7 @@ func parsePyproject(path string) ([]Dependency, error) {
 		}
 		for _, m := range quoted.FindAllStringSubmatch(t, -1) {
 			name, spec, ok := parseRequirement(m[1])
-			if !ok || name == "agentguardproxy" { // skip self-referential extras
+			if !ok || name == "vanzik" { // skip self-referential extras
 				continue
 			}
 			if seen[name] {

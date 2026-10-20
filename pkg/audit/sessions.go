@@ -7,7 +7,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // SubagentMetaKey is the request meta key that names a sub-agent. The

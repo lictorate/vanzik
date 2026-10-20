@@ -12,4 +12,4 @@ Name and link to the framework.
 Describe how the framework calls tools, runs commands, or makes API calls.
 
 **Integration approach**
-How should AgentGuard hook in? (middleware, wrapper, plugin, etc.)
+How should Vanzik hook in? (middleware, wrapper, plugin, etc.)

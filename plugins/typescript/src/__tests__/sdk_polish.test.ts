@@ -5,15 +5,15 @@
  *  - R5 E8  / S13 — content-type / status-shape validation in check().
  *  - R5 E10 / E11  — invalid failMode rejected at construction.
  *  - R5 E14 — jitter on waitForApproval polling.
- *  - R5 E15 — unknown options rejected on AgentGuard ctor and guarded().
- *  - R5 P9  — distinguish HTTP 401/403 (AgentGuardAuthError) from
+ *  - R5 E15 — unknown options rejected on Vanzik ctor and guarded().
+ *  - R5 P9  — distinguish HTTP 401/403 (VanzikAuthError) from
  *             approval-poll timeout.
  */
 
 import {
-  AgentGuard,
-  AgentGuardAuthError,
-  AgentGuardError,
+  Vanzik,
+  VanzikAuthError,
+  VanzikError,
   guarded,
 } from "../index";
 
@@ -40,9 +40,9 @@ function jsonResponse(body: unknown, init: ResponseInit = { status: 200 }): Resp
 const ORIGINAL_ENV = { ...process.env };
 
 beforeEach(() => {
-  delete process.env.AGENTGUARD_URL;
-  delete process.env.AGENTGUARD_API_KEY;
-  delete process.env.AGENTGUARD_TENANT_ID;
+  delete process.env.VANZIK_URL;
+  delete process.env.VANZIK_API_KEY;
+  delete process.env.VANZIK_TENANT_ID;
 });
 
 afterAll(() => {
@@ -56,25 +56,25 @@ afterAll(() => {
 describe("failMode validation", () => {
   test("invalid failMode at construction throws TypeError", () => {
     expect(
-      () => new AgentGuard({ failMode: "always" as unknown as "deny" })
+      () => new Vanzik({ failMode: "always" as unknown as "deny" })
     ).toThrow(TypeError);
     expect(
-      () => new AgentGuard({ failMode: "always" as unknown as "deny" })
+      () => new Vanzik({ failMode: "always" as unknown as "deny" })
     ).toThrow(/invalid failMode/);
   });
 
   test("explicit deny is accepted", () => {
-    expect(() => new AgentGuard({ failMode: "deny" })).not.toThrow();
+    expect(() => new Vanzik({ failMode: "deny" })).not.toThrow();
   });
 
   test("explicit allow is accepted", () => {
-    expect(() => new AgentGuard({ failMode: "allow" })).not.toThrow();
+    expect(() => new Vanzik({ failMode: "allow" })).not.toThrow();
   });
 
   test("default (no failMode) defaults to deny", async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockRejectedValueOnce(new Error("ECONNREFUSED"));
-    const g = new AgentGuard();
+    const g = new Vanzik();
     const r = await g.check("shell", { command: "ls" });
     expect(r.denied).toBe(true);
   });
@@ -82,7 +82,7 @@ describe("failMode validation", () => {
   test("string-form ctor cannot specify failMode (defaults to deny)", async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockRejectedValueOnce(new Error("nope"));
-    const g = new AgentGuard("http://localhost:8080");
+    const g = new Vanzik("http://localhost:8080");
     const r = await g.check("shell", { command: "ls" });
     expect(r.denied).toBe(true);
   });
@@ -93,7 +93,7 @@ describe("failMode validation", () => {
 // ===========================================================================
 
 describe("unknown options rejection", () => {
-  test("AgentGuard ctor rejects unknown keys", () => {
+  test("Vanzik ctor rejects unknown keys", () => {
     // Build the bad options as a Record<string,unknown> first, then double-cast
     // through unknown to the ctor parameter type. This sidesteps TS's
     // "no excess property" check (which would forbid `agnetId` literal) and
@@ -101,15 +101,15 @@ describe("unknown options rejection", () => {
     const bad = {
       baseUrl: "http://localhost:8080",
       agnetId: "x",
-    } as unknown as ConstructorParameters<typeof AgentGuard>[0];
-    expect(() => new AgentGuard(bad)).toThrow(TypeError);
+    } as unknown as ConstructorParameters<typeof Vanzik>[0];
+    expect(() => new Vanzik(bad)).toThrow(TypeError);
   });
 
-  test("AgentGuard ctor names valid options in the error message", () => {
-    const bad = { bogus: 1 } as unknown as ConstructorParameters<typeof AgentGuard>[0];
+  test("Vanzik ctor names valid options in the error message", () => {
+    const bad = { bogus: 1 } as unknown as ConstructorParameters<typeof Vanzik>[0];
     let caught: unknown;
     try {
-      new AgentGuard(bad);
+      new Vanzik(bad);
     } catch (e) {
       caught = e;
     }
@@ -119,7 +119,7 @@ describe("unknown options rejection", () => {
   });
 
   test("guarded() rejects unknown option keys", () => {
-    const g = new AgentGuard();
+    const g = new Vanzik();
     const fn = async () => "ran";
     const badOpts = { waitForApprovel: true } as unknown as Parameters<
       typeof guarded
@@ -135,7 +135,7 @@ describe("unknown options rejection", () => {
   });
 
   test("guarded() accepts known keys", () => {
-    const g = new AgentGuard();
+    const g = new Vanzik();
     const fn = async () => "ran";
     expect(() =>
       guarded(g, "shell", fn as unknown as (...args: unknown[]) => Promise<unknown>, {
@@ -160,7 +160,7 @@ describe("check() response shape validation", () => {
         headers: { "Content-Type": "text/html" },
       })
     );
-    const g = new AgentGuard({ failMode: "deny" });
+    const g = new Vanzik({ failMode: "deny" });
     const r = await g.check("shell", { command: "ls" });
     expect(r.denied).toBe(true);
     expect(r.reason.toLowerCase()).toContain("content-type");
@@ -174,7 +174,7 @@ describe("check() response shape validation", () => {
         headers: { "Content-Type": "text/plain" },
       })
     );
-    const g = new AgentGuard({ failMode: "allow" });
+    const g = new Vanzik({ failMode: "allow" });
     const r = await g.check("shell", { command: "ls" });
     expect(r.allowed).toBe(true);
   });
@@ -187,7 +187,7 @@ describe("check() response shape validation", () => {
         headers: { "Content-Type": "application/json; charset=utf-8" },
       })
     );
-    const g = new AgentGuard();
+    const g = new Vanzik();
     const r = await g.check("shell", { command: "ls" });
     expect(r.allowed).toBe(true);
   });
@@ -200,7 +200,7 @@ describe("check() response shape validation", () => {
         headers: { "Content-Type": "application/json" },
       })
     );
-    const g = new AgentGuard();
+    const g = new Vanzik();
     const r = await g.check("shell", { command: "ls" });
     expect(r.denied).toBe(true);
     expect(r.reason.toLowerCase()).toMatch(/malformed|decision/);
@@ -214,7 +214,7 @@ describe("check() response shape validation", () => {
         headers: { "Content-Type": "application/json" },
       })
     );
-    const g = new AgentGuard();
+    const g = new Vanzik();
     const r = await g.check("shell", { command: "ls" });
     expect(r.denied).toBe(true);
   });
@@ -227,7 +227,7 @@ describe("check() response shape validation", () => {
         headers: { "Content-Type": "application/json" },
       })
     );
-    const g = new AgentGuard();
+    const g = new Vanzik();
     const r = await g.check("shell", { command: "ls" });
     expect(r.denied).toBe(true);
     expect(r.reason).toMatch(/500/);
@@ -239,41 +239,41 @@ describe("check() response shape validation", () => {
 // ===========================================================================
 
 describe("waitForApproval auth-error", () => {
-  test("401 throws AgentGuardAuthError immediately", async () => {
+  test("401 throws VanzikAuthError immediately", async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValue(
       new Response("", { status: 401, headers: { "Content-Type": "application/json" } })
     );
-    const g = new AgentGuard({ apiKey: "bad" });
+    const g = new Vanzik({ apiKey: "bad" });
     let caught: unknown;
     try {
       await g.waitForApproval("ap_x", 5_000, 1);
     } catch (e) {
       caught = e;
     }
-    expect(caught).toBeInstanceOf(AgentGuardAuthError);
-    expect((caught as AgentGuardAuthError).status).toBe(401);
+    expect(caught).toBeInstanceOf(VanzikAuthError);
+    expect((caught as VanzikAuthError).status).toBe(401);
   });
 
-  test("403 throws AgentGuardAuthError immediately", async () => {
+  test("403 throws VanzikAuthError immediately", async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValue(
       new Response("", { status: 403, headers: { "Content-Type": "application/json" } })
     );
-    const g = new AgentGuard({ apiKey: "bad" });
+    const g = new Vanzik({ apiKey: "bad" });
     let caught: unknown;
     try {
       await g.waitForApproval("ap_x", 5_000, 1);
     } catch (e) {
       caught = e;
     }
-    expect(caught).toBeInstanceOf(AgentGuardAuthError);
-    expect((caught as AgentGuardAuthError).status).toBe(403);
+    expect(caught).toBeInstanceOf(VanzikAuthError);
+    expect((caught as VanzikAuthError).status).toBe(403);
   });
 
-  test("AgentGuardAuthError extends AgentGuardError and Error", () => {
-    const e = new AgentGuardAuthError("test", 401);
-    expect(e).toBeInstanceOf(AgentGuardError);
+  test("VanzikAuthError extends VanzikError and Error", () => {
+    const e = new VanzikAuthError("test", 401);
+    expect(e).toBeInstanceOf(VanzikError);
     expect(e).toBeInstanceOf(Error);
     expect(e.status).toBe(401);
   });
@@ -284,7 +284,7 @@ describe("waitForApproval auth-error", () => {
     fetchMock.mockResolvedValue(
       new Response("oh no", { status: 500, headers: { "Content-Type": "application/json" } })
     );
-    const g = new AgentGuard();
+    const g = new Vanzik();
     const start = Date.now();
     const r = await g.waitForApproval("ap_x", 30, 1);
     const elapsed = Date.now() - start;
@@ -325,7 +325,7 @@ describe("waitForApproval jitter", () => {
       }) as typeof global.setTimeout);
 
     try {
-      const g = new AgentGuard({ apiKey: "k", timeout: REQUEST_TIMEOUT });
+      const g = new Vanzik({ apiKey: "k", timeout: REQUEST_TIMEOUT });
       const r = await g.waitForApproval("ap_x", 30, 100);
       expect(r.denied).toBe(true);
     } finally {
@@ -358,7 +358,7 @@ describe("waitForApproval jitter", () => {
       }) as typeof global.setTimeout);
 
     try {
-      const g = new AgentGuard({ timeout: REQUEST_TIMEOUT });
+      const g = new Vanzik({ timeout: REQUEST_TIMEOUT });
       await g.waitForApproval("ap_x", 30, 100);
     } finally {
       spy.mockRestore();

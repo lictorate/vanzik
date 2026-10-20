@@ -1,12 +1,12 @@
-# Contributing to AgentGuard
+# Contributing to Vanzik
 
 Thanks for your interest in making AI agents safer. Here's how to get involved.
 
 ## Development Setup
 
 ```bash
-git clone https://github.com/Caua-ferraz/AgentGuard.git
-cd AgentGuard
+git clone https://github.com/lictorate/vanzik.git
+cd Vanzik
 go build ./...
 go test -race ./...
 ```
@@ -16,9 +16,9 @@ For the full local setup guide, see [SETUP.md](SETUP.md).
 ## Project Structure
 
 ```
-cmd/agentguard/              CLI and policy server (serve, check, validate, status, ...)
-cmd/agentguard-mcp-gateway/  MCP Gateway binary
-cmd/agentguard-llm-proxy/    LLM API Proxy binary
+cmd/vanzik/              CLI and policy server (serve, check, validate, status, ...)
+cmd/vanzik-mcp-gateway/  MCP Gateway binary
+cmd/vanzik-llm-proxy/    LLM API Proxy binary
 cmd/internal/buildinfo/      Version and commit reporting shared by the three binaries
 pkg/policy/                  Policy engine (YAML parsing, rule evaluation, per-agent overrides)
 pkg/proxy/                   HTTP policy server + embedded dashboard
@@ -59,12 +59,12 @@ This updates:
 
 | File | Field |
 |------|-------|
-| `cmd/agentguard/main.go` | `version = "..."` |
-| `cmd/agentguard-mcp-gateway/main.go` | `version = "..."` (v0.5+) |
-| `cmd/agentguard-llm-proxy/main.go` | `version = "..."` (v0.5+) |
+| `cmd/vanzik/main.go` | `version = "..."` |
+| `cmd/vanzik-mcp-gateway/main.go` | `version = "..."` (v0.5+) |
+| `cmd/vanzik-llm-proxy/main.go` | `version = "..."` (v0.5+) |
 | `plugins/python/pyproject.toml` | `version = "..."` under `[project]` |
-| `plugins/python/agentguard/__init__.py` | `__version__ = "..."` |
-| `plugins/python/agentguard/adapters/mcp.py` | `SDK_VERSION = "..."` |
+| `plugins/python/vanzik/__init__.py` | `__version__ = "..."` |
+| `plugins/python/vanzik/adapters/mcp.py` | `SDK_VERSION = "..."` |
 | `plugins/typescript/package.json` | `"version": "..."` |
 | `plugins/typescript/package-lock.json` | top-level + root-package `"version"` (committed; CI installs with `npm ci`) |
 | `Makefile` | `VERSION=...` |
@@ -74,7 +74,7 @@ This updates:
 | `docs/PROXY_ARCHITECTURE.md` | `/health` response example |
 | `docs/POLICY_REFERENCE.md` | self-label `as of **vX.Y.Z**` |
 | `docs/DEPLOYMENT.md` | Compose and Kubernetes example image tags |
-| `docs/CLI.md` | `agentguard version` example output |
+| `docs/CLI.md` | `vanzik version` example output |
 
 The script then checks that no file still carries the old version in its canonical spot, and exits non-zero if one does. It doesn't touch `CHANGELOG.md`, `docs/releases/`, or `SECURITY.md`, so before you commit the bump, also:
 
@@ -90,8 +90,8 @@ git tag v1.2.0
 git push && git push --tags
 
 # Then: GitHub UI → Releases → Draft a new release → Tag: v1.2.0 → Publish
-# That fires .github/workflows/publish-pypi.yml (uploads agentguardproxy==1.2.0)
-# and .github/workflows/publish-npm.yml (stages @lictorate/agentguard@1.2.0;
+# That fires .github/workflows/publish-pypi.yml (uploads vanzik==1.2.0)
+# and .github/workflows/publish-npm.yml (stages @lictorate/vanzik@1.2.0;
 # approve it on npmjs.com to make it public, see below).
 ```
 
@@ -99,7 +99,7 @@ Publishing also fires `release-assets.yml`, which builds the archives, installer
 
 The publish workflows only trigger on `release: [published]` events or via manual `workflow_dispatch`. Pushing the tag alone does **not** trigger them. (This caught v0.5.1 — the tag was pushed but the release was never drafted, so PyPI stayed on v0.5.0 until the operator pressed Publish.)
 
-`publish-npm.yml` uses npm trusted publishing, so there's no npm token to store or rotate. On npmjs.com, `@lictorate/agentguard`'s trusted publisher names the repository `Caua-ferraz/AgentGuard` and the workflow file `publish-npm.yml`. If you rename the workflow file, update that setting too, or publishing fails. The workflow refuses to publish when the release tag doesn't match `plugins/typescript/package.json`'s version, and skips a version that's already on npm. Each version carries provenance that links it to the workflow run.
+`publish-npm.yml` uses npm trusted publishing, so there's no npm token to store or rotate. On npmjs.com, `@lictorate/vanzik`'s trusted publisher names the repository `lictorate/vanzik` and the workflow file `publish-npm.yml`. If you rename the workflow file, update that setting too, or publishing fails. The workflow refuses to publish when the release tag doesn't match `plugins/typescript/package.json`'s version, and skips a version that's already on npm. Each version carries provenance that links it to the workflow run.
 
 **The npm release needs a maintainer's approval.** The trusted publisher is stage-only, so the workflow runs `npm stage publish`: the version waits in npm's staging area, npm scans it for malware, and it becomes installable only after a maintainer approves it with 2FA — on npmjs.com, the package page's **Staged Packages** tab → **Approve**, or `npm stage approve <stage-id>`. A compromised workflow run can stage a version but never make one public. A version that's already staged can't be staged again, so approve or reject it rather than re-running the workflow.
 
@@ -130,8 +130,8 @@ This runs, in order:
 | Suite | What it does |
 |-------|--------------|
 | `go` | `go test -race -coverprofile=coverage.out ./...` |
-| `policy` | builds the binary, runs `agentguard validate --strict` on every YAML in `configs/` and `configs/examples/` |
-| `python` | `pip install -e ".[dev]"` + `pytest -v --cov=agentguard` in `plugins/python` |
+| `policy` | builds the binary, runs `vanzik validate --strict` on every YAML in `configs/` and `configs/examples/` |
+| `python` | `pip install -e ".[dev]"` + `pytest -v --cov=vanzik` in `plugins/python` |
 | `ts` | `npm install` + `npm run build` + `npm test` in `plugins/typescript` |
 
 The script does **not** stop on the first failure — every suite runs so you see the full picture in one go. Suites whose toolchain is missing (no `python`, no `npm`) are reported as `SKIP` rather than `FAIL`, so Go-only contributors aren't penalised on a partial setup. Final exit code is the number of failed suites (0 if all passed).
@@ -142,7 +142,7 @@ Useful flags:
 - `--no-race` — drop the Go race detector for a faster Go suite
 - `-h`, `--help` — full usage
 
-Cross-platform: works under Git Bash on Windows, macOS, and Linux. The script auto-detects `agentguard.exe` vs `agentguard` based on the OS.
+Cross-platform: works under Git Bash on Windows, macOS, and Linux. The script auto-detects `vanzik.exe` vs `vanzik` based on the OS.
 
 ## Testing Metrics
 
@@ -150,7 +150,7 @@ The `/metrics` endpoint exposes Prometheus-compatible counters and histograms. W
 
 ```bash
 # 1. Start the server
-agentguard server --policy configs/default.yaml --port 8080
+vanzik server --policy configs/default.yaml --port 8080
 
 # 2. Send a few test checks
 curl -s -X POST http://localhost:8080/v1/check \
@@ -161,10 +161,10 @@ curl -s -X POST http://localhost:8080/v1/check \
 curl -si -X POST http://localhost:8080/v1/check \
   -H "Content-Type: application/json" \
   -d '{"scope":"shell","command":"ls -la","agent_id":"test"}' \
-  | grep -i x-agentguard
-# X-AgentGuard-Policy-Ms: 0.143
-# X-AgentGuard-Audit-Ms:  0.891
-# X-AgentGuard-Total-Ms:  1.034
+  | grep -i x-vanzik
+# X-Vanzik-Policy-Ms: 0.143
+# X-Vanzik-Audit-Ms:  0.891
+# X-Vanzik-Total-Ms:  1.034
 
 # 4. Scrape all metrics (counters + histograms)
 curl -s http://localhost:8080/metrics
@@ -174,17 +174,17 @@ Key metrics to watch when contributing:
 
 | Metric | What it measures |
 |--------|-----------------|
-| `agentguard_policy_eval_duration_ms` | Time in `Engine.Check` — policy rule matching |
-| `agentguard_audit_write_duration_ms` | Time in `Logger.Log` — disk I/O |
-| `agentguard_request_duration_ms` | End-to-end `/v1/check` latency |
-| `agentguard_denied_total` | Cumulative deny count (sanity check for policy tests) |
-| `agentguard_pending_approvals` | Current approval queue depth |
+| `vanzik_policy_eval_duration_ms` | Time in `Engine.Check` — policy rule matching |
+| `vanzik_audit_write_duration_ms` | Time in `Logger.Log` — disk I/O |
+| `vanzik_request_duration_ms` | End-to-end `/v1/check` latency |
+| `vanzik_denied_total` | Cumulative deny count (sanity check for policy tests) |
+| `vanzik_pending_approvals` | Current approval queue depth |
 
 Histogram buckets go from 0.25 ms to 10,000 ms, plus `+Inf`. A healthy server at low load should show p99 `request_duration_ms` below 5 ms.
 
 ## Latency budget
 
-AgentGuard sits in front of every tool call, so the enforcement hot path has a hard budget: **p99 < 3 ms** for a `/v1/check` decision. The hot path is:
+Vanzik sits in front of every tool call, so the enforcement hot path has a hard budget: **p99 < 3 ms** for a `/v1/check` decision. The hot path is:
 
 - `pkg/proxy` — `handleCheck`
 - `pkg/policy` — `Engine.Check` and the rule matchers
@@ -199,7 +199,7 @@ CI enforces the budget in the `latency-gate` job, which runs without `-race` bec
 ```bash
 go test ./pkg/policy/ -run TestEngineCheck_P99LatencyGate -v -count=1
 go test ./pkg/persist/ -run TestIntegration_HotPathLatencyWithPersistence -v -count=1
-AGENTGUARD_SOAK_P99_GATE=1 go test ./pkg/persist/ -run TestIntegration_ConcurrentHotPathLatencyWithPersistence -v -count=1
+VANZIK_SOAK_P99_GATE=1 go test ./pkg/persist/ -run TestIntegration_ConcurrentHotPathLatencyWithPersistence -v -count=1
 make bench   # compare allocations per op before and after your change
 ```
 
@@ -224,4 +224,4 @@ We welcome community-contributed policy templates in `configs/examples/`. Includ
 
 ## Reporting Security Issues
 
-If you find a security vulnerability in AgentGuard, please email cauaferrazp@gmail.com instead of opening a public issue. We take security seriously — it's literally our whole thing.
+If you find a security vulnerability in Vanzik, please email security@lictorate.com instead of opening a public issue. We take security seriously — it's literally our whole thing.

@@ -1,7 +1,7 @@
 """
-AgentGuard LLM API Proxy — LangChain (langchain-openai) example.
+Vanzik LLM API Proxy — LangChain (langchain-openai) example.
 
-Drives a real LangChain agent through the AgentGuard LLM API Proxy.
+Drives a real LangChain agent through the Vanzik LLM API Proxy.
 The agent is plain `langchain_openai.ChatOpenAI` bound to a Python tool;
 nothing about the agent code changes when going through the proxy —
 only the `base_url=` argument moves from "https://api.openai.com/v1"
@@ -25,27 +25,27 @@ Setup:
   export OPENAI_BASE_URL=http://127.0.0.1:8081/v1   # optional; we also
                                                     # pass base_url= below
 
-Run AgentGuard side (two terminals):
+Run Vanzik side (two terminals):
 
   # Terminal 1
-  agentguard server \\
+  vanzik server \\
       --policy configs/default.yaml \\
       --dashboard \\
       --watch \\
-      --api-key "$AGENTGUARD_API_KEY"
+      --api-key "$VANZIK_API_KEY"
 
   # Terminal 2
-  agentguard-llm-proxy \\
+  vanzik-llm-proxy \\
       --listen 127.0.0.1:8081 \\
       --policy configs/default.yaml \\
       --guard-url http://127.0.0.1:8080 \\
-      --api-key "$AGENTGUARD_API_KEY"
+      --api-key "$VANZIK_API_KEY"
 
 Then run this script:
   python examples/langchain-agent-config.py
 
 Expected behaviour:
-  - The model decides to call `list_tmp_files`. AgentGuard's default
+  - The model decides to call `list_tmp_files`. Vanzik's default
     LLM tool-scope map routes the tool name → scope `unmapped` (it's
     not a built-in name like `bash`/`read_file`). Add a one-line
     operator entry to your policy under `tool_scope_map:` to map it:
@@ -144,7 +144,7 @@ def main() -> None:
     # First turn — model returns either text or a tool_call. The proxy
     # gates the tool_call before the SDK sees the deltas; on DENY the
     # model's "response" is an assistant text starting with
-    # `[AgentGuard] Tool call denied:`.
+    # `[Vanzik] Tool call denied:`.
     response = llm_with_tools.invoke(messages)
 
     if response.tool_calls:
@@ -159,7 +159,7 @@ def main() -> None:
             print(f"  result:\n{tool_result}")
     else:
         # Either pure text from the model, OR a synthetic refusal that
-        # AgentGuard injected. Both arrive as `response.content`.
+        # Vanzik injected. Both arrive as `response.content`.
         print(f"[assistant text]\n{response.content}")
 
 

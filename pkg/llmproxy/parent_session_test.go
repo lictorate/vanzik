@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// The X-AgentGuard-Parent-Session header reaches /v1/check as
+// The X-Vanzik-Parent-Session header reaches /v1/check as
 // parent_session_id, for non-streaming responses of both providers, and is
 // left off the request when the header is absent.
 func TestParentSessionHeader_ReachesTheCheck(t *testing.T) {

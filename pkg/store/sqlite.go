@@ -11,7 +11,7 @@ import (
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver, registered under the name "sqlite"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/audit"
 )
 
 // SQLiteStore is the single-node, zero-config Store backend. It owns one
@@ -623,7 +623,7 @@ func rowsAffected(res sql.Result) int {
 // interface (CLAUDE.md §4 v1.0 lock: store.Store gains no methods). The concrete
 // *SQLiteStore and *PostgresStore carry the six Upsert/Load/Purge methods, and
 // pkg/persist reaches them through an unexported capability interface (mirroring
-// cmd/agentguard's persistentStore pattern). Everything here is cold-path,
+// cmd/vanzik's persistentStore pattern). Everything here is cold-path,
 // written and read only by the background reconcile syncer.
 
 // RateConsumption is one node's ABSOLUTE cumulative consumption of a rate-limit

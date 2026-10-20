@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/audit"
 )
 
 // auditLoggerAdapter adapts a Store's AuditSink to the audit.Logger interface,

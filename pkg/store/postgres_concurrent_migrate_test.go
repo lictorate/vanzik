@@ -34,31 +34,31 @@ import (
 	"time"
 )
 
-// pgDSNOrSkip returns AGENTGUARD_PG_DSN, skipping when unset so
+// pgDSNOrSkip returns VANZIK_PG_DSN, skipping when unset so
 // `go test ./...` stays deterministic without a Postgres available. CI's
 // postgres-integration job sets it.
 func pgDSNOrSkip(t *testing.T) string {
 	t.Helper()
-	dsn := os.Getenv("AGENTGUARD_PG_DSN")
+	dsn := os.Getenv("VANZIK_PG_DSN")
 	if dsn == "" {
-		t.Skip("set AGENTGUARD_PG_DSN to run Postgres store tests")
+		t.Skip("set VANZIK_PG_DSN to run Postgres store tests")
 	}
 	return dsn
 }
 
-// agentGuardTables is every table pgSchemaStmts creates. Dropping them puts the
+// vanzikTables is every table pgSchemaStmts creates. Dropping them puts the
 // database back into the fresh-deployment state the race needs.
-var agentGuardTables = []string{
+var vanzikTables = []string{
 	"approvals", "rate_buckets", "session_costs", "policies",
 	"audit_entries", "rate_consumption", "cost_consumption",
 }
 
-// dropSchema removes every AgentGuard table so the next Migrate really creates
+// dropSchema removes every Vanzik table so the next Migrate really creates
 // them.
 //
 // This is more destructive than newTestPGStore's TRUNCATE and carries the same
-// contract more sharply: AGENTGUARD_PG_DSN must name a throwaway database with
-// no live AgentGuard nodes attached. CI's postgres-integration job gives the
+// contract more sharply: VANZIK_PG_DSN must name a throwaway database with
+// no live Vanzik nodes attached. CI's postgres-integration job gives the
 // suite a dedicated service container. Pointing it at a database a running
 // cluster is using will not corrupt the cluster (it re-creates what it needs on
 // the next migration) but the two will contend badly — measured here at 4.7s
@@ -73,7 +73,7 @@ func dropSchema(t *testing.T, dsn string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	stmt := "DROP TABLE IF EXISTS "
-	for i, tbl := range agentGuardTables {
+	for i, tbl := range vanzikTables {
 		if i > 0 {
 			stmt += ", "
 		}
@@ -84,7 +84,7 @@ func dropSchema(t *testing.T, dsn string) {
 	}
 }
 
-// tablesPresent reports which AgentGuard tables currently exist.
+// tablesPresent reports which Vanzik tables currently exist.
 func tablesPresent(t *testing.T, dsn string) map[string]bool {
 	t.Helper()
 	db, err := sql.Open("pgx", dsn)
@@ -93,7 +93,7 @@ func tablesPresent(t *testing.T, dsn string) map[string]bool {
 	}
 	defer func() { _ = db.Close() }()
 	present := map[string]bool{}
-	for _, tbl := range agentGuardTables {
+	for _, tbl := range vanzikTables {
 		var ok bool
 		if err := db.QueryRow(
 			`SELECT EXISTS (SELECT 1 FROM information_schema.tables

@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/notify"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/notify"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // How much of each breakdown the report lists. The counts behind them are
@@ -238,7 +238,7 @@ func nameList[V any](m map[string]V, n int) NameList {
 }
 
 // requestTexts are the fields the server's --audit-redact masks
-// (cmd/agentguard: RedactRequest plus the reason).
+// (cmd/vanzik: RedactRequest plus the reason).
 func requestTexts(e audit.Entry) []string {
 	r := e.Request
 	texts := []string{r.Command, r.Path, r.Domain, r.Action, r.URL, e.Result.Reason}

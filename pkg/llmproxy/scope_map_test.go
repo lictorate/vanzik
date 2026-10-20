@@ -18,7 +18,7 @@ package llmproxy
 import (
 	"testing"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 func TestMapLLMToolScope_ShellTools(t *testing.T) {
@@ -313,7 +313,7 @@ func TestDefaultLLMToolScopeMap_NoEmptyEntries(t *testing.T) {
 
 func TestDefaultLLMToolScopeMap_OnlyKnownScopes(t *testing.T) {
 	// The default map must only point at scopes the engine
-	// recognises; an operator's `agentguard validate` will reject
+	// recognises; an operator's `vanzik validate` will reject
 	// anything else, but our bundled defaults have to be clean from
 	// day one.
 	known := map[string]bool{

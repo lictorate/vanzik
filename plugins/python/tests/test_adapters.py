@@ -8,8 +8,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agentguard import Guard, DEFAULT_BASE_URL
-from tests.conftest import MockAgentGuardHandler
+from vanzik import Guard, DEFAULT_BASE_URL
+from tests.conftest import MockVanzikHandler
 
 
 # ---------------------------------------------------------------------------
@@ -18,9 +18,9 @@ from tests.conftest import MockAgentGuardHandler
 
 class TestLangChainAdapter:
     def test_guarded_tool_run_allowed(self, mock_server):
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         guard = Guard(mock_server)
 
         mock_tool = MagicMock()
@@ -35,9 +35,9 @@ class TestLangChainAdapter:
         mock_tool.run.assert_called_once_with("ls -la")
 
     def test_guarded_tool_run_denied(self, mock_server):
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "DENY",
             "reason": "dangerous command",
         }
@@ -54,7 +54,7 @@ class TestLangChainAdapter:
         mock_tool.run.assert_not_called()
 
     def test_toolkit_infer_scope(self):
-        from agentguard.adapters.langchain import GuardedToolkit
+        from vanzik.adapters.langchain import GuardedToolkit
 
         tk = GuardedToolkit(tools=[], guard_url=DEFAULT_BASE_URL)
 
@@ -92,9 +92,9 @@ class TestCrewAIAdapter:
     """
 
     def test_guarded_crew_tool_delegates(self, mock_server):
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         guard = Guard(mock_server)
 
         # Use a real class (not MagicMock) because the v0.5 wrapper has
@@ -114,7 +114,7 @@ class TestCrewAIAdapter:
         assert result == "results"
 
     def test_extract_check_params_dict(self, mock_server):
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
         guard = Guard(mock_server)
 
@@ -128,7 +128,7 @@ class TestCrewAIAdapter:
         assert params["path"] == "/tmp/x"
 
     def test_extract_check_params_string(self, mock_server):
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
         guard = Guard(mock_server)
 
@@ -147,23 +147,23 @@ class TestCrewAIAdapter:
 
 class TestBrowserUseAdapter:
     def test_check_navigation(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         browser = GuardedBrowser(guard_url=mock_server)
 
         result = browser.check_navigation("https://example.com/page")
         assert result.allowed
 
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body["scope"] == "browser"
         assert body["domain"] == "example.com"
         assert body["url"] == "https://example.com/page"
 
     def test_check_form_input(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "DENY", "reason": "PII"}
+        MockVanzikHandler.check_response = {"decision": "DENY", "reason": "PII"}
         browser = GuardedBrowser(guard_url=mock_server)
 
         result = browser.check_form_input(
@@ -171,7 +171,7 @@ class TestBrowserUseAdapter:
         )
         assert result.denied
 
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body["scope"] == "data"
         assert body["domain"] == "bank.com"
 
@@ -182,7 +182,7 @@ class TestBrowserUseAdapter:
 
 class TestMCPAdapter:
     def test_handle_initialize(self):
-        from agentguard.adapters.mcp import GuardedMCPServer, MCP_PROTOCOL_VERSION
+        from vanzik.adapters.mcp import GuardedMCPServer, MCP_PROTOCOL_VERSION
 
         server = GuardedMCPServer(guard_url=DEFAULT_BASE_URL)
         response = server._handle_request({
@@ -195,10 +195,10 @@ class TestMCPAdapter:
         assert response["id"] == 1
         result = response["result"]
         assert result["protocolVersion"] == MCP_PROTOCOL_VERSION
-        assert result["serverInfo"]["name"] == "agentguard"
+        assert result["serverInfo"]["name"] == "vanzik"
 
     def test_handle_tools_list(self):
-        from agentguard.adapters.mcp import GuardedMCPServer
+        from vanzik.adapters.mcp import GuardedMCPServer
 
         server = GuardedMCPServer(guard_url=DEFAULT_BASE_URL)
         server.add_tool("my_tool", "A test tool", handler=lambda: "ok")
@@ -215,7 +215,7 @@ class TestMCPAdapter:
         assert tools[0]["name"] == "my_tool"
 
     def test_handle_unknown_method(self):
-        from agentguard.adapters.mcp import GuardedMCPServer
+        from vanzik.adapters.mcp import GuardedMCPServer
 
         server = GuardedMCPServer(guard_url=DEFAULT_BASE_URL)
         response = server._handle_request({

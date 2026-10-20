@@ -1,6 +1,6 @@
 package audit
 
-// verify.go — offline verification of a sealed audit log (`agentguard audit
+// verify.go — offline verification of a sealed audit log (`vanzik audit
 // verify`). It reads files only: no server, no checkpoint, no lock.
 
 import (

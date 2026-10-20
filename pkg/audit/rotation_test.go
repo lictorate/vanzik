@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // logBlob returns an Entry big enough to let a handful of writes cross
@@ -73,7 +73,7 @@ func TestRotation_SizeTriggered(t *testing.T) {
 }
 
 // TestRotation_IncrementsRotationCounter: every successful rotation bumps
-// agentguard_audit_rotations_total so operators can graph rotation
+// vanzik_audit_rotations_total so operators can graph rotation
 // frequency. A half-completed rotate would return before the counter fires.
 func TestRotation_IncrementsRotationCounter(t *testing.T) {
 	dir := t.TempDir()

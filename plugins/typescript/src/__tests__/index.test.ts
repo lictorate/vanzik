@@ -1,5 +1,5 @@
 /**
- * Tests for the AgentGuard TypeScript SDK.
+ * Tests for the Vanzik TypeScript SDK.
  *
  * The SDK is intentionally small and depends only on the native `fetch`
  * + `AbortController`. Tests mock `globalThis.fetch` rather than standing
@@ -8,12 +8,12 @@
  */
 
 import {
-  AgentGuard,
+  Vanzik,
   guarded,
-  AgentGuardError,
-  AgentGuardDeniedError,
-  AgentGuardApprovalRequiredError,
-  AgentGuardApprovalTimeoutError,
+  VanzikError,
+  VanzikDeniedError,
+  VanzikApprovalRequiredError,
+  VanzikApprovalTimeoutError,
 } from "../index";
 import type { CheckOptions, CheckResult } from "../index";
 
@@ -50,10 +50,10 @@ function parseBody(init: RequestInit | undefined): Record<string, unknown> {
 const ORIGINAL_ENV = { ...process.env };
 
 beforeEach(() => {
-  // Wipe AgentGuard-controlled env vars before every test so one test's
+  // Wipe Vanzik-controlled env vars before every test so one test's
   // setting cannot leak into another.
-  delete process.env.AGENTGUARD_URL;
-  delete process.env.AGENTGUARD_API_KEY;
+  delete process.env.VANZIK_URL;
+  delete process.env.VANZIK_API_KEY;
 });
 
 afterAll(() => {
@@ -64,13 +64,13 @@ afterAll(() => {
 // Constructor
 // =========================================================================
 
-describe("AgentGuard constructor", () => {
+describe("Vanzik constructor", () => {
   test("no args defaults to localhost", async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ decision: "ALLOW", reason: "ok" })
     );
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     await guard.check("shell", { command: "ls" });
     const [url] = fetchMock.mock.calls[0];
     expect(String(url)).toBe("http://localhost:8080/v1/check");
@@ -81,7 +81,7 @@ describe("AgentGuard constructor", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ decision: "ALLOW", reason: "ok" })
     );
-    const guard = new AgentGuard("http://example.com:9000/");
+    const guard = new Vanzik("http://example.com:9000/");
     await guard.check("shell", { command: "ls" });
     const [url] = fetchMock.mock.calls[0];
     expect(String(url)).toBe("http://example.com:9000/v1/check");
@@ -92,41 +92,41 @@ describe("AgentGuard constructor", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ decision: "ALLOW", reason: "ok" })
     );
-    const guard = new AgentGuard({ baseUrl: "http://ag.test:8080/" });
+    const guard = new Vanzik({ baseUrl: "http://ag.test:8080/" });
     await guard.check("shell", { command: "ls" });
     const [url] = fetchMock.mock.calls[0];
     expect(String(url)).toBe("http://ag.test:8080/v1/check");
   });
 
-  test("AGENTGUARD_URL env is used when no baseUrl supplied", async () => {
-    process.env.AGENTGUARD_URL = "http://from-env:8080";
+  test("VANZIK_URL env is used when no baseUrl supplied", async () => {
+    process.env.VANZIK_URL = "http://from-env:8080";
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ decision: "ALLOW", reason: "ok" })
     );
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     await guard.check("shell", { command: "ls" });
     const [url] = fetchMock.mock.calls[0];
     expect(String(url)).toBe("http://from-env:8080/v1/check");
   });
 
   test("options baseUrl wins over env", async () => {
-    process.env.AGENTGUARD_URL = "http://from-env:8080";
+    process.env.VANZIK_URL = "http://from-env:8080";
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ decision: "ALLOW", reason: "ok" })
     );
-    const guard = new AgentGuard({ baseUrl: "http://explicit:9000" });
+    const guard = new Vanzik({ baseUrl: "http://explicit:9000" });
     await guard.check("shell", { command: "ls" });
     const [url] = fetchMock.mock.calls[0];
     expect(String(url)).toBe("http://explicit:9000/v1/check");
   });
 
-  test("string form consults AGENTGUARD_API_KEY env for auth", async () => {
-    process.env.AGENTGUARD_API_KEY = "env-key";
+  test("string form consults VANZIK_API_KEY env for auth", async () => {
+    process.env.VANZIK_API_KEY = "env-key";
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(jsonResponse({ status: "approved", id: "ap_1" }));
-    const guard = new AgentGuard("http://localhost:8080");
+    const guard = new Vanzik("http://localhost:8080");
     await guard.approve("ap_1");
     const [, init] = fetchMock.mock.calls[0];
     expect((init?.headers as Record<string, string>).Authorization).toBe(
@@ -135,10 +135,10 @@ describe("AgentGuard constructor", () => {
   });
 
   test("explicit apiKey wins over env", async () => {
-    process.env.AGENTGUARD_API_KEY = "env-key";
+    process.env.VANZIK_API_KEY = "env-key";
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(jsonResponse({ status: "approved", id: "ap_1" }));
-    const guard = new AgentGuard({ apiKey: "explicit-key" });
+    const guard = new Vanzik({ apiKey: "explicit-key" });
     await guard.approve("ap_1");
     const [, init] = fetchMock.mock.calls[0];
     expect((init?.headers as Record<string, string>).Authorization).toBe(
@@ -151,13 +151,13 @@ describe("AgentGuard constructor", () => {
 // check() — wire format and result shape
 // =========================================================================
 
-describe("AgentGuard.check payload", () => {
+describe("Vanzik.check payload", () => {
   test("converts camelCase options to snake_case wire format", async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ decision: "ALLOW", reason: "ok" })
     );
-    const guard = new AgentGuard({
+    const guard = new Vanzik({
       baseUrl: "http://localhost:8080",
       agentId: "agent-1",
     });
@@ -184,7 +184,7 @@ describe("AgentGuard.check payload", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ decision: "ALLOW", reason: "ok" })
     );
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     await guard.check("cost", { estCost: 0, sessionId: "s" });
     const body = parseBody(fetchMock.mock.calls[0][1]);
     expect(body.est_cost).toBeUndefined();
@@ -198,7 +198,7 @@ describe("AgentGuard.check payload", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ decision: "DENY", reason: "cost<0" })
     );
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     await guard.check("cost", { estCost: -1, sessionId: "s" });
     const body = parseBody(fetchMock.mock.calls[0][1]);
     expect(body.est_cost).toBe(-1);
@@ -209,7 +209,7 @@ describe("AgentGuard.check payload", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ decision: "ALLOW", reason: "ok" })
     );
-    const guard = new AgentGuard({ apiKey: "secret-key" });
+    const guard = new Vanzik({ apiKey: "secret-key" });
     await guard.check("shell", { command: "ls" });
     const [, init] = fetchMock.mock.calls[0];
     const headers = init?.headers as Record<string, string>;
@@ -228,7 +228,7 @@ describe("CheckResult getters", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ decision: "ALLOW", reason: "ok" })
     );
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     const r: CheckResult = await guard.check("shell", { command: "ls" });
     expect(r.allowed).toBe(true);
     expect(r.denied).toBe(false);
@@ -240,7 +240,7 @@ describe("CheckResult getters", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ decision: "DENY", reason: "nope" })
     );
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     const r = await guard.check("shell", { command: "rm -rf /" });
     expect(r.allowed).toBe(false);
     expect(r.denied).toBe(true);
@@ -257,7 +257,7 @@ describe("CheckResult getters", () => {
         approval_url: "http://localhost:8080/v1/approve/ap_abc",
       })
     );
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     const r = await guard.check("cost", { estCost: 99, sessionId: "s" });
     expect(r.needsApproval).toBe(true);
     expect(r.approvalId).toBe("ap_abc");
@@ -266,23 +266,23 @@ describe("CheckResult getters", () => {
 });
 
 // =========================================================================
-// Failure modes — unreachable AgentGuard
+// Failure modes — unreachable Vanzik
 // =========================================================================
 
-describe("AgentGuard.check failure modes", () => {
+describe("Vanzik.check failure modes", () => {
   test("default (failMode unset) denies on transport failure", async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockRejectedValueOnce(new Error("ECONNREFUSED"));
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     const r = await guard.check("shell", { command: "ls" });
     expect(r.denied).toBe(true);
-    expect(r.reason).toMatch(/AgentGuard unreachable/);
+    expect(r.reason).toMatch(/Vanzik unreachable/);
   });
 
   test("failMode: 'allow' opens on transport failure", async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockRejectedValueOnce(new Error("ECONNREFUSED"));
-    const guard = new AgentGuard({ failMode: "allow" });
+    const guard = new Vanzik({ failMode: "allow" });
     const r = await guard.check("shell", { command: "ls" });
     expect(r.allowed).toBe(true);
   });
@@ -290,7 +290,7 @@ describe("AgentGuard.check failure modes", () => {
   test("non-2xx response falls through to failMode", async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(new Response("boom", { status: 500 }));
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     const r = await guard.check("shell", { command: "ls" });
     expect(r.denied).toBe(true);
     expect(r.reason).toMatch(/500/);
@@ -305,7 +305,7 @@ describe("approval endpoints", () => {
   test("approve sends Bearer and returns ok status", async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(new Response("", { status: 200 }));
-    const guard = new AgentGuard({ apiKey: "k" });
+    const guard = new Vanzik({ apiKey: "k" });
     const ok = await guard.approve("ap_1");
     expect(ok).toBe(true);
     const [url, init] = fetchMock.mock.calls[0];
@@ -317,7 +317,7 @@ describe("approval endpoints", () => {
   test("deny sends Bearer and returns ok status", async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(new Response("", { status: 200 }));
-    const guard = new AgentGuard({ apiKey: "k" });
+    const guard = new Vanzik({ apiKey: "k" });
     const ok = await guard.deny("ap_1");
     expect(ok).toBe(true);
     const [url] = fetchMock.mock.calls[0];
@@ -334,7 +334,7 @@ describe("approval endpoints", () => {
         reason: "human said yes",
       })
     );
-    const guard = new AgentGuard({ apiKey: "k" });
+    const guard = new Vanzik({ apiKey: "k" });
     const r = await guard.waitForApproval("ap_1", 5000, 10);
     expect(r.allowed).toBe(true);
     // Every poll carries the Bearer header.
@@ -348,7 +348,7 @@ describe("approval endpoints", () => {
     fetchMock.mockResolvedValue(
       jsonResponse({ id: "ap_1", status: "pending" })
     );
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     const r = await guard.waitForApproval("ap_1", 30, 5);
     expect(r.denied).toBe(true);
     expect(r.reason).toMatch(/timed out/i);
@@ -373,7 +373,7 @@ describe("guarded()", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ decision: "ALLOW", reason: "ok" })
     );
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     const fn = jest.fn(async (...args) => `ran ${String(args[0])}`);
     const safe = guarded(guard, "shell", fn as unknown as AnyAsyncFn);
     await expect(safe("ls")).resolves.toBe("ran ls");
@@ -385,10 +385,10 @@ describe("guarded()", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ decision: "DENY", reason: "nope" })
     );
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     const fn = jest.fn(async () => "should not run");
     const safe = guarded(guard, "shell", fn as unknown as AnyAsyncFn);
-    await expect(safe("rm -rf /")).rejects.toThrow(/denied by AgentGuard/);
+    await expect(safe("rm -rf /")).rejects.toThrow(/denied by Vanzik/);
     expect(fn).not.toHaveBeenCalled();
   });
 
@@ -401,7 +401,7 @@ describe("guarded()", () => {
         approval_url: "http://localhost:8080/v1/approve/ap_abc",
       })
     );
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     const fn = jest.fn(async () => "should not run");
     const safe = guarded(guard, "cost", fn as unknown as AnyAsyncFn);
     await expect(safe("buy-a-car")).rejects.toThrow(/requires approval/);
@@ -413,7 +413,7 @@ describe("guarded()", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ decision: "ALLOW", reason: "ok" })
     );
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     const fn = jest.fn(async () => "ran");
     const getOpts = (...args: unknown[]): CheckOptions => ({
       url: String(args[0]),
@@ -447,7 +447,7 @@ describe("guarded()", () => {
 describe("typed errors from guarded()", () => {
   type AnyAsyncFn = (...args: unknown[]) => Promise<unknown>;
 
-  test("DENY throws AgentGuardDeniedError carrying the result", async () => {
+  test("DENY throws VanzikDeniedError carrying the result", async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(
       jsonResponse({
@@ -456,7 +456,7 @@ describe("typed errors from guarded()", () => {
         matched_rule: "deny:shell:rm",
       })
     );
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     const fn = jest.fn(async () => "should not run");
     const safe = guarded(guard, "shell", fn as unknown as AnyAsyncFn);
 
@@ -466,16 +466,16 @@ describe("typed errors from guarded()", () => {
     } catch (e) {
       caught = e;
     }
-    expect(caught).toBeInstanceOf(AgentGuardDeniedError);
-    expect(caught).toBeInstanceOf(AgentGuardError);
+    expect(caught).toBeInstanceOf(VanzikDeniedError);
+    expect(caught).toBeInstanceOf(VanzikError);
     expect(caught).toBeInstanceOf(Error);
-    const err = caught as AgentGuardDeniedError;
+    const err = caught as VanzikDeniedError;
     expect(err.result?.denied).toBe(true);
     expect(err.result?.matchedRule).toBe("deny:shell:rm");
-    expect(err.message).toMatch(/denied by AgentGuard/);
+    expect(err.message).toMatch(/denied by Vanzik/);
   });
 
-  test("REQUIRE_APPROVAL (default) throws AgentGuardApprovalRequiredError", async () => {
+  test("REQUIRE_APPROVAL (default) throws VanzikApprovalRequiredError", async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(
       jsonResponse({
@@ -485,7 +485,7 @@ describe("typed errors from guarded()", () => {
         approval_url: "http://localhost:8080/v1/approve/ap_abc",
       })
     );
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     const fn = jest.fn(async () => "should not run");
     const safe = guarded(guard, "cost", fn as unknown as AnyAsyncFn);
 
@@ -495,8 +495,8 @@ describe("typed errors from guarded()", () => {
     } catch (e) {
       caught = e;
     }
-    expect(caught).toBeInstanceOf(AgentGuardApprovalRequiredError);
-    const err = caught as AgentGuardApprovalRequiredError;
+    expect(caught).toBeInstanceOf(VanzikApprovalRequiredError);
+    const err = caught as VanzikApprovalRequiredError;
     expect(err.approvalId).toBe("ap_abc");
     expect(err.approvalUrl).toBe("http://localhost:8080/v1/approve/ap_abc");
     expect(err.result?.needsApproval).toBe(true);
@@ -504,18 +504,18 @@ describe("typed errors from guarded()", () => {
     expect(err.message).toMatch(/requires approval/);
   });
 
-  test("all typed errors extend AgentGuardError (catchable uniformly)", () => {
+  test("all typed errors extend VanzikError (catchable uniformly)", () => {
     // Class-level invariants — cheaper than a full fetch-mock round-trip.
     expect(
-      new AgentGuardDeniedError("x") instanceof AgentGuardError
+      new VanzikDeniedError("x") instanceof VanzikError
     ).toBe(true);
     expect(
-      new AgentGuardApprovalRequiredError("x") instanceof AgentGuardError
+      new VanzikApprovalRequiredError("x") instanceof VanzikError
     ).toBe(true);
     expect(
-      new AgentGuardApprovalTimeoutError("x") instanceof AgentGuardError
+      new VanzikApprovalTimeoutError("x") instanceof VanzikError
     ).toBe(true);
-    expect(new AgentGuardError("x") instanceof Error).toBe(true);
+    expect(new VanzikError("x") instanceof Error).toBe(true);
   });
 });
 
@@ -552,7 +552,7 @@ describe("guarded() with waitForApproval", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ decision: "ALLOW", reason: "approved", matched_rule: "allow:approved" })
     );
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     const fn = jest.fn(async (...args) => `ran ${String(args[0])}`);
     const safe = guarded(guard, "shell", fn as unknown as AnyAsyncFn, {
       waitForApproval: true,
@@ -567,7 +567,7 @@ describe("guarded() with waitForApproval", () => {
     expect(replayBody.approval_id).toBe("ap_wait_ok");
   });
 
-  test("throws AgentGuardDeniedError when approval resolves DENY", async () => {
+  test("throws VanzikDeniedError when approval resolves DENY", async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(
       jsonResponse({
@@ -585,7 +585,7 @@ describe("guarded() with waitForApproval", () => {
         reason: "human denied",
       })
     );
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     const fn = jest.fn(async () => "should not run");
     const safe = guarded(guard, "shell", fn as unknown as AnyAsyncFn, {
       waitForApproval: true,
@@ -599,12 +599,12 @@ describe("guarded() with waitForApproval", () => {
     } catch (e) {
       caught = e;
     }
-    expect(caught).toBeInstanceOf(AgentGuardDeniedError);
-    expect((caught as AgentGuardDeniedError).message).toMatch(/human denied/);
+    expect(caught).toBeInstanceOf(VanzikDeniedError);
+    expect((caught as VanzikDeniedError).message).toMatch(/human denied/);
     expect(fn).not.toHaveBeenCalled();
   });
 
-  test("throws AgentGuardApprovalTimeoutError when approval never resolves", async () => {
+  test("throws VanzikApprovalTimeoutError when approval never resolves", async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(
       jsonResponse({
@@ -619,7 +619,7 @@ describe("guarded() with waitForApproval", () => {
     fetchMock.mockResolvedValue(
       jsonResponse({ id: "ap_wait_timeout", status: "pending" })
     );
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     const fn = jest.fn(async () => "should not run");
     const safe = guarded(guard, "shell", fn as unknown as AnyAsyncFn, {
       waitForApproval: true,
@@ -633,8 +633,8 @@ describe("guarded() with waitForApproval", () => {
     } catch (e) {
       caught = e;
     }
-    expect(caught).toBeInstanceOf(AgentGuardApprovalTimeoutError);
-    const err = caught as AgentGuardApprovalTimeoutError;
+    expect(caught).toBeInstanceOf(VanzikApprovalTimeoutError);
+    const err = caught as VanzikApprovalTimeoutError;
     expect(err.approvalId).toBe("ap_wait_timeout");
     expect(err.message).toMatch(/timed out/i);
     expect(fn).not.toHaveBeenCalled();

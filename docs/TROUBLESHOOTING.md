@@ -17,8 +17,8 @@ INFO: binding to 127.0.0.1:8080 (localhost only) — set --api-key to listen on 
 **Fix:** set a Bearer token.
 
 ```bash
-export AGENTGUARD_API_KEY="$(openssl rand -hex 32)"
-agentguard server --api-key "$AGENTGUARD_API_KEY" ...
+export VANZIK_API_KEY="$(openssl rand -hex 32)"
+vanzik server --api-key "$VANZIK_API_KEY" ...
 ```
 
 Details: [`docs/DEPLOYMENT.md` §1](DEPLOYMENT.md#1-always-set-an-api-key).
@@ -27,14 +27,14 @@ Details: [`docs/DEPLOYMENT.md` §1](DEPLOYMENT.md#1-always-set-an-api-key).
 
 ## Dashboard login loops back to the login page
 
-**Likely cause:** you are running behind an HTTPS-terminating reverse proxy, but AgentGuard is issuing session cookies without `Secure`. The browser sets them, then refuses to send them back on the next HTTPS request.
+**Likely cause:** you are running behind an HTTPS-terminating reverse proxy, but Vanzik is issuing session cookies without `Secure`. The browser sets them, then refuses to send them back on the next HTTPS request.
 
-**Confirm:** in browser devtools (Application → Cookies), `ag_session` is present but `Secure` column is blank.
+**Confirm:** in browser devtools (Application → Cookies), `vanzik_session` is present but `Secure` column is blank.
 
 **Fix:** add `--tls-terminated-upstream`.
 
 ```bash
-agentguard server --tls-terminated-upstream ...
+vanzik server --tls-terminated-upstream ...
 ```
 
 Details: [`docs/DEPLOYMENT.md` §2a](DEPLOYMENT.md#2a-session-cookies-without-secure--login-loop).
@@ -48,7 +48,7 @@ Details: [`docs/DEPLOYMENT.md` §2a](DEPLOYMENT.md#2a-session-cookies-without-se
 **Fix:**
 
 ```bash
-agentguard server --base-url https://guard.example.com ...
+vanzik server --base-url https://guard.example.com ...
 ```
 
 ---
@@ -58,7 +58,7 @@ agentguard server --base-url https://guard.example.com ...
 **Likely cause (a):** the server loaded a different file than the one you edited. The startup log names it: `Loaded policy: <name> from <path> …`. Without `--policy`, the server picks the file itself (see [`CLI.md`](CLI.md#policy-file)). Reloading is always on; `--watch` only adds a `Policy reloaded: …` log line per reload, which shows whether an edit was picked up:
 
 ```bash
-agentguard server --policy ./my-policy.yaml --watch ...
+vanzik server --policy ./my-policy.yaml --watch ...
 ```
 
 **Likely cause (b):** the file's mtime did not change. The watcher polls `os.Stat(path).ModTime()` every 2s (`pkg/policy/watcher.go` `DefaultPollInterval`). If you edited through a tool that preserves mtime, touch the file:
@@ -67,19 +67,19 @@ agentguard server --policy ./my-policy.yaml --watch ...
 touch configs/default.yaml
 ```
 
-**Likely cause (c):** your edit is syntactically invalid. Parse errors are logged but do **not** halt the watcher — the old policy keeps serving. Check the server log for `WatchFile: reload failed:` and run `agentguard validate --policy configs/default.yaml` to pinpoint the error.
+**Likely cause (c):** your edit is syntactically invalid. Parse errors are logged but do **not** halt the watcher — the old policy keeps serving. Check the server log for `WatchFile: reload failed:` and run `vanzik validate --policy configs/default.yaml` to pinpoint the error.
 
 ---
 
 ## Rate limit works locally but gets bypassed in production
 
-**Likely cause:** you are running more than one AgentGuard replica on the default SQLite store. Rate-limit buckets are in-memory per instance (`pkg/ratelimit/ratelimit.go`); an agent can burst past the cap by hitting different pods / VMs round-robin.
+**Likely cause:** you are running more than one Vanzik replica on the default SQLite store. Rate-limit buckets are in-memory per instance (`pkg/ratelimit/ratelimit.go`); an agent can burst past the cap by hitting different pods / VMs round-robin.
 
 **Mitigations:**
 
 - Share state across replicas (v1.0): `--store-dsn postgres://…` plus a distinct `--node-id` per replica. Note the shared mode is bounded-overshoot — brief bursts can still exceed the cap by ≈ `reconcile-interval × peak rate` per extra replica before the nodes converge.
 - Divide per-scope `max_requests` by the replica count when writing the policy.
-- Pin agents to a single AgentGuard instance via session affinity.
+- Pin agents to a single Vanzik instance via session affinity.
 - Keep `replicas: 1` and scale vertically.
 
 Details: [`docs/OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments).
@@ -92,7 +92,7 @@ Details: [`docs/OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments).
 
 **Mitigations:**
 
-- Run with `--persist` (the default) and verify `agentguard.db` exists and grows in `--data-dir`.
+- Run with `--persist` (the default) and verify `vanzik.db` exists and grows in `--data-dir`.
 - Set SDK `wait_for_approval(timeout=...)` to a realistic human SLA — approvals survive a restart, but nobody can resolve them while the process is down.
 - For mission-critical flows, have the calling agent checkpoint its state so it can re-issue the `check` and get a fresh approval ID.
 
@@ -100,7 +100,7 @@ Details: [`docs/OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments).
 
 ## `/metrics` or `/api/stats` are slow / inaccurate right after startup
 
-**Cause:** on boot, AgentGuard replays the entire audit log through `metrics.IncDecision` to seed decision counters so `/metrics` survives restarts with accurate totals. For a multi-GB `audit.jsonl`, this scan can take seconds to minutes.
+**Cause:** on boot, Vanzik replays the entire audit log through `metrics.IncDecision` to seed decision counters so `/metrics` survives restarts with accurate totals. For a multi-GB `audit.jsonl`, this scan can take seconds to minutes.
 
 **Fix:**
 
@@ -113,7 +113,7 @@ Details: [`docs/OPERATIONS.md`](OPERATIONS.md).
 
 ## Webhook / Slack events are missing
 
-**Cause:** the notification dispatcher has a bounded queue (`DefaultQueueSize = 256`). If notifiers are slow or the queue is full, `Dispatcher.Send` drops the event and increments `agentguard_notify_events_dropped_total{notifier, reason}`.
+**Cause:** the notification dispatcher has a bounded queue (`DefaultQueueSize = 256`). If notifiers are slow or the queue is full, `Dispatcher.Send` drops the event and increments `vanzik_notify_events_dropped_total{notifier, reason}`.
 
 **Confirm:**
 
@@ -126,20 +126,20 @@ curl -s http://127.0.0.1:8080/metrics | grep notify_events_dropped_total
 - Increase notifier timeouts in the policy file (`notifications.dispatch_timeout`).
 - Reduce notifier fanout (remove unused targets).
 - Shard to multiple webhook endpoints if a single Slack channel is a bottleneck.
-- Watch `agentguard_notify_queue_depth{notifier}` — steady growth means the worker cannot drain.
+- Watch `vanzik_notify_queue_depth{notifier}` — steady growth means the worker cannot drain.
 
 ---
 
 ## Python SDK always returns `DENY` in tests
 
-**Cause:** the Python SDK **defaults to fail-closed** on any network error (`urllib.error.URLError`, `OSError`, or a non-JSON response body → synthetic `DENY` with reason `"AgentGuard unreachable (deny): ..."`). If your test environment cannot reach the proxy URL, every call fails closed.
+**Cause:** the Python SDK **defaults to fail-closed** on any network error (`urllib.error.URLError`, `OSError`, or a non-JSON response body → synthetic `DENY` with reason `"Vanzik unreachable (deny): ..."`). If your test environment cannot reach the proxy URL, every call fails closed.
 
-**Confirm:** inspect `result.reason` — it will contain `"AgentGuard unreachable"`.
+**Confirm:** inspect `result.reason` — it will contain `"Vanzik unreachable"`.
 
 **Fixes:**
 
 - Point the test `Guard(base_url=...)` at a running test server, or use `httpretty` / `responses` to stub `urllib`.
-- For tests that need fail-open behavior, pass `fail_mode="allow"` explicitly (Python v0.4.1+). Do **not** flip this in production unless your threat model treats AgentGuard as advisory — the `"deny"` default is what keeps agents safe when the proxy is down.
+- For tests that need fail-open behavior, pass `fail_mode="allow"` explicitly (Python v0.4.1+). Do **not** flip this in production unless your threat model treats Vanzik as advisory — the `"deny"` default is what keeps agents safe when the proxy is down.
 
 ---
 
@@ -159,13 +159,13 @@ curl -s http://127.0.0.1:8080/metrics | grep notify_events_dropped_total
     - pattern: "cat * | head *"
 ```
 
-A `deny:shell:unparseable_command` verdict means the command used syntax AgentGuard doesn't split (a heredoc, `$(( ))`, unbalanced quotes, or nesting deeper than 8 levels); rewrite the command without it. To see what 1.2.0 would decide for commands your agents already ran, replay them with `agentguard check --batch` — see [`MIGRATION.md`](MIGRATION.md#v11x--v120).
+A `deny:shell:unparseable_command` verdict means the command used syntax Vanzik doesn't split (a heredoc, `$(( ))`, unbalanced quotes, or nesting deeper than 8 levels); rewrite the command without it. To see what 1.2.0 would decide for commands your agents already ran, replay them with `vanzik check --batch` — see [`MIGRATION.md`](MIGRATION.md#v11x--v120).
 
 ---
 
 ## `*.foo.com` does not match `foo.com`
 
-**Not a bug.** AgentGuard uses standard glob semantics: `*.foo.com` requires at least one character before the dot. Similarly, `*` does not cross `/` boundaries unless you use `**`.
+**Not a bug.** Vanzik uses standard glob semantics: `*.foo.com` requires at least one character before the dot. Similarly, `*` does not cross `/` boundaries unless you use `**`.
 
 **Fix:** add both patterns explicitly.
 
@@ -219,12 +219,12 @@ Details: [`docs/DEPRECATIONS.md`](DEPRECATIONS.md) and [`docs/POLICY_REFERENCE.m
 
 ## CORS preflight fails from a production frontend
 
-**Cause:** `--allowed-origin` is unset, so AgentGuard is in **permissive-localhost** mode — any non-localhost `Origin` is rejected.
+**Cause:** `--allowed-origin` is unset, so Vanzik is in **permissive-localhost** mode — any non-localhost `Origin` is rejected.
 
 **Fix:** set the exact frontend origin.
 
 ```bash
-agentguard server --allowed-origin https://app.example.com ...
+vanzik server --allowed-origin https://app.example.com ...
 ```
 
 Details: [`docs/DEPLOYMENT.md` §3](DEPLOYMENT.md#3-cors).
@@ -233,24 +233,24 @@ Details: [`docs/DEPLOYMENT.md` §3](DEPLOYMENT.md#3-cors).
 
 ## Docker: audit log is empty after container restart
 
-**Cause:** the audit log is written inside the container at `/var/lib/agentguard/audit.jsonl`. Without a volume mount, the filesystem is destroyed when the container is removed.
+**Cause:** the audit log is written inside the container at `/var/lib/vanzik/audit.jsonl`. Without a volume mount, the filesystem is destroyed when the container is removed.
 
 **Fix:**
 
 ```bash
 docker run -d -p 8080:8080 \
-  -e AGENTGUARD_API_KEY="$AGENTGUARD_API_KEY" \
-  -v agentguard-audit:/var/lib/agentguard \
-  agentguard:latest
+  -e VANZIK_API_KEY="$VANZIK_API_KEY" \
+  -v vanzik-audit:/var/lib/vanzik \
+  vanzik:latest
 ```
 
-Keep `-e AGENTGUARD_API_KEY`: without an API key the server binds `127.0.0.1` inside the container and the published port refuses connections.
+Keep `-e VANZIK_API_KEY`: without an API key the server binds `127.0.0.1` inside the container and the published port refuses connections.
 
 ---
 
 ## MCP Gateway / LLM API Proxy issues (v0.5+)
 
-### MCP client shows zero tools after pointing at `agentguard-mcp-gateway`
+### MCP client shows zero tools after pointing at `vanzik-mcp-gateway`
 
 The gateway started but no `--upstream` is wired, or the upstream subprocess crashed at boot. Run the gateway in the foreground and watch for `info mcpgw: startup: upstream "<name>" failed to spawn: …` (a missing launcher such as `npx`, `uvx` or `docker` shows up here). Verify the upstream command runs standalone. Details: [`MCP_GATEWAY.md`](MCP_GATEWAY.md).
 
@@ -260,22 +260,22 @@ The proxy was killed mid-stream and the buffered tool-call payload was never flu
 
 ### LLM API Proxy: agent sees `502 Bad Gateway`
 
-The proxy couldn't reach `--guard-url` or the bearer token is wrong. `curl -sf <guard-url>/health` to confirm reachability, then verify `AGENTGUARD_API_KEY` matches on both sides. With `--fail-mode=deny` (production default), in-flight calls return synthetic refusals until the server comes back.
+The proxy couldn't reach `--guard-url` or the bearer token is wrong. `curl -sf <guard-url>/health` to confirm reachability, then verify `VANZIK_API_KEY` matches on both sides. With `--fail-mode=deny` (production default), in-flight calls return synthetic refusals until the server comes back.
 
 ### Proxy rejects every incoming connection
 
 It bound to `127.0.0.1`. If your agent runs in a separate container or host, the loopback bind blocks it. Change to `--listen 0.0.0.0:<port>` **only on a trusted network** — proxy inbound is not authenticated.
 
-### Tool calls flow through the LLM API Proxy but never reach the AgentGuard server
+### Tool calls flow through the LLM API Proxy but never reach the Vanzik server
 
-The client's `OPENAI_BASE_URL` is missing the `/v1` suffix, or the request is a plain chat completion (intentionally passthrough — no tool call means nothing to gate). Check the central server's audit log (`agentguard audit --transport llm_api_proxy`) — if nothing lands there while tool calls run, the traffic isn't reaching the proxy. Set `OPENAI_BASE_URL=http://127.0.0.1:8081/v1` (include `/v1`); for Anthropic use `ANTHROPIC_BASE_URL=http://127.0.0.1:8081` (no `/v1`). Details: [`QUICKSTART_LLM_PROXY.md`](QUICKSTART_LLM_PROXY.md).
+The client's `OPENAI_BASE_URL` is missing the `/v1` suffix, or the request is a plain chat completion (intentionally passthrough — no tool call means nothing to gate). Check the central server's audit log (`vanzik audit --transport llm_api_proxy`) — if nothing lands there while tool calls run, the traffic isn't reaching the proxy. Set `OPENAI_BASE_URL=http://127.0.0.1:8081/v1` (include `/v1`); for Anthropic use `ANTHROPIC_BASE_URL=http://127.0.0.1:8081` (no `/v1`). Details: [`QUICKSTART_LLM_PROXY.md`](QUICKSTART_LLM_PROXY.md).
 
 ---
 
 ## Still stuck?
 
-- Run `agentguard status` — shows `/health` reachability and the pending queue.
+- Run `vanzik status` — shows `/health` reachability and the pending queue.
 - Check `/metrics` on the central server AND on each proxy — counters, gauges, histograms, dispatch drops.
-- Response headers on `/v1/check`: `X-AgentGuard-Policy-Ms`, `X-AgentGuard-Audit-Ms`, `X-AgentGuard-Total-Ms` (timings in ms, 3 decimals).
-- Version skew: all three binaries report their version via `agentguard version` / `agentguard-mcp-gateway --version` / `agentguard-llm-proxy --version`. Mismatch is the most common ops-time bug after a partial upgrade.
-- Open an issue with: versions of all binaries, sanitized policy snippet, and the relevant log lines from both the proxy and the central server. Security-sensitive reports go to `cauaferrazp@gmail.com` — not the issue tracker.
+- Response headers on `/v1/check`: `X-Vanzik-Policy-Ms`, `X-Vanzik-Audit-Ms`, `X-Vanzik-Total-Ms` (timings in ms, 3 decimals).
+- Version skew: all three binaries report their version via `vanzik version` / `vanzik-mcp-gateway --version` / `vanzik-llm-proxy --version`. Mismatch is the most common ops-time bug after a partial upgrade.
+- Open an issue with: versions of all binaries, sanitized policy snippet, and the relevant log lines from both the proxy and the central server. Security-sensitive reports go to `security@lictorate.com` — not the issue tracker.

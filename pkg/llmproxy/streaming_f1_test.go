@@ -94,7 +94,7 @@ func TestStreaming_OpenAI_MalformedCompletion_FailsClosedAuditsAndResets(t *test
 	got := string(raw)
 
 	// (a) A refusal reached the client, carrying the malformed reason.
-	if !strings.Contains(got, "AgentGuard denied") || !strings.Contains(got, "malformed tool call arguments") {
+	if !strings.Contains(got, "Vanzik denied") || !strings.Contains(got, "malformed tool call arguments") {
 		t.Errorf("expected fail-closed malformed refusal; got %q", got)
 	}
 	// Fail-closed proof: the buffered malformed tool_call MUST NOT leak,
@@ -155,7 +155,7 @@ func TestStreaming_Anthropic_MalformedCompletion_FailsClosedAuditsAndResets(t *t
 
 	// (a) refusal reached the client with the malformed reason + the
 	// Anthropic stop_reason rewrite.
-	if !strings.Contains(got, "AgentGuard denied") || !strings.Contains(got, "malformed tool call arguments") {
+	if !strings.Contains(got, "Vanzik denied") || !strings.Contains(got, "malformed tool call arguments") {
 		t.Errorf("expected fail-closed malformed refusal; got %q", got)
 	}
 	if !strings.Contains(got, "stop_reason") {
@@ -213,7 +213,7 @@ func TestStreaming_MalformedNonCompletionDelta_NoSpuriousRefusal(t *testing.T) {
 	raw, _ := io.ReadAll(resp.Body)
 	got := string(raw)
 
-	if strings.Contains(got, "AgentGuard denied") || strings.Contains(got, "malformed tool call arguments") {
+	if strings.Contains(got, "Vanzik denied") || strings.Contains(got, "malformed tool call arguments") {
 		t.Errorf("malformed NON-completion delta spuriously refused: %q", got)
 	}
 	if !strings.Contains(got, "hello") {

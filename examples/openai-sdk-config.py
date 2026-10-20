@@ -1,8 +1,8 @@
 """
-AgentGuard LLM API Proxy — OpenAI Python SDK example.
+Vanzik LLM API Proxy — OpenAI Python SDK example.
 
 This is the "no framework" path: a raw `openai` client whose `base_url`
-is pointed at the AgentGuard LLM API Proxy. Existing code that already
+is pointed at the Vanzik LLM API Proxy. Existing code that already
 talks to the OpenAI Chat Completions API works unchanged after exporting
 one environment variable.
 
@@ -10,7 +10,7 @@ Verified against:
   - openai==2.35.1 (https://github.com/openai/openai-python, 2026-05-05).
     Constructor parameter `base_url=` and env var `OPENAI_BASE_URL` are
     the canonical knobs; both honor a `/v1` suffix.
-  - AgentGuard LLM API Proxy v0.4.1+ (`agentguard-llm-proxy --listen
+  - Vanzik LLM API Proxy v0.4.1+ (`vanzik-llm-proxy --listen
     127.0.0.1:8081`).
 
 Setup:
@@ -18,21 +18,21 @@ Setup:
   export OPENAI_API_KEY=sk-...                    # your real OpenAI key
   export OPENAI_BASE_URL=http://127.0.0.1:8081/v1 # the proxy
 
-Run AgentGuard side (two terminals):
+Run Vanzik side (two terminals):
 
   # Terminal 1 — central policy server + dashboard
-  agentguard server \\
+  vanzik server \\
       --policy configs/default.yaml \\
       --dashboard \\
       --watch \\
-      --api-key "$AGENTGUARD_API_KEY"
+      --api-key "$VANZIK_API_KEY"
 
   # Terminal 2 — LLM API Proxy (OpenAI-shape on /v1/*)
-  agentguard-llm-proxy \\
+  vanzik-llm-proxy \\
       --listen 127.0.0.1:8081 \\
       --policy configs/default.yaml \\
       --guard-url http://127.0.0.1:8080 \\
-      --api-key "$AGENTGUARD_API_KEY"
+      --api-key "$VANZIK_API_KEY"
 
 Then run this script:
   python examples/openai-sdk-config.py
@@ -45,7 +45,7 @@ Expected behaviour with the bundled `configs/default.yaml`:
     SDK receives the original streamed tool-call deltas.
   - `bash` tool call for `rm -rf /etc`: scope `shell` denies; the proxy
     rewrites the SSE stream as a synthetic assistant text message
-    starting with `[AgentGuard] Tool call denied:`.
+    starting with `[Vanzik] Tool call denied:`.
 
 Open the dashboard at http://127.0.0.1:8080/dashboard to watch each
 decision land live (transport chip: `llm_api_proxy`).
@@ -87,7 +87,7 @@ def main() -> None:
     # The SDK forwards OPENAI_API_KEY in the Authorization header; the
     # proxy pipes it through to the upstream untouched (it never reads
     # the bearer token). The proxy's own optional --proxy-api-key is a
-    # separate header (X-AgentGuard-Proxy-Auth) and is unset by default
+    # separate header (X-Vanzik-Proxy-Auth) and is unset by default
     # when the proxy binds to 127.0.0.1.
     client = OpenAI(base_url=base_url, api_key=api_key)
 
@@ -135,13 +135,13 @@ def main() -> None:
         delta = chunk.choices[0].delta
 
         # Plain text: ALLOWed pass-through OR a synthetic refusal that
-        # AgentGuard injected after a DENY. Same wire shape; the
+        # Vanzik injected after a DENY. Same wire shape; the
         # operator distinguishes via the dashboard / audit log.
         if getattr(delta, "content", None):
             print(delta.content, end="", flush=True)
 
         # Tool-call deltas: byte-identical bytes from upstream when
-        # AgentGuard ALLOWs. On DENY/REQUIRE_APPROVAL the proxy
+        # Vanzik ALLOWs. On DENY/REQUIRE_APPROVAL the proxy
         # suppresses them and emits an assistant text refusal instead,
         # so the `tool_calls` branch is naturally skipped.
         for tc in getattr(delta, "tool_calls", None) or []:

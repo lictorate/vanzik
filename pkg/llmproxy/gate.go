@@ -1,7 +1,7 @@
 package llmproxy
 
 // gate.go wires the LLM API Proxy's PolicyCheck hook against the central
-// AgentGuard server's /v1/check endpoint. The proxy loads the same
+// Vanzik server's /v1/check endpoint. The proxy loads the same
 // policy YAML the central server reads so the bundled
 // DefaultLLMToolScopeMap can be overridden by operator entries
 // (Policy.ToolScopeMap, see pkg/llmproxy/scope_map.go § "Source-of-truth
@@ -16,7 +16,7 @@ package llmproxy
 //     dual-check (no synthetic mcp_tool layer like the MCP gateway).
 //     Bare LLM tool names live in a disjoint pattern space from
 //     namespaced MCP names so the policy author writes one
-//     `tool_scope_map:` table and AgentGuard dispatches correctly per
+//     `tool_scope_map:` table and Vanzik dispatches correctly per
 //     transport tag.
 //   - Tools not covered by the merged map fall back to the sentinel
 //     scope `unmapped`. The policy engine has no built-in handling for
@@ -45,9 +45,9 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/internal/gateclient"
-	"github.com/Caua-ferraz/AgentGuard/pkg/notify"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/internal/gateclient"
+	"lictorate.com/vanzik/v2/pkg/notify"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // DefaultGuardHTTPTimeout is the per-/v1/check-call timeout the gate
@@ -75,7 +75,7 @@ var llmFailModeRules = gateclient.FailModeRules{
 }
 
 // HTTPPolicyClient is the LLM API Proxy's connection to the central
-// AgentGuard server's /v1/check endpoint. One instance per proxy
+// Vanzik server's /v1/check endpoint. One instance per proxy
 // process; the underlying http.Client (and its connection pool) is
 // reused.
 //
@@ -253,7 +253,7 @@ func (c *HTTPPolicyClient) RecordForcedAudit(ctx context.Context, req *ToolCallC
 		GuardURL:   c.GuardURL,
 		APIKey:     c.APIKey,
 		TenantID:   c.TenantID,
-		UserAgent:  "agentguard-llm-proxy/" + BuildVersion,
+		UserAgent:  "vanzik-llm-proxy/" + BuildVersion,
 		HTTPClient: c.HTTPClient,
 	}
 	if err := caller.RecordForcedAudit(ctx, ar, decision.Reason, decision.Rule); err != nil {
@@ -270,10 +270,10 @@ func (c *HTTPPolicyClient) RecordForcedAudit(ctx context.Context, req *ToolCallC
 		// not the DENY the client saw, is recorded); coverage never does. The
 		// --api-key remedy is in the log so full fidelity is one flag away
 		// (docs/LLM_API_PROXY.md § Audit fidelity).
-		log.Printf("agentguard-llm-proxy: forced-audit record failed (client refusal already sent); "+
+		log.Printf("vanzik-llm-proxy: forced-audit record failed (client refusal already sent); "+
 			"falling back to /v1/check low-fidelity audit — give this proxy --api-key when the central server is keyed for full fidelity: %v", err)
 		if _, ferr := c.callV1Check(ctx, ar); ferr != nil {
-			log.Printf("agentguard-llm-proxy: forced-audit /v1/check fallback also failed (audit entry lost for this refusal): %v", ferr)
+			log.Printf("vanzik-llm-proxy: forced-audit /v1/check fallback also failed (audit entry lost for this refusal): %v", ferr)
 		}
 	}
 }
@@ -491,7 +491,7 @@ func (c *HTTPPolicyClient) callV1Check(ctx context.Context, ar policy.ActionRequ
 		GuardURL:   c.GuardURL,
 		APIKey:     c.APIKey,
 		TenantID:   c.TenantID,
-		UserAgent:  "agentguard-llm-proxy/" + BuildVersion,
+		UserAgent:  "vanzik-llm-proxy/" + BuildVersion,
 		HTTPClient: c.HTTPClient,
 	}
 	return caller.CallV1Check(ctx, ar, llmFailModeRules)

@@ -1,6 +1,6 @@
 # LLM API Proxy
 
-The `agentguard-llm-proxy` binary speaks `/v1/chat/completions`
+The `vanzik-llm-proxy` binary speaks `/v1/chat/completions`
 (OpenAI) and `/v1/messages` (Anthropic) wire formats and forwards
 to the real upstream after gating any tool calls the model emits —
 including tool calls that arrive inside an SSE stream.
@@ -28,7 +28,7 @@ LLM-proxy space.
                                    │ Authorization: Bearer <user-token>
                                    ▼
                 ┌─────────────────────────────────────┐
-                │      agentguard-llm-proxy           │
+                │      vanzik-llm-proxy           │
                 │  (HTTP server, default 127.0.0.1:8081)│
                 │                                      │
                 │  ┌─ /v1/chat/completions  (OpenAI)   │
@@ -63,12 +63,12 @@ LLM-proxy space.
 ## 2. CLI surface
 
 ```
-agentguard-llm-proxy \
+vanzik-llm-proxy \
   --listen 127.0.0.1:8081 \
   --upstream-openai https://api.openai.com \
   --upstream-anthropic https://api.anthropic.com \
   --guard-url http://127.0.0.1:8080 \
-  --api-key $AGENTGUARD_API_KEY \
+  --api-key $VANZIK_API_KEY \
   --proxy-api-key $PROXY_AUTH_TOKEN \
   --tenant-id local \
   --fail-mode deny \
@@ -81,15 +81,15 @@ agentguard-llm-proxy \
 | `--listen`               | address to bind (host:port). A non-loopback address — including an empty host such as `:8081`, which binds every interface — requires `--proxy-api-key` (§ 8.1). | `127.0.0.1:8081`             |
 | `--upstream-openai`      | base URL for OpenAI-shape requests                        | `https://api.openai.com`     |
 | `--upstream-anthropic`   | base URL for Anthropic-shape requests                     | `https://api.anthropic.com`  |
-| `--guard-url`            | central server `/v1/check` URL (from `AGENTGUARD_URL` when unset) | `http://127.0.0.1:8080`      |
-| `--api-key`              | bearer for `/v1/check` **and** `POST /v1/audit` (from `AGENTGUARD_API_KEY`, then the key `agentguard setup` saved). Required for full forced-refusal audit fidelity when the central server is keyed (§ 5.4 Audit fidelity); without it those audits fall back to the lower-fidelity `/v1/check` path. | unset (warn) |
-| `--proxy-api-key`        | optional key the proxy itself enforces on inbound API requests; callers send it in the `X-AgentGuard-Proxy-Auth` header (`<key>` or `Bearer <key>`). Empty = no proxy auth; required for a non-loopback `--listen` (§ 8.1). | unset |
+| `--guard-url`            | central server `/v1/check` URL (from `VANZIK_URL` when unset) | `http://127.0.0.1:8080`      |
+| `--api-key`              | bearer for `/v1/check` **and** `POST /v1/audit` (from `VANZIK_API_KEY`, then the key `vanzik setup` saved). Required for full forced-refusal audit fidelity when the central server is keyed (§ 5.4 Audit fidelity); without it those audits fall back to the lower-fidelity `/v1/check` path. | unset (warn) |
+| `--proxy-api-key`        | optional key the proxy itself enforces on inbound API requests; callers send it in the `X-Vanzik-Proxy-Auth` header (`<key>` or `Bearer <key>`). Empty = no proxy auth; required for a non-loopback `--listen` (§ 8.1). | unset |
 | `--tenant-id`            | tenant header value                                       | `local`                      |
 | `--fail-mode`            | `deny` / `allow` / `fail-closed-with-audit`               | `deny`                       |
-| `--fail-audit-log`       | local JSONL fallback audit for `fail-closed-with-audit` denials (empty disables) | `agentguard-fail-audit.jsonl` |
+| `--fail-audit-log`       | local JSONL fallback audit for `fail-closed-with-audit` denials (empty disables) | `vanzik-fail-audit.jsonl` |
 | `--max-buffer-bytes`     | per-stream tool-call buffer cap (see § 6). The flag accepts 1 byte – 64 MiB; a config carrying `0` ("operator cap disabled", reachable only by embedding the package — the flag rejects `0`) is still bounded by a built-in 64 MiB absolute ceiling, past which the stream is refused fail-closed. | `1048576` (1 MiB)            |
-| `--max-concurrent-streams` | cap on simultaneously open streaming responses; excess requests are rejected (`agentguard_llmproxy_streams_rejected_total`) | `100` |
-| `--policy`               | path to AgentGuard policy YAML; loaded only for `tool_scope_map` operator overrides. Without it, the proxy falls back to `DefaultLLMToolScopeMap` and logs a WARN at startup. | unset |
+| `--max-concurrent-streams` | cap on simultaneously open streaming responses; excess requests are rejected (`vanzik_llmproxy_streams_rejected_total`) | `100` |
+| `--policy`               | path to Vanzik policy YAML; loaded only for `tool_scope_map` operator overrides. Without it, the proxy falls back to `DefaultLLMToolScopeMap` and logs a WARN at startup. | unset |
 | `--log-level`            | stderr verbosity                                          | `info`                       |
 | `--version`              | print version and exit (checked before any other flag is parsed) | —                     |
 
@@ -107,14 +107,14 @@ is the proxy's credential for the central server's `/v1/check`.
 The proxy is **dumb on auth**: it forwards `Authorization`,
 `x-api-key` (Anthropic), `OpenAI-Organization`, `OpenAI-Project`, and
 all other request headers to the upstream **verbatim** — except
-hop-by-hop headers and the proxy's own `X-AgentGuard-Proxy-Auth` (§ 8.1),
+hop-by-hop headers and the proxy's own `X-Vanzik-Proxy-Auth` (§ 8.1),
 which are dropped. The proxy
 never reads the user's bearer token; the upstream is responsible for
 auth. The `Authorization` header for the **central guard server** is a
 separate concern (see § 3.2) — the proxy adds it on the
 `/v1/check` side channel only, never on the upstream-forwarded request.
 
-`User-Agent` is rewritten to include an `AgentGuard-Proxy/<version>`
+`User-Agent` is rewritten to include a `vanzik-llm-proxy/<version>`
 suffix so server-side logs at OpenAI/Anthropic can identify
 proxied traffic. Spec-compliant: `User-Agent` is mutable per RFC 7231.
 
@@ -129,7 +129,7 @@ like any other header):
 |---|---|---|
 | `X-Agent-ID` | `agent_id` | `llm-proxy` when absent. |
 | `X-Session-ID` | `session_id` | Keys `cost.max_per_session` and the audit's sessions. |
-| `X-AgentGuard-Parent-Session` | `parent_session_id` | **(v1.4)** The session that started this one, e.g. the orchestrator's session when a sub-agent calls the model. Not used by policy; [`GET /v1/sessions`](API.md#get-v1sessions--tenant-aware-mirror) and the dashboard's Sessions view use it to link the two. Omitted when the header is absent. |
+| `X-Vanzik-Parent-Session` | `parent_session_id` | **(v1.4)** The session that started this one, e.g. the orchestrator's session when a sub-agent calls the model. Not used by policy; [`GET /v1/sessions`](API.md#get-v1sessions--tenant-aware-mirror) and the dashboard's Sessions view use it to link the two. Omitted when the header is absent. |
 
 ### 3.2 Body handling
 
@@ -234,7 +234,7 @@ Operators MUST configure an `unmapped` scope rule to control behaviour:
 
 If no `unmapped` rule exists, the engine's standard fall-through
 default-deny applies — fail-closed by design. A tool the policy
-author has not seen is, by AgentGuard's policy contract, denied.
+author has not seen is, by Vanzik's policy contract, denied.
 
 ### 4.4 Multiple-arg scope upgrades
 
@@ -267,7 +267,7 @@ and the model is calling tools, the proxy must:
 6. **ALLOW** → flush buffered deltas to the client and resume the
    stream.
 7. **DENY** → rewrite the buffered deltas as a synthetic tool-result
-   message containing AgentGuard's denial; resume the stream with the
+   message containing Vanzik's denial; resume the stream with the
    rewrite.
 8. **REQUIRE_APPROVAL** → similar to DENY but the synthetic message
    includes the approval URL.
@@ -442,7 +442,7 @@ Algorithm (Anthropic): identical structure, but:
 When DENY (or REQUIRE_APPROVAL with a URL):
 
 ```
-data: {"choices":[{"delta":{"content":"AgentGuard denied this action.\n\nReason: <reason>\nRule: <rule>","role":"assistant"},"finish_reason":"stop","index":0}],"created":0,"id":"agentguard-refusal","object":"chat.completion.chunk"}
+data: {"choices":[{"delta":{"content":"Vanzik denied this action.\n\nReason: <reason>\nRule: <rule>","role":"assistant"},"finish_reason":"stop","index":0}],"created":0,"id":"vanzik-refusal","object":"chat.completion.chunk"}
 
 data: [DONE]
 ```
@@ -454,7 +454,7 @@ required.
 For REQUIRE_APPROVAL the content is:
 
 ```
-[AgentGuard] Tool call requires approval.
+[Vanzik] Tool call requires approval.
 Reason: <reason>
 Approval ID: ap_<hex>
 Approve at: <approval_url>
@@ -482,7 +482,7 @@ data: { "type": "content_block_start", "index": <same>,
 event: content_block_delta
 data: { "type": "content_block_delta", "index": <same>,
         "delta": { "type": "text_delta",
-                   "text": "AgentGuard denied this action.\n\nReason: <reason>\nRule: <rule>" } }
+                   "text": "Vanzik denied this action.\n\nReason: <reason>\nRule: <rule>" } }
 
 event: content_block_stop
 data: { "type": "content_block_stop", "index": <same> }
@@ -513,14 +513,14 @@ audit entry, and the stream went dark for the rest of the connection.)
 
 A **non-streaming** response is gated by decoding it into the typed
 response struct and inspecting the tool calls it contains. A body that
-fails that decode is forwarded verbatim — AgentGuard never rewrites an
+fails that decode is forwarded verbatim — Vanzik never rewrites an
 already-corrupt wire — with one exception, added after audit finding B6.
 
 Go's decoder is stricter than a client SDK's in one specific way: it
 aborts on a **type-mismatched** field the struct declares, such as
 `"created": "1730000000"` where the spec says integer. A Python or
 TypeScript SDK parsing the same bytes ignores the odd field and executes
-the `tool_calls` sitting beside it. So "AgentGuard cannot decode it" did
+the `tool_calls` sitting beside it. So "Vanzik cannot decode it" did
 not imply "the client cannot use it", and the gap forwarded a tool call
 the firewall never evaluated.
 
@@ -536,7 +536,7 @@ trail** with the DENY the client actually received, via the same
 `/v1/audit` ingest path the malformed-tool-call refusal uses — so it
 arrives tagged `transport: llm_api_proxy` under that stable rule string,
 which is the signal to alert on. The proxy also increments
-`agentguard_llmproxy_undecodable_tool_call_total{provider}`, but that
+`vanzik_llmproxy_undecodable_tool_call_total{provider}`, but that
 lives in the proxy's process-local registry and **has no scrape
 endpoint** (see [`OBSERVABILITY.md`](OBSERVABILITY.md)), so it is useful
 only to in-process embedders today. Alert on the audit rule, not the
@@ -651,8 +651,8 @@ gating a single tool call. Rationale:
 - Pathological cases (large file contents passed as a tool argument,
   e.g., a `write_file` with a multi-megabyte payload) hit this cap.
 - Above the cap, the proxy emits a synthetic refusal: "tool call too
-  large to gate (> N bytes); rejected by AgentGuard". Operators see a
-  metric (`agentguard_llmproxy_buffer_overflow_total`) and can raise the
+  large to gate (> N bytes); rejected by Vanzik". Operators see a
+  metric (`vanzik_llmproxy_buffer_overflow_total`) and can raise the
   limit if their use case needs it.
 
 Why 1 MiB:
@@ -701,7 +701,7 @@ One audit entry per **tool call** (not per stream, not per delta).
   "agent_id": "<from x-agent-id header, or 'llm-proxy'>",
   "request": {
     "scope": "filesystem",
-    "parent_session_id": "<from x-agentguard-parent-session header; omitted when absent>",
+    "parent_session_id": "<from x-vanzik-parent-session header; omitted when absent>",
     "command": "read_file",
     "path": "/tmp/x",
     "action": "read",
@@ -743,15 +743,15 @@ loopback (`127.0.0.1`). Treat this like the central guard server's
 no-API-key fallback: localhost is the implicit trust boundary.
 
 If `--proxy-api-key` is set, every API request (everything except
-`GET /healthz`) must carry the key in the **`X-AgentGuard-Proxy-Auth`**
+`GET /healthz`) must carry the key in the **`X-Vanzik-Proxy-Auth`**
 header — as `<key>` or `Bearer <key>`. The key is compared in constant
 time; a missing or wrong key gets `401` with
-`{"error":{"message":"unauthorized: X-AgentGuard-Proxy-Auth missing or invalid","type":"agentguard_error"}}`.
+`{"error":{"message":"unauthorized: X-Vanzik-Proxy-Auth missing or invalid","type":"vanzik_error"}}`.
 
 It is a separate header so it never collides with the caller's own
 provider credential: `Authorization` / `x-api-key` (the OpenAI /
 Anthropic key) pass through to the upstream unchanged, while
-`X-AgentGuard-Proxy-Auth` is stripped before forwarding. The proxy does
+`X-Vanzik-Proxy-Auth` is stripped before forwarding. The proxy does
 not re-key calls — the upstream sees the caller's credential.
 
 If `--listen` is non-loopback **and** `--proxy-api-key` is unset, the
@@ -820,7 +820,7 @@ stream. Operators can tune the limits in policy YAML
 
 ## 11. Client integration
 
-AgentGuard ships working examples for the four most common ways agents
+Vanzik ships working examples for the four most common ways agents
 talk to OpenAI / Anthropic: the raw OpenAI and Anthropic Python SDKs,
 LangChain (`langchain-openai`), and CrewAI (LiteLLM under the hood).
 Each example is a runnable Python script with a paired `.md`
@@ -848,7 +848,7 @@ walkthrough. The fastest end-to-end is
 
 Once the proxy is running and your code points at it:
 
-1. **The proxy logs a startup line.** Stderr: `agentguard-llm-proxy
+1. **The proxy logs a startup line.** Stderr: `vanzik-llm-proxy
    <version> listening on 127.0.0.1:8081 (...)`. If you don't see
    this, the proxy didn't start — check `--listen` and policy paths.
 2. **The first SDK call appears on the dashboard.** Send any
@@ -866,9 +866,9 @@ Once the proxy is running and your code points at it:
    `rm -rf *` under `scope: shell` (or use the bundled one). Prompt
    the model to `rm -rf /etc`. The dashboard logs `DENY`; your code
    receives a synthetic assistant text starting with
-   `AgentGuard denied this action.` instead of any tool-call deltas.
+   `Vanzik denied this action.` instead of any tool-call deltas.
 
-If actions never reach AgentGuard, the SDK is probably still talking
+If actions never reach Vanzik, the SDK is probably still talking
 to the real upstream — verify the env var is set for the process
 that runs your script (not just the parent shell), and that the SDK
 constructor isn't overriding `base_url` from elsewhere.
@@ -881,9 +881,9 @@ every tool call calls back to the central server's `/v1/check`, and
 table: [`PROXY_ARCHITECTURE.md`](./PROXY_ARCHITECTURE.md) § 6.1).
 
 **Three API keys, three purposes.** Provider key (forwarded verbatim,
-never read), `AGENTGUARD_API_KEY` (the `/v1/check` side-channel
+never read), `VANZIK_API_KEY` (the `/v1/check` side-channel
 bearer), and the optional inbound `--proxy-api-key`
-(`X-AgentGuard-Proxy-Auth`) — the header split is spelled out in § 3.1
+(`X-Vanzik-Proxy-Auth`) — the header split is spelled out in § 3.1
 and § 8.1.
 
 **Anthropic's path convention.** `ANTHROPIC_BASE_URL` should be
@@ -892,21 +892,21 @@ and § 8.1.
 double-prefixed paths and 404s. This is the most common
 configuration mistake; double-check the env var when debugging.
 
-**Approval-id round-trip is opt-in.** When AgentGuard returns
+**Approval-id round-trip is opt-in.** When Vanzik returns
 `REQUIRE_APPROVAL`, the proxy emits a synthetic refusal with the
 approval ID embedded. The SDK or end user needs to:
 
-1. Click approve on the dashboard (or via `agentguard approve <id>`).
+1. Click approve on the dashboard (or via `vanzik approve <id>`).
 2. Re-prompt the model with the same intent.
 3. Pass `meta.approval_id` to the proxy's `/v1/check` (handled
    automatically when retrying through the proxy and your harness
-   sets `_meta.dev.agentguard/approval_id` — see the MCP Gateway's
+   sets `_meta.dev.vanzik/approval_id` — see the MCP Gateway's
    approval-id round-trip in [`docs/APPROVAL_WORKFLOW.md`](./APPROVAL_WORKFLOW.md)).
 
 The OpenAI / Anthropic SDKs do **not** carry `_meta` round-trip
 state automatically; for one-shot CLI agents the typical flow is:
 operator clicks approve, user re-prompts, model emits the tool call
-again, AgentGuard sees the approved id and short-circuits to
+again, Vanzik sees the approved id and short-circuits to
 `ALLOW`.
 
 **Streaming vs non-streaming both work.** Streaming goes through the
@@ -914,7 +914,7 @@ pause/resume/rewrite gater (§ 5); non-streaming responses are buffered
 in full (capped by `--max-buffer-bytes`) and gated before forwarding.
 Concurrent calls are safe — per-request parser state is isolated (§ 6).
 
-**Custom tool names need a `tool_scope_map:` entry.** AgentGuard
+**Custom tool names need a `tool_scope_map:` entry.** Vanzik
 ships a default mapping for ~17 common tool names (see
 [`pkg/llmproxy/scope_map.go`](../pkg/llmproxy/scope_map.go)).
 Anything else dispatches as `scope: unmapped`, which the engine

@@ -43,12 +43,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/metrics"
 )
 
 // Defaults for BufferedAsyncOpts. Tuned for "ten or so RPS sustained, bursts
 // of a few hundred". Operators with heavier audit load should override via
-// the CLI flags wired in cmd/agentguard/main.go.
+// the CLI flags wired in cmd/vanzik/main.go.
 const (
 	defaultBufferedQueueSize        = 1024
 	defaultBufferedWorkers          = 4
@@ -218,7 +218,7 @@ func (b *BufferedAsyncLogger) Query(filter QueryFilter) ([]Entry, error) {
 // reaches the underlying logger.
 //
 // Close does NOT close the underlying logger — the caller owns that
-// lifecycle (typically `defer logger.Close()` in cmd/agentguard/main.go,
+// lifecycle (typically `defer logger.Close()` in cmd/vanzik/main.go,
 // after the buffered wrapper's defer fires).
 //
 // We DO NOT close b.queue: with concurrent Log() callers in flight, a
@@ -258,13 +258,13 @@ func (b *BufferedAsyncLogger) DrainedFromOverflow() uint64 {
 }
 
 // noteQueueDepth adjusts the queue-depth hint and mirrors the new value
-// to the agentguard_audit_buffered_queue_depth gauge.
+// to the vanzik_audit_buffered_queue_depth gauge.
 func (b *BufferedAsyncLogger) noteQueueDepth(delta int64) {
 	metrics.SetAuditBufferedQueueDepth(atomic.AddInt64(&b.queueDepthHint, delta))
 }
 
 // noteDroppedToOverflow counts a spill on both the instance counter and
-// the agentguard_audit_buffered_dropped_to_overflow_total series.
+// the vanzik_audit_buffered_dropped_to_overflow_total series.
 func (b *BufferedAsyncLogger) noteDroppedToOverflow() {
 	atomic.AddUint64(&b.droppedToOverflow, 1)
 	metrics.IncAuditBufferedDroppedToOverflow()

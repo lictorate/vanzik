@@ -1,4 +1,4 @@
-# Anthropic Python SDK — AgentGuard LLM API Proxy
+# Anthropic Python SDK — Vanzik LLM API Proxy
 
 Same shape as [`openai-sdk-config.md`](./openai-sdk-config.md) but for
 the Anthropic Python SDK. The proxy speaks both `/v1/chat/completions`
@@ -20,11 +20,11 @@ one proxy, two providers.
 - `pip install "anthropic>=0.40"`
 - A valid `ANTHROPIC_API_KEY` (forwarded verbatim by the proxy as
   `x-api-key` to api.anthropic.com)
-- Two `agentguard` binaries on `PATH`:
+- Two `vanzik` binaries on `PATH`:
 
   ```bash
-  go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard@latest
-  go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard-llm-proxy@latest
+  go install lictorate.com/vanzik/v2/cmd/vanzik@latest
+  go install lictorate.com/vanzik/v2/cmd/vanzik-llm-proxy@latest
   ```
 
 ## What this config does
@@ -32,13 +32,13 @@ one proxy, two providers.
 ```
 your script ──► Anthropic SDK ──► http://127.0.0.1:8081/v1/messages
                                               │
-                                    (agentguard-llm-proxy)
+                                    (vanzik-llm-proxy)
                                               │
                             ┌─────────────────┼─────────────────────┐
                             │                                       │
                             ▼                                       ▼
        http://127.0.0.1:8080/v1/check          https://api.anthropic.com/v1/messages
-       (central AgentGuard server)             (the real upstream)
+       (central Vanzik server)             (the real upstream)
 ```
 
 The proxy buffers `tool_use` content blocks (between
@@ -51,30 +51,30 @@ with a synthetic `text` block (DENY / REQUIRE_APPROVAL). The
 
 ## Setup (4 steps)
 
-1. **Generate AgentGuard's API key:**
+1. **Generate Vanzik's API key:**
 
    ```bash
-   export AGENTGUARD_API_KEY="$(openssl rand -hex 32)"
+   export VANZIK_API_KEY="$(openssl rand -hex 32)"
    ```
 
-2. **Start the central AgentGuard server** in one terminal:
+2. **Start the central Vanzik server** in one terminal:
 
    ```bash
-   agentguard server \
+   vanzik server \
        --policy configs/default.yaml \
        --dashboard \
        --watch \
-       --api-key "$AGENTGUARD_API_KEY"
+       --api-key "$VANZIK_API_KEY"
    ```
 
 3. **Start the LLM API Proxy** in a second terminal:
 
    ```bash
-   agentguard-llm-proxy \
+   vanzik-llm-proxy \
        --listen 127.0.0.1:8081 \
        --policy configs/default.yaml \
        --guard-url http://127.0.0.1:8080 \
-       --api-key "$AGENTGUARD_API_KEY"
+       --api-key "$VANZIK_API_KEY"
    ```
 
 4. **Point the Anthropic SDK at the proxy** and run the example:
@@ -107,7 +107,7 @@ Messages API (`client.messages.create()`) instead.
 
 An unsupported endpoint is *rejected*, never silently passed through — the
 firewall does not forward traffic it cannot inspect. Do not work around a 404 by
-routing that traffic around AgentGuard: that bypasses enforcement entirely.
+routing that traffic around Vanzik: that bypasses enforcement entirely.
 
 ## Verification
 
@@ -117,7 +117,7 @@ routing that traffic around AgentGuard: that bypasses enforcement entirely.
 - **DENY:** modify the prompt to ask for `dd if=/dev/zero of=/dev/sda`
   (the default policy's `deny:shell:dd if=/dev/*` rule). The proxy
   emits a synthetic `text` block at the same `content_block` index
-  starting with `AgentGuard denied this action.`, followed by the
+  starting with `Vanzik denied this action.`, followed by the
   reason and rule. The
   `message_delta`'s `stop_reason` is rewritten to `end_turn` so the
   SDK terminates the iteration cleanly.
@@ -129,7 +129,7 @@ routing that traffic around AgentGuard: that bypasses enforcement entirely.
 ## Inspecting the audit log
 
 ```bash
-agentguard audit --transport llm_api_proxy --limit 20
+vanzik audit --transport llm_api_proxy --limit 20
 ```
 
 Audit entries from the Anthropic side have `meta.provider="anthropic"`
@@ -157,7 +157,7 @@ and `meta.tool_call_id` carrying the upstream-assigned `toolu_...` id
   raw event stream so we can see tool-input deltas as they assemble.
   If you only care about text output, `stream.text_stream` is the
   convenience iterator that yields plain text deltas only.
-- **Stop reason rewrite on refusal.** When AgentGuard DENIES a
+- **Stop reason rewrite on refusal.** When Vanzik DENIES a
   `tool_use` block, the proxy rewrites the message's `stop_reason`
   from `tool_use` to `end_turn`. This prevents your code from waiting
   for a `tool_result` user message it would otherwise expect.

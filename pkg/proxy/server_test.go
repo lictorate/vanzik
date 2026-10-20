@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
-	"github.com/Caua-ferraz/AgentGuard/pkg/notify"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/notify"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // mustAdd is a test helper that calls ApprovalQueue.Add and fails on error.
@@ -103,8 +103,8 @@ func TestHandleCheck_Allow(t *testing.T) {
 	}
 
 	// Verify timing headers are present
-	if w.Header().Get("X-AgentGuard-Total-Ms") == "" {
-		t.Error("missing X-AgentGuard-Total-Ms header")
+	if w.Header().Get("X-Vanzik-Total-Ms") == "" {
+		t.Error("missing X-Vanzik-Total-Ms header")
 	}
 }
 
@@ -291,8 +291,8 @@ func TestMetrics_RequestRejectedTotalExposed(t *testing.T) {
 	srv.handleMetrics(w, req)
 
 	body := w.Body.String()
-	if !strings.Contains(body, "agentguard_request_rejected_total") {
-		t.Error("expected agentguard_request_rejected_total in /metrics output")
+	if !strings.Contains(body, "vanzik_request_rejected_total") {
+		t.Error("expected vanzik_request_rejected_total in /metrics output")
 	}
 	if !strings.Contains(body, `reason="body_too_large"`) {
 		t.Errorf("expected reason=\"body_too_large\" label, got:\n%s", body)
@@ -506,8 +506,8 @@ func TestHandleMetrics(t *testing.T) {
 		t.Errorf("expected text/plain content type, got %s", w.Header().Get("Content-Type"))
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, "agentguard_") {
-		t.Error("metrics response should contain agentguard_ prefixed metrics")
+	if !strings.Contains(body, "vanzik_") {
+		t.Error("metrics response should contain vanzik_ prefixed metrics")
 	}
 }
 
@@ -725,7 +725,7 @@ func TestHandleDashboard_UnauthenticatedServesLogin(t *testing.T) {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, "AgentGuard — Sign in") {
+	if !strings.Contains(body, "Vanzik — Sign in") {
 		t.Error("unauthenticated dashboard should serve the login page")
 	}
 	if strings.Contains(body, "test-secret") {
@@ -747,7 +747,7 @@ func TestHandleDashboard_AuthenticatedServesDashboard(t *testing.T) {
 	srv.handleDashboard(w, req)
 
 	body := w.Body.String()
-	if !strings.Contains(body, "AgentGuard Dashboard") {
+	if !strings.Contains(body, "Vanzik Dashboard") {
 		t.Error("authenticated dashboard must serve the dashboard page")
 	}
 	if strings.Contains(body, "test-secret") {
@@ -763,10 +763,10 @@ func TestHandleDashboard_NoAPIKey_ServesDashboardFreely(t *testing.T) {
 	srv.handleDashboard(w, req)
 
 	body := w.Body.String()
-	if !strings.Contains(body, "AgentGuard Dashboard") {
+	if !strings.Contains(body, "Vanzik Dashboard") {
 		t.Error("with no API key configured, /dashboard should serve the dashboard directly")
 	}
-	if strings.Contains(body, `agentguard-api-key`) {
+	if strings.Contains(body, `vanzik-api-key`) {
 		t.Error("dashboard must never embed an api-key meta tag")
 	}
 }
@@ -787,10 +787,10 @@ func TestHandleDashboard_SecurityHeaders(t *testing.T) {
 func TestDashboardHTML_NoAPIKeyMetaTag(t *testing.T) {
 	// Compile-time guarantee: the API key must never appear in the embedded
 	// dashboard HTML, regardless of server configuration.
-	if strings.Contains(dashboardHTML, "agentguard-api-key") {
+	if strings.Contains(dashboardHTML, "vanzik-api-key") {
 		t.Fatal("dashboard HTML must not reference the old api-key meta tag")
 	}
-	if strings.Contains(dashboardHTML, "meta[name=\"agentguard-api-key\"]") {
+	if strings.Contains(dashboardHTML, "meta[name=\"vanzik-api-key\"]") {
 		t.Fatal("dashboard HTML must not read an api-key meta tag")
 	}
 }
@@ -1159,7 +1159,7 @@ func TestApprovalQueue_ResolveRemovesFromList(t *testing.T) {
 }
 
 // TestApprovalQueue_SubscribeTracksGauge: Subscribe/Unsubscribe must keep
-// the agentguard_sse_subscribers gauge in sync — this is the only way
+// the vanzik_sse_subscribers gauge in sync — this is the only way
 // operators can see whether SSE clients are actually connected.
 func TestApprovalQueue_SubscribeTracksGauge(t *testing.T) {
 	q := &ApprovalQueue{
@@ -1173,9 +1173,9 @@ func TestApprovalQueue_SubscribeTracksGauge(t *testing.T) {
 		var buf bytes.Buffer
 		metrics.WritePrometheus(&buf)
 		out := buf.String()
-		// Anchor on "\n<metric> " — the substring "agentguard_sse_subscribers "
+		// Anchor on "\n<metric> " — the substring "vanzik_sse_subscribers "
 		// also appears in the HELP and TYPE lines, which begin with '#'.
-		const prefix = "\nagentguard_sse_subscribers "
+		const prefix = "\nvanzik_sse_subscribers "
 		idx := strings.Index(out, prefix)
 		if idx == -1 {
 			t.Fatalf("sse subscribers data line missing; out:\n%s", out)
@@ -1211,7 +1211,7 @@ func TestApprovalQueue_SubscribeTracksGauge(t *testing.T) {
 // TestApprovalQueue_BroadcastDropsIncrementCounter: when a subscriber
 // can't keep up, broadcastLocked drops the event into the default branch.
 // That drop must be visible via
-// agentguard_sse_events_dropped_total{reason="slow_consumer"}; silent
+// vanzik_sse_events_dropped_total{reason="slow_consumer"}; silent
 // drops are the exact pathology the metric exists to surface.
 func TestApprovalQueue_BroadcastDropsIncrementCounter(t *testing.T) {
 	q := &ApprovalQueue{
@@ -2194,7 +2194,7 @@ func TestDashboard_RenderTransportChip(t *testing.T) {
 	}
 }
 
-// Every transport AgentGuard's own binaries stamp gets its own chip, a
+// Every transport Vanzik's own binaries stamp gets its own chip, a
 // legend entry and a place in the whitelist, so none renders as
 // "unknown".
 func TestDashboard_EveryKnownTransportHasAChip(t *testing.T) {
@@ -2267,7 +2267,7 @@ func TestTransportFromRequest_UnitTable(t *testing.T) {
 //
 // When a model retries a tool call after a human resolved the
 // approval on the dashboard, the gateway propagates the original
-// approval_id (carried through MCP `_meta.dev.agentguard/approval_id`
+// approval_id (carried through MCP `_meta.dev.vanzik/approval_id`
 // or the SDK's equivalent). The server consults the approval queue
 // before running policy and short-circuits to the human's decision
 // rather than producing a fresh REQUIRE_APPROVAL entry. These tests
@@ -2886,8 +2886,8 @@ func TestHandleCheck_ApprovalIDReplay_LogsMismatchSignal(t *testing.T) {
 	// (not just incremented in-memory) so operators can scrape it.
 	var buf bytes.Buffer
 	metrics.WritePrometheus(&buf)
-	if !strings.Contains(buf.String(), "agentguard_approval_replay_mismatch_total") {
-		t.Error("agentguard_approval_replay_mismatch_total not present in /metrics exposition")
+	if !strings.Contains(buf.String(), "vanzik_approval_replay_mismatch_total") {
+		t.Error("vanzik_approval_replay_mismatch_total not present in /metrics exposition")
 	}
 }
 

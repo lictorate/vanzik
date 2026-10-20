@@ -4,6 +4,47 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.0.0] — unreleased
+
+> **AgentGuard is now Vanzik.** 2.0.0 renames the project, and that is the whole of its breaking change: every name that said AgentGuard says Vanzik, with no alias for the old one. The policy schema, the `/v1/*` wire protocol, the audit log format and seal, the store and every command's flags are as in 1.4.0, so policies, audit logs and databases carry over unchanged.
+>
+> **Upgrading moves an existing install for you.** The coding-agent hooks AgentGuard connected run the `agentguard` program, and most agents let a tool call through when a hook's program is missing. The 2.0 installers and `vanzik setup` move the login service, the config and data folders and the database, and point those hooks at `vanzik`, keeping a backup of every file they edit. See [`docs/MIGRATION.md`](docs/MIGRATION.md#v1x-to-v20).
+
+### Changed (breaking)
+
+- **Renamed throughout**, with the full old-to-new table in [`docs/MIGRATION.md`](docs/MIGRATION.md#v1x-to-v20):
+  - **Programs:** `vanzik`, `vanzik-mcp-gateway`, `vanzik-llm-proxy`; release archives `vanzik_<version>_<os>_<arch>`; image `ghcr.io/lictorate/vanzik`.
+  - **Environment variables:** the 12 `AGENTGUARD_*` variables are `VANZIK_*`.
+  - **Files:** `~/.config/vanzik`, `~/.local/share/vanzik`, `/etc/vanzik`, `/var/lib/vanzik`, `%APPDATA%\vanzik`, `%LOCALAPPDATA%\Vanzik\data`, `%LOCALAPPDATA%\Programs\Vanzik\bin`; the database `vanzik.db`; backups `<file>.vanzik-backup`.
+  - **Login services:** `vanzik.service`, LaunchAgent `com.lictorate.vanzik`, Task Scheduler task `Vanzik`.
+  - **On the wire:** headers `X-Vanzik-*`; MCP `_meta` prefix `dev.vanzik/`; the LLM proxy's refusal id `vanzik-refusal`, error type `vanzik_error` and `User-Agent: vanzik-llm-proxy/<version>`; webhook `User-Agent: Vanzik/2.0`; dashboard cookies `vanzik_session` and `vanzik_csrf`.
+  - **Output:** metrics `vanzik_*`; the report's `vanzik_version` field.
+  - **Code:** Go module `lictorate.com/vanzik/v2`; PyPI package `vanzik` (import `vanzik`) and npm package `@lictorate/vanzik`, with their `Vanzik*` classes.
+  - **Project:** `github.com/lictorate/vanzik`, `https://vanzik.lictorate.com`; security reports to security@lictorate.com.
+- **An `AGENTGUARD_*` variable that would be used stops the program** instead of being ignored. `vanzik server` with only `AGENTGUARD_API_KEY` set would otherwise run without the key its operator configured. The same holds for `AGENTGUARD_POLICY`, `AGENTGUARD_URL` (client commands, MCP gateway, LLM proxy) and, in the SDKs, `AGENTGUARD_URL`, `AGENTGUARD_API_KEY` and `AGENTGUARD_TENANT_ID`. A flag, an argument or the `VANZIK_*` variable makes the old one irrelevant. `vanzik hook` never refuses; it names the variable when it couldn't check a call.
+
+### Added
+
+- **`vanzik migrate --from-agentguard`** moves this user's AgentGuard 1.x install to Vanzik:
+  - stops and removes AgentGuard's login service first, and changes nothing if it can't;
+  - moves the config and data folders by renaming them, so the policy, API key, audit log and seal key keep their bytes; a file Vanzik's folder already has is kept and reported;
+  - renames `agentguard.db` (and its `-wal`/`-shm` files) to `vanzik.db` and updates `setup.json`'s paths;
+  - rewrites the Claude Code, Cursor, Gemini CLI and Codex hook entries AgentGuard wrote to run `vanzik`, keeping `--fail-closed`, every other key, and the user's own hooks, with the old file kept as `.vanzik-backup`;
+  - leaves `~/.config/agentguard` as a link to the new folder, so an agent session still running the old program keeps finding its API key until it restarts;
+  - installs the login service again under the new name and waits for the server;
+  - lists what is left to do: trusting the changed hook in Codex, `AGENTGUARD_*` variables, MCP client configs that start the old gateway, the old programs.
+  - As root it changes nothing and lists a system-wide install to move by hand.
+- **The installers run it** after installing, and fail (with Vanzik installed) when a step failed. **`vanzik setup` runs it** before its menu.
+- **`vanzik server` renames an `agentguard.db`** it finds in its `--data-dir` instead of starting on an empty `vanzik.db`; if the rename fails, it doesn't start.
+
+### Fixed
+
+- Agent settings files saved with a UTF-8 byte order mark (as Notepad does) can be connected, disconnected and migrated; they were refused as invalid JSON.
+
+### Compatibility
+
+Apart from the names above, nothing changed: no route, field, flag, subcommand, policy key or schema version was removed, and the formats on disk are the same. 1.x's in-place update (`agentguard setup` → *Update*) can't install 2.0 and stops without changing anything; use the 2.0 installer. Releases before 2.0 stay on PyPI as `agentguardproxy` and on npm as `@lictorate/agentguard`.
+
 ## [1.4.0] — 2026-10-15
 
 > **Guard every coding agent, prove the audit log wasn't touched, and test your policy like code.** Cursor, Gemini CLI and Codex CLI join Claude Code behind a hook, each able to fail open or fail closed when the server is down. A sealed audit log chains every entry with an HMAC, and `agentguard audit verify` finds any edit, deletion or reordering offline. `agentguard test` runs a policy against test cases in CI, including coding agents' raw tool calls. Sessions link agents to the subagents and sessions they start, and the dashboard replays them. `agentguard report` writes compliance evidence for a period. The MCP gateway guards remote Streamable HTTP MCP servers, and an OpenAI Agents SDK adapter joins the Python adapters.

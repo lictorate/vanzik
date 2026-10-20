@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/internal/clihelp"
-	"github.com/Caua-ferraz/AgentGuard/pkg/internal/gateclient"
+	"lictorate.com/vanzik/v2/internal/clihelp"
+	"lictorate.com/vanzik/v2/pkg/internal/gateclient"
 )
 
 // Config is the parsed CLI/env configuration for one gateway invocation.
@@ -41,12 +41,12 @@ type Config struct {
 	// any caller comparing specs with ==).
 	UpstreamHeaders map[string]http.Header
 
-	// GuardURL is the central AgentGuard server's base URL (the host
+	// GuardURL is the central Vanzik server's base URL (the host
 	// of /v1/check). Default "http://127.0.0.1:8080".
 	GuardURL string
 
 	// APIKey is the bearer token sent to /v1/check. Falls back to the
-	// AGENTGUARD_API_KEY env var when the flag is empty. May be empty
+	// VANZIK_API_KEY env var when the flag is empty. May be empty
 	// (the central server runs without auth in that case — a WARNING
 	// is logged at startup).
 	APIKey string
@@ -91,7 +91,7 @@ type Config struct {
 	SupportedProtocolVersions []string
 
 	// PolicyPath is the filesystem path to the same policy YAML the
-	// central AgentGuard server loads. The gateway opens this file at
+	// central Vanzik server loads. The gateway opens this file at
 	// startup so it can resolve `tool_scope_map` locally for the
 	// dual-check pattern (see docs/MCP_GATEWAY.md § 4.4 and gate.go).
 	// Required when --policy-mode strict is in effect; tests may leave
@@ -135,50 +135,50 @@ type UpstreamSpec struct {
 // `--help`.
 //
 // API-key resolution: the explicit --api-key flag wins over the
-// AGENTGUARD_API_KEY env var (matching the agentguard core CLI).
+// VANZIK_API_KEY env var (matching the vanzik core CLI).
 func ParseConfig(args []string) (*Config, error) {
 	return ParseConfigWithOutput(args, os.Stderr)
 }
 
-// gatewayFlagGroups is the layout of `agentguard-mcp-gateway -h`. Every
+// gatewayFlagGroups is the layout of `vanzik-mcp-gateway -h`. Every
 // flag must be in one group (TestParseConfig_HelpGroupsEveryFlag).
 var gatewayFlagGroups = []clihelp.Group{
 	{Title: "MCP servers to guard", Names: []string{"upstream", "upstream-http", "upstream-header", "upstream-timeout", "reconnect-cap"}},
-	{Title: "AgentGuard server", Names: []string{"guard-url", "api-key", "tenant-id"}},
+	{Title: "Vanzik server", Names: []string{"guard-url", "api-key", "tenant-id"}},
 	{Title: "Policy", Names: []string{"policy", "policy-mode"}},
-	{Title: "When the AgentGuard server is unreachable", Names: []string{"fail-mode", "fail-audit-log"}},
+	{Title: "When the Vanzik server is unreachable", Names: []string{"fail-mode", "fail-audit-log"}},
 	{Title: "Logging", Names: []string{"log-level"}},
 }
 
 // ParseConfigWithOutput is ParseConfig with the usage-output stream
 // pluggable for tests.
 func ParseConfigWithOutput(args []string, errOut io.Writer) (*Config, error) {
-	fs := flag.NewFlagSet("agentguard-mcp-gateway", flag.ContinueOnError)
+	fs := flag.NewFlagSet("vanzik-mcp-gateway", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	fs.Usage = func() {
-		fmt.Fprintf(errOut, `Usage: agentguard-mcp-gateway --upstream "<ns>:<cmd>" [flags]
-       agentguard-mcp-gateway --upstream-http "<ns>:<url>" [flags]
+		fmt.Fprintf(errOut, `Usage: vanzik-mcp-gateway --upstream "<ns>:<cmd>" [flags]
+       vanzik-mcp-gateway --upstream-http "<ns>:<url>" [flags]
 
-agentguard-mcp-gateway is a stdio JSON-RPC bridge spawned by an MCP
+vanzik-mcp-gateway is a stdio JSON-RPC bridge spawned by an MCP
 client (Claude Desktop, Cursor, IDE plugins): it sits between the host
 and one or more downstream MCP servers and gates every tools/call
-through a central AgentGuard server's /v1/check endpoint. stdin/stdout
+through a central Vanzik server's /v1/check endpoint. stdin/stdout
 carry JSON-RPC frames; all logging goes to stderr.
 
 Example (as the "command" in an MCP client configuration):
-  agentguard-mcp-gateway \
+  vanzik-mcp-gateway \
       --upstream "fs:npx -y @modelcontextprotocol/server-filesystem /tmp" \
       --guard-url http://127.0.0.1:8080 \
-      --policy /etc/agentguard/policy.yaml
+      --policy /etc/vanzik/policy.yaml
 
 Quote each --upstream command: an unquoted one is split into separate
 arguments, and the gateway refuses to start.
 
 Example (a remote server over Streamable HTTP, token from the environment):
-  agentguard-mcp-gateway \
+  vanzik-mcp-gateway \
       --upstream-http "docs:https://mcp.example.com/mcp" \
       --upstream-header 'docs:Authorization=Bearer ${DOCS_TOKEN}' \
-      --policy /etc/agentguard/policy.yaml
+      --policy /etc/vanzik/policy.yaml
 
 `)
 		clihelp.WriteGroups(errOut, fs, gatewayFlagGroups, clihelp.Options{})
@@ -187,8 +187,8 @@ Other:
   --version  Print the version and exit (checked before any other flag)
 
 Environment:
-  AGENTGUARD_URL       Used when --guard-url is not set.
-  AGENTGUARD_API_KEY   Used when --api-key is not set.
+  VANZIK_URL       Used when --guard-url is not set.
+  VANZIK_API_KEY   Used when --api-key is not set.
 `)
 	}
 
@@ -197,7 +197,7 @@ Environment:
 	fs.Var(&httpUpstreams, "upstream-http", "Remote MCP server to guard over Streamable HTTP, as `\"<ns>:<url>\"`. The URL must be https, or http to localhost. Repeat for more servers.")
 	fs.Var(&upstreamHeaders, "upstream-header", "Extra HTTP header for an --upstream-http server, as `\"<ns>:<Name>=<Value>\"`. ${VAR} in the value is read from the environment, so tokens stay out of client config files. Repeat for more headers.")
 	gate := gateclient.RegisterGateFlags(fs,
-		"Path to the same policy YAML the central AgentGuard server loads (required for --policy-mode strict; used to resolve tool_scope_map locally)")
+		"Path to the same policy YAML the central Vanzik server loads (required for --policy-mode strict; used to resolve tool_scope_map locally)")
 	policyMode := fs.String("policy-mode", "strict", "strict: check the tool, then the scope --policy maps it to (dual check). fast: check the tool only; --policy is then optional.")
 	upstreamTimeout := fs.Duration("upstream-timeout", 30*time.Second, "How long to wait for an MCP server's reply to one message")
 	reconnectCap := fs.Duration("reconnect-cap", 60*time.Second, "Longest wait between attempts to restart an MCP server that exited, or to reach an --upstream-http server again. The waits grow 1s, 2s, 5s, 30s, 60s, stopping at this.")

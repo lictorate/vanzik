@@ -5,7 +5,7 @@ adapter side of R5 E5 / R7 E3 (data scope routing). Engine-side data-
 scope coverage lives in pkg/policy/engine_data_test.go.
 
 These tests use the existing mock_server fixture from conftest.py — they
-mock the AgentGuard proxy, NEVER the browser-use library itself. The
+mock the Vanzik proxy, NEVER the browser-use library itself. The
 final test optionally runs against the real browser_use package when
 installed (pytest.importorskip).
 """
@@ -16,8 +16,8 @@ import json
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 
-from agentguard import Guard
-from tests.conftest import MockAgentGuardHandler
+from vanzik import Guard
+from tests.conftest import MockVanzikHandler
 
 
 # ---------------------------------------------------------------------------
@@ -25,7 +25,7 @@ from tests.conftest import MockAgentGuardHandler
 # ---------------------------------------------------------------------------
 
 def _last_body() -> dict:
-    raw = MockAgentGuardHandler.last_request_body
+    raw = MockVanzikHandler.last_request_body
     assert raw is not None, "no request body captured by mock server"
     return json.loads(raw)
 
@@ -37,9 +37,9 @@ def _last_body() -> dict:
 class TestGuardedPageGoto:
     def test_guarded_page_goto_gated(self, mock_server):
         """goto() consults the policy and forwards on ALLOW."""
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         browser = GuardedBrowser(guard_url=mock_server)
 
         inner = MagicMock()
@@ -57,9 +57,9 @@ class TestGuardedPageGoto:
         assert body["action"] == "goto"
 
     def test_guarded_page_goto_denied_raises(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "DENY", "reason": "blocked"}
+        MockVanzikHandler.check_response = {"decision": "DENY", "reason": "blocked"}
         browser = GuardedBrowser(guard_url=mock_server)
         inner = MagicMock()
         inner.goto = AsyncMock(return_value="never")
@@ -72,9 +72,9 @@ class TestGuardedPageGoto:
 
 class TestGuardedPageInteractions:
     def test_guarded_page_click_gated(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         browser = GuardedBrowser(guard_url=mock_server)
         inner = MagicMock()
         inner.click = AsyncMock(return_value=None)
@@ -89,9 +89,9 @@ class TestGuardedPageInteractions:
         assert body["meta"]["selector"] == "#login"
 
     def test_guarded_page_click_denied(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "DENY", "reason": "no"}
+        MockVanzikHandler.check_response = {"decision": "DENY", "reason": "no"}
         browser = GuardedBrowser(guard_url=mock_server)
         inner = MagicMock()
         inner.click = AsyncMock(return_value="never")
@@ -103,9 +103,9 @@ class TestGuardedPageInteractions:
 
     def test_guarded_page_fill_uses_data_scope(self, mock_server):
         """fill() must route through scope=data (not scope=browser)."""
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         browser = GuardedBrowser(guard_url=mock_server)
         inner = MagicMock()
         inner.url = "https://example.com/form"
@@ -124,9 +124,9 @@ class TestGuardedPageInteractions:
         assert body["command"] == "alice@example.com"
 
     def test_guarded_page_type_uses_data_scope(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         browser = GuardedBrowser(guard_url=mock_server)
         inner = MagicMock()
         inner.url = "https://example.com/form"
@@ -139,9 +139,9 @@ class TestGuardedPageInteractions:
         assert body["action"] == "form_input"
 
     def test_guarded_page_press_gated(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         browser = GuardedBrowser(guard_url=mock_server)
         inner = MagicMock()
         inner.press = AsyncMock(return_value=None)
@@ -154,9 +154,9 @@ class TestGuardedPageInteractions:
         assert body["meta"]["key"] == "Enter"
 
     def test_guarded_page_select_option_gated(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         browser = GuardedBrowser(guard_url=mock_server)
         inner = MagicMock()
         inner.select_option = AsyncMock(return_value=None)
@@ -168,9 +168,9 @@ class TestGuardedPageInteractions:
         assert body["action"] == "select_option"
 
     def test_guarded_page_check_uncheck_gated(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         browser = GuardedBrowser(guard_url=mock_server)
         inner = MagicMock()
         inner.check = AsyncMock(return_value=None)
@@ -187,9 +187,9 @@ class TestGuardedPageInteractions:
 
 class TestGuardedPageJavaScript:
     def test_guarded_page_evaluate_gated(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         browser = GuardedBrowser(guard_url=mock_server)
         inner = MagicMock()
         inner.evaluate = AsyncMock(return_value="result")
@@ -203,9 +203,9 @@ class TestGuardedPageJavaScript:
         assert "document.title" in body["command"]
 
     def test_guarded_page_evaluate_long_expression_redacted(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         browser = GuardedBrowser(guard_url=mock_server)
         inner = MagicMock()
         inner.evaluate = AsyncMock(return_value=None)
@@ -219,9 +219,9 @@ class TestGuardedPageJavaScript:
         assert "<redacted; len=1000>" in body["command"]
 
     def test_guarded_page_evaluate_handle_gated(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         browser = GuardedBrowser(guard_url=mock_server)
         inner = MagicMock()
         inner.evaluate_handle = AsyncMock(return_value="handle")
@@ -234,9 +234,9 @@ class TestGuardedPageJavaScript:
 class TestGuardedPageNetwork:
     def test_guarded_page_set_extra_http_headers_gated_with_redacted_meta(self, mock_server):
         """meta.header_names contains only NAMES — never values (which carry tokens)."""
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         browser = GuardedBrowser(guard_url=mock_server)
         inner = MagicMock()
         inner.set_extra_http_headers = AsyncMock(return_value=None)
@@ -261,9 +261,9 @@ class TestGuardedPageNetwork:
 
     def test_guarded_page_route_uses_network_scope(self, mock_server):
         """route() — installs a network handler — gates under network not browser."""
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         browser = GuardedBrowser(guard_url=mock_server)
         inner = MagicMock()
         inner.route = AsyncMock(return_value=None)
@@ -281,9 +281,9 @@ class TestGuardedPageNetwork:
 
 class TestGuardedPageJSInjection:
     def test_guarded_page_expose_function_gated(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         browser = GuardedBrowser(guard_url=mock_server)
         inner = MagicMock()
         inner.expose_function = AsyncMock(return_value=None)
@@ -296,9 +296,9 @@ class TestGuardedPageJSInjection:
         assert body["meta"]["function_name"] == "readSecret"
 
     def test_guarded_page_add_init_script_gated(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         browser = GuardedBrowser(guard_url=mock_server)
         inner = MagicMock()
         inner.add_init_script = AsyncMock(return_value=None)
@@ -318,7 +318,7 @@ class TestGuardedPageAllowlist:
     def test_guarded_page_arbitrary_internal_blocked(self, mock_server):
         """Internal/private attributes raise AttributeError, not silently
         proxy to the underlying page."""
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
         browser = GuardedBrowser(guard_url=mock_server)
         inner = MagicMock()
@@ -332,8 +332,8 @@ class TestGuardedPageAllowlist:
         assert "GuardedPage" in str(ei.value) or "internal" in str(ei.value)
 
     def test_guarded_page_unknown_method_blocked(self, mock_server):
-        """A method that AgentGuard hasn't vetted raises AttributeError."""
-        from agentguard.adapters.browseruse import GuardedBrowser
+        """A method that Vanzik hasn't vetted raises AttributeError."""
+        from vanzik.adapters.browseruse import GuardedBrowser
 
         browser = GuardedBrowser(guard_url=mock_server)
         inner = MagicMock()
@@ -342,10 +342,10 @@ class TestGuardedPageAllowlist:
 
         with pytest.raises(AttributeError) as ei:
             page.something_new
-        assert "AgentGuard" in str(ei.value) or "Guarded" in str(ei.value)
+        assert "Vanzik" in str(ei.value) or "Guarded" in str(ei.value)
 
     def test_guarded_page_allowlisted_property_passes_through(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
         browser = GuardedBrowser(guard_url=mock_server)
         inner = MagicMock()
@@ -365,9 +365,9 @@ class TestGuardedPageAllowlist:
 class TestGuardedFrame:
     def test_guarded_frame_gated_too(self, mock_server):
         """page.frame(...) returns a GuardedFrame whose .click is gated."""
-        from agentguard.adapters.browseruse import GuardedBrowser, GuardedFrame
+        from vanzik.adapters.browseruse import GuardedBrowser, GuardedFrame
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         browser = GuardedBrowser(guard_url=mock_server)
 
         inner_frame = MagicMock()
@@ -387,9 +387,9 @@ class TestGuardedFrame:
         inner_frame.click.assert_called_once()
 
     def test_guarded_frame_fill_uses_data_scope(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         browser = GuardedBrowser(guard_url=mock_server)
 
         inner_frame = MagicMock()
@@ -407,7 +407,7 @@ class TestGuardedFrame:
         assert body["meta"]["frame"] == "true"
 
     def test_guarded_frame_none_returns_none(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
         browser = GuardedBrowser(guard_url=mock_server)
         inner_page = MagicMock()
@@ -423,9 +423,9 @@ class TestGuardedFrame:
 class TestCheckFormInputRedaction:
     def test_check_form_input_redacts_long_values(self, mock_server):
         """Values >256 chars are replaced with <redacted; len=N>."""
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         browser = GuardedBrowser(guard_url=mock_server)
 
         long_value = "A" * 1000
@@ -437,9 +437,9 @@ class TestCheckFormInputRedaction:
 
     def test_check_form_input_redacts_secret_patterns(self, mock_server):
         """Bearer tokens etc. are scrubbed before transmission."""
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         browser = GuardedBrowser(guard_url=mock_server)
 
         browser.check_form_input(
@@ -453,9 +453,9 @@ class TestCheckFormInputRedaction:
         assert "[REDACTED]" in body["command"]
 
     def test_check_form_input_short_value_passes(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         browser = GuardedBrowser(guard_url=mock_server)
 
         browser.check_form_input("https://example.com/form", "search", "kittens")
@@ -475,14 +475,14 @@ class TestRealBrowserUse:
         browser_use package when present.
 
         Skipped when browser_use is not installed (development/CI matrices
-        without the optional extra). We mock only AgentGuard — never
+        without the optional extra). We mock only Vanzik — never
         browser_use itself."""
         browser_use = pytest.importorskip(
             "browser_use",
             reason="browser_use not installed; integration test skipped",
         )
 
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
         # Resolve a Page-like object from browser_use lazily. The package's
         # exact public surface evolved across 0.1.x → 0.4.x; we only need
@@ -497,7 +497,7 @@ class TestRealBrowserUse:
                 "out of scope for unit tests."
             )
 
-        MockAgentGuardHandler.check_response = {"decision": "DENY", "reason": "blocked"}
+        MockVanzikHandler.check_response = {"decision": "DENY", "reason": "blocked"}
         browser = GuardedBrowser(guard_url=mock_server)
 
         # We construct a GuardedPage around a mock page surface — browser_use

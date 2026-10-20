@@ -1,33 +1,33 @@
 # Framework Adapters
 
-AgentGuard ships Python adapters that wrap popular agent frameworks so every tool call, navigation, or MCP request passes through `/v1/check` before executing. All adapters live under `plugins/python/agentguard/adapters/` and are gated behind pip extras (`pip install agentguardproxy[langchain]` etc.).
+Vanzik ships Python adapters that wrap popular agent frameworks so every tool call, navigation, or MCP request passes through `/v1/check` before executing. All adapters live under `plugins/python/vanzik/adapters/` and are gated behind pip extras (`pip install vanzik[langchain]` etc.).
 
 | Integration | Tier | Module / Binary | Extra | Doc |
 |---|---|---|---|---|
-| **MCP Gateway** | Hero (wire-level) | `agentguard-mcp-gateway` binary | n/a (Go binary) | [`MCP_GATEWAY.md`](MCP_GATEWAY.md), [`QUICKSTART_MCP.md`](QUICKSTART_MCP.md) |
-| **LLM API Proxy** | Hero (wire-level) | `agentguard-llm-proxy` binary | n/a (Go binary) | [`LLM_API_PROXY.md`](LLM_API_PROXY.md), [`QUICKSTART_LLM_PROXY.md`](QUICKSTART_LLM_PROXY.md) |
-| LangChain | Compatibility (SDK) | `agentguard.adapters.langchain` | `[langchain]` | this doc |
-| CrewAI | Compatibility (SDK) | `agentguard.adapters.crewai` | `[crewai]` | this doc |
-| OpenAI Agents SDK | Compatibility (SDK) | `agentguard.adapters.openai_agents` | `[openai-agents]` | this doc |
-| browser-use | Compatibility (SDK) | `agentguard.adapters.browseruse` | `[browser-use]` | this doc |
-| MCP (Python adapter) | Compatibility (SDK) | `agentguard.adapters.mcp` | `[mcp]` (or core for legacy installs) | this doc |
+| **MCP Gateway** | Hero (wire-level) | `vanzik-mcp-gateway` binary | n/a (Go binary) | [`MCP_GATEWAY.md`](MCP_GATEWAY.md), [`QUICKSTART_MCP.md`](QUICKSTART_MCP.md) |
+| **LLM API Proxy** | Hero (wire-level) | `vanzik-llm-proxy` binary | n/a (Go binary) | [`LLM_API_PROXY.md`](LLM_API_PROXY.md), [`QUICKSTART_LLM_PROXY.md`](QUICKSTART_LLM_PROXY.md) |
+| LangChain | Compatibility (SDK) | `vanzik.adapters.langchain` | `[langchain]` | this doc |
+| CrewAI | Compatibility (SDK) | `vanzik.adapters.crewai` | `[crewai]` | this doc |
+| OpenAI Agents SDK | Compatibility (SDK) | `vanzik.adapters.openai_agents` | `[openai-agents]` | this doc |
+| browser-use | Compatibility (SDK) | `vanzik.adapters.browseruse` | `[browser-use]` | this doc |
+| MCP (Python adapter) | Compatibility (SDK) | `vanzik.adapters.mcp` | `[mcp]` (or core for legacy installs) | this doc |
 
 The MCP Gateway and the LLM API Proxy are the **hero** integration paths — they enforce at the wire by sitting between the agent and its tools / model API, with no opt-in required by the agent code. The Python adapters in this doc form the **compatibility tier** for direct callers (offline scripts, custom transports, advisory enforcement) — each one gates the modern API of its target framework, and the agent must call the wrapped object for the gate to fire.
 
 ## Compatibility Matrix
 
-The version pins live in [`plugins/python/pyproject.toml`](../plugins/python/pyproject.toml) under `[project.optional-dependencies]`. The CI `integration-tests` job runs each adapter against the real upstream package (the newest release inside each pin) on every push and PR, and on a weekly cron (Monday 06:00 UTC), so a breaking upstream release surfaces before a customer hits it. Each leg runs the framework's `test_real_*` suite and its `test_at_*` suite (a real agent loop end to end); the langchain leg also drives the real `agentguard-llm-proxy` binary (`test_at_llm_proxy_e2e.py`), the `mcp` leg drives the Python MCP gateway adapter against a real stdio MCP server, and the `openai-agents` leg drives a real `Agent` + `Runner` loop with an offline fake model (no API key). The advisory `python-extras-all` job installs `.[all,dev]` into a fresh environment, runs `pip check`, and runs the whole Python suite, so an extras set that stops resolving — or resolves to an unsupported framework version — shows up.
+The version pins live in [`plugins/python/pyproject.toml`](../plugins/python/pyproject.toml) under `[project.optional-dependencies]`. The CI `integration-tests` job runs each adapter against the real upstream package (the newest release inside each pin) on every push and PR, and on a weekly cron (Monday 06:00 UTC), so a breaking upstream release surfaces before a customer hits it. Each leg runs the framework's `test_real_*` suite and its `test_at_*` suite (a real agent loop end to end); the langchain leg also drives the real `vanzik-llm-proxy` binary (`test_at_llm_proxy_e2e.py`), the `mcp` leg drives the Python MCP gateway adapter against a real stdio MCP server, and the `openai-agents` leg drives a real `Agent` + `Runner` loop with an offline fake model (no API key). The advisory `python-extras-all` job installs `.[all,dev]` into a fresh environment, runs `pip check`, and runs the whole Python suite, so an extras set that stops resolving — or resolves to an unsupported framework version — shows up.
 
-| AgentGuard | LangChain | CrewAI | browser-use | MCP | OpenAI Agents SDK |
+| Vanzik | LangChain | CrewAI | browser-use | MCP | OpenAI Agents SDK |
 |---|---|---|---|---|---|
 | 1.4.x | `langchain >=0.3,<2.0`, `langchain-core >=0.3,<2.0` | `crewai >=1.0,<2.0` | `browser-use >=0.4,<1.0`, `playwright >=1.40` | `mcp >=0.9,<3.0` | `openai-agents >=0.3.3,<1.0` |
 | 1.2.x – 1.3.x | `langchain >=0.3,<2.0`, `langchain-core >=0.3,<2.0` | `crewai >=1.0,<2.0` | `browser-use >=0.4,<1.0`, `playwright >=1.40` | `mcp >=0.9,<3.0` | — |
 | 0.5.x – 1.1.x | `langchain >=0.3,<2.0`, `langchain-core >=0.3,<2.0` | `crewai >=0.80,<2.0` | `browser-use >=0.4,<1.0`, `playwright >=1.40` | `mcp >=0.9,<2.0` | — |
 | 0.4.x | `>=0.1` (no upper bound — silent rot) | `>=0.1` | `>=0.1` (`goto` only) | wire protocol `2024-11-05` | — |
 
-The floors cover the API surface AgentGuard's adapters were built and hardened against (LangChain 0.3+'s split `langchain-core` package, CrewAI 1.0+ — see below — and browser-use 0.4+'s stable Page surface). Each ceiling sits at the next upstream major, so a new major can't install until it has been verified. As of 2026-09-24, the newest LangChain (1.x), CrewAI (1.x), browser-use (0.x) and MCP (2.x) releases are inside their pins.
+The floors cover the API surface Vanzik's adapters were built and hardened against (LangChain 0.3+'s split `langchain-core` package, CrewAI 1.0+ — see below — and browser-use 0.4+'s stable Page surface). Each ceiling sits at the next upstream major, so a new major can't install until it has been verified. As of 2026-09-24, the newest LangChain (1.x), CrewAI (1.x), browser-use (0.x) and MCP (2.x) releases are inside their pins.
 
-**`pip install agentguardproxy[all]`** resolves, as of 2026-09-24, to crewai 1.15, browser-use 0.11, langchain 1.4, mcp 1.28 and pydantic 2.12, and `pip check` is clean. The newest browser-use (0.13) pins `mcp==2.1.1` and `pydantic>=2.13`, which conflict with crewai 1.x, so pip picks an older browser-use; every adapter suite passes on that set.
+**`pip install vanzik[all]`** resolves, as of 2026-09-24, to crewai 1.15, browser-use 0.11, langchain 1.4, mcp 1.28 and pydantic 2.12, and `pip check` is clean. The newest browser-use (0.13) pins `mcp==2.1.1` and `pydantic>=2.13`, which conflict with crewai 1.x, so pip picks an older browser-use; every adapter suite passes on that set.
 
 ### Pinning rationale
 
@@ -49,22 +49,22 @@ The 0.5 line introduces upper bounds because the prior `>=0.1` floor allowed sil
 
 ### Which integration-tests legs block CI
 
-Since v1.0.0, the LangChain and CrewAI legs are required: a red leg fails CI (and, since v1.2.0, the MCP leg; since v1.4.0, the OpenAI Agents SDK leg). The browser-use leg is advisory (`continue-on-error`) for two reasons. Its `playwright install` step downloads about 200 MB of Chromium from a CDN and is the known flake. And like every leg, it tests against live upstream releases, so a red browser-use leg usually means upstream drift, not an AgentGuard regression. A red advisory leg still shows in the run, and the weekly cron run surfaces upstream breakage even when no PR is open. (Before v1.0.0 the whole job was non-blocking.)
+Since v1.0.0, the LangChain and CrewAI legs are required: a red leg fails CI (and, since v1.2.0, the MCP leg; since v1.4.0, the OpenAI Agents SDK leg). The browser-use leg is advisory (`continue-on-error`) for two reasons. Its `playwright install` step downloads about 200 MB of Chromium from a CDN and is the known flake. And like every leg, it tests against live upstream releases, so a red browser-use leg usually means upstream drift, not a Vanzik regression. A red advisory leg still shows in the run, and the weekly cron run surfaces upstream breakage even when no PR is open. (Before v1.0.0 the whole job was non-blocking.)
 
 Authors of adapter changes are still expected to drive the integration job to green locally before merging: from `plugins/python`, run `pytest -v -m integration tests/integration/test_real_<framework>.py` (the same invocation CI uses).
 
-All adapters share the same philosophy: **decide via policy first, call the wrapped callable only if `ALLOW`**. On `DENY` or `REQUIRE_APPROVAL` the LangChain, CrewAI, OpenAI Agents SDK and browser-use adapters raise `PermissionError` (CrewAI and the OpenAI Agents SDK adapter raise its subclasses `AgentGuardDenied` and `AgentGuardApprovalRequired`). The one exception is LangChain's legacy `run` / `arun` entry points, which return a marker string for callers that depend on it. The MCP adapter returns a JSON-RPC result with `isError: true`.
+All adapters share the same philosophy: **decide via policy first, call the wrapped callable only if `ALLOW`**. On `DENY` or `REQUIRE_APPROVAL` the LangChain, CrewAI, OpenAI Agents SDK and browser-use adapters raise `PermissionError` (CrewAI and the OpenAI Agents SDK adapter raise its subclasses `VanzikDenied` and `VanzikApprovalRequired`). The one exception is LangChain's legacy `run` / `arun` entry points, which return a marker string for callers that depend on it. The MCP adapter returns a JSON-RPC result with `isError: true`.
 
 ---
 
 ## LangChain — `GuardedToolkit`
 
-Source: `plugins/python/agentguard/adapters/langchain.py`.
+Source: `plugins/python/vanzik/adapters/langchain.py`.
 
 ### Usage
 
 ```python
-from agentguard.adapters.langchain import GuardedToolkit
+from vanzik.adapters.langchain import GuardedToolkit
 from langchain.tools import Tool
 
 tools = [
@@ -120,13 +120,13 @@ The runtime upgrade always wins over the static guess. A tool statically classif
 
 The modern entry points (`invoke`, `ainvoke`, `_run`, `_arun`, `stream`, `astream`, `batch`, `abatch`) raise `PermissionError` on deny:
 
-- `DENY`: `"[AgentGuard] Tool '<name>' denied: <policy reason>"`
-- `REQUIRE_APPROVAL`: `"[AgentGuard] Tool '<name>' requires approval. Approve at: <url>\nReason: <reason>"`
+- `DENY`: `"[Vanzik] Tool '<name>' denied: <policy reason>"`
+- `REQUIRE_APPROVAL`: `"[Vanzik] Tool '<name>' requires approval. Approve at: <url>\nReason: <reason>"`
 
 A `batch` fails as a whole on the first denied input. The legacy `run` / `arun` entry points keep their older behavior and **return** a marker string instead of raising:
 
-- `DENY`: `"[AgentGuard] Action denied.\nReason: <policy reason>"`
-- `REQUIRE_APPROVAL`: `"[AgentGuard] Action requires approval. Approve at: <url>\nReason: <reason>"`
+- `DENY`: `"[Vanzik] Action denied.\nReason: <policy reason>"`
+- `REQUIRE_APPROVAL`: `"[Vanzik] Action requires approval. Approve at: <url>\nReason: <reason>"`
 
 A raised `PermissionError` propagates out of the agent run unless your code catches it. LangChain's `handle_tool_error` does not apply: it only handles `ToolException`.
 
@@ -140,12 +140,12 @@ If you prefer to block until a human approves, call `guard.wait_for_approval(...
 
 ## CrewAI — `guard_crew_tools`
 
-Source: `plugins/python/agentguard/adapters/crewai.py`.
+Source: `plugins/python/vanzik/adapters/crewai.py`.
 
 ### Usage
 
 ```python
-from agentguard.adapters.crewai import guard_crew_tools
+from vanzik.adapters.crewai import guard_crew_tools
 from crewai import Agent, Task
 
 guarded = guard_crew_tools(
@@ -178,20 +178,20 @@ CrewAI scope inference is the same two-pass approach (input keys → keyword inf
 
 ### Deny / approval behavior
 
-Every entry point (`run`, `_run`, `invoke`, and their async counterparts) raises before the wrapped tool runs: `AgentGuardApprovalRequired` on `REQUIRE_APPROVAL` and `AgentGuardDenied` on `DENY`. Both subclass `PermissionError` and carry the `CheckResult` as `.result`. A denied call does not consume a CrewAI usage slot.
+Every entry point (`run`, `_run`, `invoke`, and their async counterparts) raises before the wrapped tool runs: `VanzikApprovalRequired` on `REQUIRE_APPROVAL` and `VanzikDenied` on `DENY`. Both subclass `PermissionError` and carry the `CheckResult` as `.result`. A denied call does not consume a CrewAI usage slot.
 
 ---
 
 ## OpenAI Agents SDK — `guard_tools`
 
-Source: `plugins/python/agentguard/adapters/openai_agents.py`. Install with `pip install 'agentguardproxy[openai-agents]'`.
+Source: `plugins/python/vanzik/adapters/openai_agents.py`. Install with `pip install 'vanzik[openai-agents]'`.
 
 ### Usage
 
 ```python
 from agents import Agent, Runner, function_tool
-from agentguard import AgentGuardDenied, Guard
-from agentguard.adapters.openai_agents import guard_tools
+from vanzik import VanzikDenied, Guard
+from vanzik.adapters.openai_agents import guard_tools
 
 @function_tool
 def run_shell(command: str) -> str:
@@ -203,13 +203,13 @@ agent = Agent(name="ops", tools=guard_tools([run_shell], guard))
 
 try:
     result = await Runner.run(agent, "clean up the build directory")
-except AgentGuardDenied as e:
+except VanzikDenied as e:
     print("blocked:", e.result.reason)
 ```
 
 `guard_tool(tool, guard, scope=None)` gates one tool; `guard_tools(tools, guard, scope=None)` gates a list with one shared `Guard`. Each returns a copy of the `FunctionTool` with the same name, description and JSON schema; the caller's tool is not changed. The copy's `on_invoke_tool` runs `Guard.check` first and calls the original only on `ALLOW`.
 
-Only function tools can be gated: anything `@function_tool` or `Agent.as_tool()` returns. Hosted tools such as `WebSearchTool` run on OpenAI's servers, so `guard_tool` raises `TypeError` for them instead of passing them through ungated. Tools that come from an agent's `mcp_servers` do not go through `tools`; gate those with [`agentguard-mcp-gateway`](MCP_GATEWAY.md).
+Only function tools can be gated: anything `@function_tool` or `Agent.as_tool()` returns. Hosted tools such as `WebSearchTool` run on OpenAI's servers, so `guard_tool` raises `TypeError` for them instead of passing them through ungated. Tools that come from an agent's `mcp_servers` do not go through `tools`; gate those with [`vanzik-mcp-gateway`](MCP_GATEWAY.md).
 
 ### Scope inference
 
@@ -232,26 +232,26 @@ If two names for one parameter are both present with different values (`{"comman
 
 ### Approval / deny behavior
 
-On `DENY` the adapter raises `AgentGuardDenied`, and on `REQUIRE_APPROVAL` it raises `AgentGuardApprovalRequired` (with `.approval_id` and `.approval_url`). Both are raised before the tool body runs. An unknown decision is treated as a deny.
+On `DENY` the adapter raises `VanzikDenied`, and on `REQUIRE_APPROVAL` it raises `VanzikApprovalRequired` (with `.approval_id` and `.approval_url`). Both are raised before the tool body runs. An unknown decision is treated as a deny.
 
-What the model sees: nothing. The gate sits outside the tool's own error handling, so the SDK's `failure_error_function` never turns a deny into a tool output. That matters because the SDK's default handler answers the model with a generic "An error occurred while running the tool. Please try again." (from 0.23; earlier releases append the error text), which invites a retry. Instead the run ends and `Runner.run` (or the `stream_events()` loop of `Runner.run_streamed`) raises the exception to your code. The raised object also subclasses the SDK's `AgentsException`, which the runner re-raises as-is rather than wrapping it in `UserError`, so `except AgentGuardDenied` and `except PermissionError` both work.
+What the model sees: nothing. The gate sits outside the tool's own error handling, so the SDK's `failure_error_function` never turns a deny into a tool output. That matters because the SDK's default handler answers the model with a generic "An error occurred while running the tool. Please try again." (from 0.23; earlier releases append the error text), which invites a retry. Instead the run ends and `Runner.run` (or the `stream_events()` loop of `Runner.run_streamed`) raises the exception to your code. The raised object also subclasses the SDK's `AgentsException`, which the runner re-raises as-is rather than wrapping it in `UserError`, so `except VanzikDenied` and `except PermissionError` both work.
 
-Nested agents are the exception. If the guarded tools belong to an inner agent that an outer agent calls through `inner.as_tool()`, the deny still ends the inner run, but it is raised inside the outer agent's tool, and that tool's default `failure_error_function` turns it into a tool error. The outer run continues, and the outer model sees the SDK's generic error message (from 0.23 without the AgentGuard reason; earlier releases append it). To end the outer run too, build the inner tool with `inner.as_tool(..., failure_error_function=None)` (on releases whose `as_tool` takes that argument); `Runner.run` on the outer agent then raises `AgentGuardDenied`. Either way the denied tool never runs.
+Nested agents are the exception. If the guarded tools belong to an inner agent that an outer agent calls through `inner.as_tool()`, the deny still ends the inner run, but it is raised inside the outer agent's tool, and that tool's default `failure_error_function` turns it into a tool error. The outer run continues, and the outer model sees the SDK's generic error message (from 0.23 without the Vanzik reason; earlier releases append it). To end the outer run too, build the inner tool with `inner.as_tool(..., failure_error_function=None)` (on releases whose `as_tool` takes that argument); `Runner.run` on the outer agent then raises `VanzikDenied`. Either way the denied tool never runs.
 
 If the model should see the reason and continue, add the tool input guardrail:
 
 ```python
-from agentguard.adapters.openai_agents import agentguard_tool_guardrail
+from vanzik.adapters.openai_agents import vanzik_tool_guardrail
 
-@function_tool(tool_input_guardrails=[agentguard_tool_guardrail(guard)])  # 0.7.0+
+@function_tool(tool_input_guardrails=[vanzik_tool_guardrail(guard)])  # 0.7.0+
 def run_shell(command: str) -> str:
     ...
 
 # On 0.3.3 – 0.6.x, set the field instead:
-# run_shell.tool_input_guardrails = [agentguard_tool_guardrail(guard)]
+# run_shell.tool_input_guardrails = [vanzik_tool_guardrail(guard)]
 ```
 
-On `DENY` or `REQUIRE_APPROVAL` the guardrail rejects the call: the tool does not run, the model gets the AgentGuard message (`[AgentGuard] Action denied.` plus the reason, or the approval URL) as the tool result, and the run continues. With `raise_on_block=True` it trips instead and `Runner.run` raises `ToolInputGuardrailTripwireTriggered`; the guardrail result's `output_info` holds the `CheckResult`. The guardrail sees the tool name and arguments but not the description, so its scope inference skips the description keywords.
+On `DENY` or `REQUIRE_APPROVAL` the guardrail rejects the call: the tool does not run, the model gets the Vanzik message (`[Vanzik] Action denied.` plus the reason, or the approval URL) as the tool result, and the run continues. With `raise_on_block=True` it trips instead and `Runner.run` raises `ToolInputGuardrailTripwireTriggered`; the guardrail result's `output_info` holds the `CheckResult`. The guardrail sees the tool name and arguments but not the description, so its scope inference skips the description keywords.
 
 Guardrails only run inside the SDK runner; calling a tool's `on_invoke_tool` directly skips them. `guard_tool` is the gate that always fires. Using both on one tool checks every call twice.
 
@@ -263,14 +263,14 @@ The SDK runs tools on an asyncio event loop, and `Guard.check` is a blocking HTT
 
 ## browser-use — `GuardedBrowser` + `GuardedPage`
 
-Source: `plugins/python/agentguard/adapters/browseruse.py`.
+Source: `plugins/python/vanzik/adapters/browseruse.py`.
 
 ### Two integration styles
 
 **1. Check-then-act.** Call a `check_*` method, inspect the result, then drive the browser yourself:
 
 ```python
-from agentguard.adapters.browseruse import GuardedBrowser
+from vanzik.adapters.browseruse import GuardedBrowser
 
 browser = GuardedBrowser(guard_url="http://localhost:8080", agent_id="browse-bot")
 
@@ -310,11 +310,11 @@ Browser navigation is side-effectful with no natural "return text to the LLM" sl
 
 ## MCP — `GuardedMCPServer`
 
-Source: `plugins/python/agentguard/adapters/mcp.py`.
+Source: `plugins/python/vanzik/adapters/mcp.py`.
 
 ### What MCP is
 
-The [Model Context Protocol](https://modelcontextprotocol.io) is a JSON-RPC over stdio protocol that Claude Desktop, Cursor, and similar clients use to talk to tool servers. `GuardedMCPServer` implements the server side: it reads JSON-RPC requests on stdin, routes them, and writes responses on stdout. Every `tools/call` request is routed through AgentGuard before the real handler runs.
+The [Model Context Protocol](https://modelcontextprotocol.io) is a JSON-RPC over stdio protocol that Claude Desktop, Cursor, and similar clients use to talk to tool servers. `GuardedMCPServer` implements the server side: it reads JSON-RPC requests on stdin, routes them, and writes responses on stdout. Every `tools/call` request is routed through Vanzik before the real handler runs.
 
 ### Supported methods
 
@@ -330,12 +330,12 @@ The [Model Context Protocol](https://modelcontextprotocol.io) is a JSON-RPC over
 
 `MCP_PROTOCOL_VERSION = "2024-11-05"`. If a client requests a different version in `initialize.params.protocolVersion`, the server **logs a WARN to stderr** and still responds with the pinned version. stdout is reserved for JSON-RPC on the stdio transport, so the warning must not go to stdout.
 
-The Python adapter does not negotiate protocol versions — for full version negotiation, use the `agentguard-mcp-gateway` Go binary instead (see [`docs/MCP_GATEWAY.md`](MCP_GATEWAY.md)). If you see the warn repeatedly with the Python adapter, downgrade the client to `2024-11-05`.
+The Python adapter does not negotiate protocol versions — for full version negotiation, use the `vanzik-mcp-gateway` Go binary instead (see [`docs/MCP_GATEWAY.md`](MCP_GATEWAY.md)). If you see the warn repeatedly with the Python adapter, downgrade the client to `2024-11-05`.
 
 ### Registering tools
 
 ```python
-from agentguard.adapters.mcp import GuardedMCPServer
+from vanzik.adapters.mcp import GuardedMCPServer
 
 server = GuardedMCPServer(
     guard_url="http://localhost:8080",
@@ -380,10 +380,10 @@ The module entry point has two modes — gateway and empty-server.
 
 #### Gateway mode (preferred, v0.5+)
 
-`--upstream "<command>"` spawns the given downstream MCP server, brokers JSON-RPC frames between the client (Claude Desktop, Cursor, …) and the upstream, and gates every `tools/call` through AgentGuard:
+`--upstream "<command>"` spawns the given downstream MCP server, brokers JSON-RPC frames between the client (Claude Desktop, Cursor, …) and the upstream, and gates every `tools/call` through Vanzik:
 
 ```bash
-python -m agentguard.adapters.mcp \
+python -m vanzik.adapters.mcp \
   --guard-url http://localhost:8080 \
   --upstream "npx -y @modelcontextprotocol/server-filesystem /tmp"
 ```
@@ -393,10 +393,10 @@ Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_conf
 ```json
 {
   "mcpServers": {
-    "agentguard-fs": {
+    "vanzik-fs": {
       "command": "python",
       "args": [
-        "-m", "agentguard.adapters.mcp",
+        "-m", "vanzik.adapters.mcp",
         "--guard-url", "http://localhost:8080",
         "--upstream", "npx -y @modelcontextprotocol/server-filesystem /tmp"
       ]
@@ -406,7 +406,7 @@ Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_conf
 ```
 
 The Python gateway is a compatibility-tier alternative to the
-production `agentguard-mcp-gateway` Go binary (see
+production `vanzik-mcp-gateway` Go binary (see
 [`docs/MCP_GATEWAY.md`](MCP_GATEWAY.md)). Limitations vs the Go
 binary:
 
@@ -420,8 +420,8 @@ binary:
 Running the entry point without `--upstream` keeps the v0.4.x behaviour: a server that registers no tools. Useful for programmatic embedding via `GuardedMCPServer.add_tool(...)` in custom code; useless when wired to Claude Desktop verbatim. The adapter logs a stderr WARN at startup so an operator following the docs literally sees the misconfiguration immediately:
 
 ```bash
-python -m agentguard.adapters.mcp --guard-url http://localhost:8080
-# WARN agentguard.mcp: starting with NO tools registered. Pass --upstream …
+python -m vanzik.adapters.mcp --guard-url http://localhost:8080
+# WARN vanzik.mcp: starting with NO tools registered. Pass --upstream …
 ```
 
 For programmatic use you typically don't invoke `python -m`; you import the class directly (see "Registering tools" above).
@@ -435,9 +435,9 @@ For programmatic use you typically don't invoke `python -m`; you import the clas
 All adapters accept either `guard=<Guard instance>` (re-use) or `guard_url=... + agent_id=...` (construct), except the OpenAI Agents SDK adapter, which takes a `Guard` only. Share one `Guard` across adapters in the same process so env-fallback behavior is consistent:
 
 ```python
-from agentguard import Guard
-from agentguard.adapters.langchain import GuardedToolkit
-from agentguard.adapters.crewai import guard_crew_tools
+from vanzik import Guard
+from vanzik.adapters.langchain import GuardedToolkit
+from vanzik.adapters.crewai import guard_crew_tools
 
 shared = Guard("http://localhost:8080", agent_id="multi-framework-agent", api_key="…")
 langchain_tools = GuardedToolkit(my_lc_tools, ...).tools  # or inject shared via custom construction
@@ -466,4 +466,4 @@ Every adapter forwards `session_id` and `est_cost` from the tool input to the po
 - [`docs/SDK_PYTHON.md`](SDK_PYTHON.md) — underlying `Guard` client reference.
 - [`docs/POLICY_REFERENCE.md`](POLICY_REFERENCE.md) — scopes each adapter emits to (`shell`, `filesystem`, `network`, `browser`, `data`, `cost`).
 - [`docs/TROUBLESHOOTING.md`](TROUBLESHOOTING.md) — adapter-specific failure symptoms.
-- `plugins/python/agentguard/adapters/*.py` — source of truth; all behavior documented above is code-backed.
+- `plugins/python/vanzik/adapters/*.py` — source of truth; all behavior documented above is code-backed.

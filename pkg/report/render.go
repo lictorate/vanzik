@@ -42,7 +42,7 @@ func WriteJSON(w io.Writer, r *Report) error {
 
 // ── Text shared by the Markdown and HTML forms ───────────────────────────
 
-const title = "AgentGuard compliance evidence report"
+const title = "Vanzik compliance evidence report"
 
 func stamp(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 
@@ -80,7 +80,7 @@ func methodText(m string) string {
 	if m == MethodSealHead {
 		return "the server's seal head (GET /v1/audit/head); the chain was not checked"
 	}
-	return "agentguard audit verify, over the log files"
+	return "vanzik audit verify, over the log files"
 }
 
 func headText(h *Head) string {
@@ -143,7 +143,7 @@ func WriteMarkdown(w io.Writer, r *Report) error {
 	m.table([]string{"Item", "Value"}, [][]string{
 		{"Period", periodText(r.Period)},
 		{"Generated", stamp(r.GeneratedAt)},
-		{"AgentGuard", r.AgentGuardVersion},
+		{"Vanzik", r.VanzikVersion},
 		{"Source", sourceText(r.Source)},
 		{"Policy", policyText(r.Policy)},
 		{"Decisions", decisionsText(r.Activity)},

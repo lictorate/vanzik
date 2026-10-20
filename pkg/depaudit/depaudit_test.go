@@ -82,7 +82,7 @@ func TestDependencyAudit_Report(t *testing.T) {
 	})
 
 	var b strings.Builder
-	b.WriteString("\nAgentGuard dependency audit\n")
+	b.WriteString("\nVanzik dependency audit\n")
 	if !on {
 		b.WriteString("(offline — set DEPAUDIT_ONLINE=1 for latest-version + live OSV.dev security checks)\n")
 	}

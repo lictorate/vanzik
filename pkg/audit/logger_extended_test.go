@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // TestFileLogger_Permissions verifies the audit log is created with owner-only permissions.

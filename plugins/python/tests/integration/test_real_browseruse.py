@@ -2,7 +2,7 @@
 
 Drives a real Playwright Chromium browser through ``GuardedPage`` and
 asserts every gated method routes through ``/v1/check``. The framework
-is real; only the AgentGuard server is mocked.
+is real; only the Vanzik server is mocked.
 
 Closes audit findings R5 P1 (real-framework canary), R5 P2/P3/P4 (modern
 browser API gating), R1 F1 (version-floor bound), and the dynamic side
@@ -28,8 +28,8 @@ browser_use = pytest.importorskip("browser_use")
 playwright = pytest.importorskip("playwright")
 playwright_async_api = pytest.importorskip("playwright.async_api")
 
-from agentguard import Guard  # noqa: E402
-from agentguard.adapters.browseruse import (  # noqa: E402
+from vanzik import Guard  # noqa: E402
+from vanzik.adapters.browseruse import (  # noqa: E402
     GuardedBrowser,
     GuardedPage,
 )
@@ -51,7 +51,7 @@ _DATA_URL = (
     "<input id='password' name='password' type='password'/>"
     "<button id='submit' type='button'>Go</button>"
     "</form>"
-    "<script>window.AGENTGUARD_TEST = 42;</script>"
+    "<script>window.VANZIK_TEST = 42;</script>"
     "</body></html>"
 )
 
@@ -112,7 +112,7 @@ class TestRealBrowserUseFullFlow:
         gp = GuardedPage(page, guard)
 
         run(gp.goto(_DATA_URL))
-        result = run(gp.evaluate("window.AGENTGUARD_TEST"))
+        result = run(gp.evaluate("window.VANZIK_TEST"))
         assert result == 42
         run(gp.click("#submit"))
 

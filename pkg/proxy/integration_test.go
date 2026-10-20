@@ -20,9 +20,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/notify"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/notify"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // integrationServer wires a real Server into an httptest.Server so we can
@@ -606,7 +606,7 @@ func TestIntegration_DashboardHTMLNeverLeaksKey(t *testing.T) {
 	if strings.Contains(body, "super-secret-key-should-never-appear") {
 		t.Fatal("authenticated dashboard HTML leaks the API key")
 	}
-	if strings.Contains(body, "agentguard-api-key") {
+	if strings.Contains(body, "vanzik-api-key") {
 		t.Fatal("dashboard references the old api-key meta tag")
 	}
 }
@@ -676,8 +676,8 @@ func TestIntegration_HealthAndMetrics_Open(t *testing.T) {
 		t.Errorf("metrics: %d", r.StatusCode)
 	}
 	body := readBody(t, r)
-	if !strings.Contains(body, "agentguard_checks_total") {
-		t.Error("metrics response should contain agentguard_checks_total")
+	if !strings.Contains(body, "vanzik_checks_total") {
+		t.Error("metrics response should contain vanzik_checks_total")
 	}
 }
 

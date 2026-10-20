@@ -1,5 +1,5 @@
 /**
- * Statistical contract test for `AgentGuard.waitForApproval` jitter (AT, Phase 3).
+ * Statistical contract test for `Vanzik.waitForApproval` jitter (AT, Phase 3).
  *
  * Lock the population statistics of the jitter loop:
  *
@@ -20,7 +20,7 @@
  * test runs in tens of ms wall-clock instead of hundreds of seconds.
  */
 
-import { AgentGuard } from "../index";
+import { Vanzik } from "../index";
 
 // ---------------------------------------------------------------------------
 // fetch + setTimeout plumbing
@@ -111,8 +111,8 @@ function spyOnSetTimeout(): CapturedSleeps {
 const ORIGINAL_ENV = { ...process.env };
 
 beforeEach(() => {
-  delete process.env.AGENTGUARD_URL;
-  delete process.env.AGENTGUARD_API_KEY;
+  delete process.env.VANZIK_URL;
+  delete process.env.VANZIK_API_KEY;
 });
 
 afterAll(() => {
@@ -145,7 +145,7 @@ describe("waitForApproval jitter — distribution shape", () => {
     pendingThenResolvedFetch(TARGET, sleeps);
 
     try {
-      const g = new AgentGuard({ apiKey: "k", timeout: REQUEST_TIMEOUT });
+      const g = new Vanzik({ apiKey: "k", timeout: REQUEST_TIMEOUT });
       // The fetch mock flips to "resolved" once TARGET sleeps have been
       // recorded, so the loop exits well before timeoutMs.
       await g.waitForApproval("ap_jit", 30_000, POLL);
@@ -180,7 +180,7 @@ describe("waitForApproval jitter — distribution shape", () => {
     pendingThenResolvedFetch(TARGET, sleeps);
 
     try {
-      const g = new AgentGuard({ apiKey: "k", timeout: REQUEST_TIMEOUT });
+      const g = new Vanzik({ apiKey: "k", timeout: REQUEST_TIMEOUT });
       await g.waitForApproval("ap_jit", 30_000, 100);
     } finally {
       restore();
@@ -201,7 +201,7 @@ describe("waitForApproval jitter — distribution shape", () => {
     pendingThenResolvedFetch(TARGET, sleeps);
 
     try {
-      const g = new AgentGuard({ apiKey: "k", timeout: REQUEST_TIMEOUT });
+      const g = new Vanzik({ apiKey: "k", timeout: REQUEST_TIMEOUT });
       await g.waitForApproval("ap_jit", 30_000, POLL);
     } finally {
       restore();

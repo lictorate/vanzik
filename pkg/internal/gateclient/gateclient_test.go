@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 var testRules = FailModeRules{

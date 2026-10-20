@@ -1,7 +1,7 @@
 # Dependency safety registry (`advisories.json`)
 
 This registry drives `TestDependencyAudit_Gate` in `pkg/depaudit`. It is the
-one place AgentGuard records **known** security vulnerabilities and performance
+one place Vanzik records **known** security vulnerabilities and performance
 regressions that affect a version the project ships.
 
 ## The contract the gate enforces

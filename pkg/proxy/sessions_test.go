@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
-	"github.com/Caua-ferraz/AgentGuard/pkg/store"
+	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/store"
 )
 
 // sessionBackends runs a test against the file audit backend and the
@@ -28,7 +28,7 @@ func sessionBackends(t *testing.T, fn func(t *testing.T, logger audit.Logger)) {
 		fn(t, l)
 	})
 	t.Run("store", func(t *testing.T) {
-		st, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "agentguard.db"))
+		st, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "vanzik.db"))
 		if err != nil {
 			t.Fatal(err)
 		}

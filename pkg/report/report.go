@@ -1,5 +1,5 @@
-// Package report builds the compliance evidence report of `agentguard
-// report`: what AgentGuard decided over a period, how far the audit log
+// Package report builds the compliance evidence report of `vanzik
+// report`: what Vanzik decided over a period, how far the audit log
 // that recorded it can be trusted, and how that maps to SOC 2 criteria.
 //
 // It does no I/O. The caller reads the audit log (files or a server), runs
@@ -22,11 +22,11 @@ type Report struct {
 	FormatVersion int `json:"format_version"`
 	// GeneratedAt is when the report was made (UTC).
 	GeneratedAt time.Time `json:"generated_at"`
-	// AgentGuardVersion is the version of the binary that made the report,
+	// VanzikVersion is the version of the binary that made the report,
 	// e.g. "1.4.0 (abc1234)".
-	AgentGuardVersion string `json:"agentguard_version"`
-	Period            Period `json:"period"`
-	Source            Source `json:"source"`
+	VanzikVersion string `json:"vanzik_version"`
+	Period        Period `json:"period"`
+	Source        Source `json:"source"`
 	// Policy is the policy file the report names, or nil when none was
 	// given or found.
 	Policy    *PolicyFile `json:"policy"`
@@ -93,7 +93,7 @@ type PolicyFile struct {
 	// SHA256 is the hex SHA-256 of the file's bytes when the report was
 	// made.
 	SHA256 string `json:"sha256"`
-	// Found says how the file was chosen: "--policy", "AGENTGUARD_POLICY",
+	// Found says how the file was chosen: "--policy", "VANZIK_POLICY",
 	// "the default" or "found automatically".
 	Found string `json:"found"`
 }

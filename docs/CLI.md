@@ -1,15 +1,15 @@
 # CLI Reference
 
-Every `agentguard` (central server) subcommand, every flag, every env-var fallback. Source of truth: `cmd/agentguard/main.go` and `cmd/agentguard/cli.go`.
+Every `vanzik` (central server) subcommand, every flag, every env-var fallback. Source of truth: `cmd/vanzik/main.go` and `cmd/vanzik/cli.go`.
 
-> **Scope:** this page documents the `agentguard` binary — the central server that owns the policy engine, audit log, approval queue, and dashboard. For the v0.5 wire-level proxy binaries see [`MCP_GATEWAY.md`](MCP_GATEWAY.md) (`agentguard-mcp-gateway`) and [`LLM_API_PROXY.md`](LLM_API_PROXY.md) (`agentguard-llm-proxy`).
+> **Scope:** this page documents the `vanzik` binary — the central server that owns the policy engine, audit log, approval queue, and dashboard. For the v0.5 wire-level proxy binaries see [`MCP_GATEWAY.md`](MCP_GATEWAY.md) (`vanzik-mcp-gateway`) and [`LLM_API_PROXY.md`](LLM_API_PROXY.md) (`vanzik-llm-proxy`).
 
 ```
-agentguard <command> [flags]
+vanzik <command> [flags]
 
 Set up and run:
-  setup       Set up, update or remove AgentGuard on this computer (a menu)
-  server      Start AgentGuard: policy engine, approvals, audit log, dashboard
+  setup       Set up, update or remove Vanzik on this computer (a menu)
+  server      Start Vanzik: policy engine, approvals, audit log, dashboard
 
 Policies:
   validate    Check that a policy file loads
@@ -31,67 +31,69 @@ Other:
   help        Show help for a command
 
 Get started:
-  agentguard setup
-      Set AgentGuard up to run at login, with a policy and an API key
-  agentguard server --dashboard
+  vanzik setup
+      Set Vanzik up to run at login, with a policy and an API key
+  vanzik server --dashboard
       Or start the server yourself, then open http://localhost:8080/dashboard
-  agentguard check --scope shell --command "rm -rf /"
+  vanzik check --scope shell --command "rm -rf /"
       Try the policy on one action, no server needed
 
 Also installed:
-  agentguard-mcp-gateway   Guards the tools of an MCP client (Claude Desktop,
+  vanzik-mcp-gateway   Guards the tools of an MCP client (Claude Desktop,
                            Cursor, …)
-  agentguard-llm-proxy     Guards tool calls in OpenAI / Anthropic SDK code
+  vanzik-llm-proxy     Guards tool calls in OpenAI / Anthropic SDK code
 
-Run 'agentguard help <command>' (or 'agentguard <command> -h') for its flags.
+Run 'vanzik help <command>' (or 'vanzik <command> -h') for its flags.
 ```
 
-Every command's help (`agentguard help <command>`) has examples and says what its exit codes mean; the full list also shows the environment variables and a link to this page for the installed version.
+Every command's help (`vanzik help <command>`) has examples and says what its exit codes mean; the full list also shows the environment variables and a link to this page for the installed version.
 
 Global conventions:
-- `agentguard serve` is the same command as `agentguard server` and keeps working for the whole 1.x line ([`COMPATIBILITY.md`](COMPATIBILITY.md#frozen-surface-4--cli-flags--subcommands)).
-- Flags can go before or after positional arguments: `agentguard approve <id> --url <url>` and `agentguard approve --url <url> <id>` are the same. A `--` ends the flags; everything after it is an argument.
-- `agentguard help`, `-h` and `--help` print help on stdout and exit `0`; so do `agentguard help <command>` and `agentguard <command> -h`. A mistyped command or flag gets a suggestion: `agentguard: unknown command "--serve". Did you mean 'agentguard server'?`
-- `--api-key` on `server` and on the client subcommands (`approve`, `deny`, `status`, `audit`) falls back to the `AGENTGUARD_API_KEY` env var; `--url` on the client subcommands falls back to `AGENTGUARD_URL`; `--policy` on `server`, `validate`, `check` and `test` is found automatically when not given (see [Policy file](#policy-file)).
+- `vanzik serve` is the same command as `vanzik server` and keeps working for the whole 1.x line ([`COMPATIBILITY.md`](COMPATIBILITY.md#frozen-surface-4--cli-flags--subcommands)).
+- Flags can go before or after positional arguments: `vanzik approve <id> --url <url>` and `vanzik approve --url <url> <id>` are the same. A `--` ends the flags; everything after it is an argument.
+- `vanzik help`, `-h` and `--help` print help on stdout and exit `0`; so do `vanzik help <command>` and `vanzik <command> -h`. A mistyped command or flag gets a suggestion: `vanzik: unknown command "--serve". Did you mean 'vanzik server'?`
+- `--api-key` on `server` and on the client subcommands (`approve`, `deny`, `status`, `audit`) falls back to the `VANZIK_API_KEY` env var; `--url` on the client subcommands falls back to `VANZIK_URL`; `--policy` on `server`, `validate`, `check` and `test` is found automatically when not given (see [Policy file](#policy-file)).
 - Exit code `0` = success, `1` = failure, `2` = the command line was wrong (unknown command or flag, missing or extra argument). `check` and `test` have their own codes — see below; `audit verify` and `report` add `3` for a file (or server) they can't read.
 
 ---
 
-## `agentguard setup`
+## `vanzik setup`
 
-Set AgentGuard up on this computer, keep it current and remove it, from a menu: move with ↑/↓, choose with Enter, go back with Esc. It has no flags; every action is a menu item. It needs a terminal: scripts use the [one-line installers](SETUP.md#1-install), which install, update and uninstall too.
+Set Vanzik up on this computer, keep it current and remove it, from a menu: move with ↑/↓, choose with Enter, go back with Esc. It has no flags; every action is a menu item. It needs a terminal: scripts use the [one-line installers](SETUP.md#1-install), which install, update and uninstall too.
 
-**Set up** (the first run) asks two questions — start AgentGuard at login? protect it with an API key? — then does this, skipping what's already there:
+**Set up** (the first run) asks two questions — start Vanzik at login? protect it with an API key? — then does this, skipping what's already there:
 
 | Step | Linux / macOS | Windows |
 |---|---|---|
-| Starter policy (an existing one is kept) | `~/.config/agentguard/default.yaml` | `%APPDATA%\agentguard\default.yaml` |
-| Data folder: audit log, state database, server log | `~/.local/share/agentguard` | `%LOCALAPPDATA%\AgentGuard\data` |
-| API key, readable only by you | `~/.config/agentguard/api-key` | `%APPDATA%\agentguard\api-key` |
-| Audit seal key, readable only by you (v1.4, new setups) | `~/.local/share/agentguard/audit-seal.key` | `%LOCALAPPDATA%\AgentGuard\data\audit-seal.key` |
-| Start at login, without admin rights | systemd user service `agentguard.service` / LaunchAgent `com.lictorate.agentguard` | Task Scheduler task `AgentGuard`, at your logon |
+| Starter policy (an existing one is kept) | `~/.config/vanzik/default.yaml` | `%APPDATA%\vanzik\default.yaml` |
+| Data folder: audit log, state database, server log | `~/.local/share/vanzik` | `%LOCALAPPDATA%\Vanzik\data` |
+| API key, readable only by you | `~/.config/vanzik/api-key` | `%APPDATA%\vanzik\api-key` |
+| Audit seal key, readable only by you (v1.4, new setups) | `~/.local/share/vanzik/audit-seal.key` | `%LOCALAPPDATA%\Vanzik\data\audit-seal.key` |
+| Start at login, without admin rights | systemd user service `vanzik.service` / LaunchAgent `com.lictorate.vanzik` | Task Scheduler task `Vanzik`, at your logon |
 
-The service runs `agentguard server --policy … --data-dir … --audit-log … --port 8080 --bind 127.0.0.1 --dashboard --api-key-file … --audit-seal --audit-seal-key-file …`, on the next free port when 8080 is taken. The keys go in as files, so they never appear in the service definition or the process list. Since v1.4 a new setup seals the audit log (see [`agentguard audit verify`](#agentguard-audit-verify)); a setup made by an earlier version keeps its command line when you run setup again. `XDG_CONFIG_HOME` and `XDG_DATA_HOME` move the Linux and macOS folders.
+The service runs `vanzik server --policy … --data-dir … --audit-log … --port 8080 --bind 127.0.0.1 --dashboard --api-key-file … --audit-seal --audit-seal-key-file …`, on the next free port when 8080 is taken. The keys go in as files, so they never appear in the service definition or the process list. Since v1.4 a new setup seals the audit log (see [`vanzik audit verify`](#vanzik-audit-verify)); a setup made by an earlier version keeps its command line when you run setup again. `XDG_CONFIG_HOME` and `XDG_DATA_HOME` move the Linux and macOS folders.
 
 **Later runs** show whether the server is running and offer: open the dashboard (the API key goes to the clipboard for its login), update, start or restart the server, connection details (the URL, where the key is, the lines for the SDKs, and a Claude Desktop block with no secret in it), open the policy file, change settings, and — last, under a divider — uninstall.
 
-**Update** installs the newest release (or `AGENTGUARD_VERSION`) for this OS and CPU, from GitHub or from `AGENTGUARD_DOWNLOAD_URL`, like the installers. It checks the archive against the release's `checksums.txt`, swaps the three binaries in place — a running server keeps going until it restarts — and restarts the service. A `go install` copy gets the `go install` command instead; a source build and the container image don't update themselves.
+**Update** installs the newest release (or `VANZIK_VERSION`) for this OS and CPU, from GitHub or from `VANZIK_DOWNLOAD_URL`, like the installers. It checks the archive against the release's `checksums.txt`, swaps the three binaries in place — a running server keeps going until it restarts — and restarts the service. A `go install` copy gets the `go install` command instead; a source build and the container image don't update themselves.
 
-**Connect Claude Code**, **Connect Cursor**, **Connect Gemini CLI** and **Connect Codex CLI** (each shown when that agent is installed) add AgentGuard's hook to the agent's settings so its tool calls are checked. Each offers to add the agent's rules to a policy that has none, and asks what happens while AgentGuard isn't running: let calls through with a warning (the default) or block them (`--fail-closed`). **Disconnect** takes the hook out again. See [`CODING_AGENTS.md`](CODING_AGENTS.md).
+**Connect Claude Code**, **Connect Cursor**, **Connect Gemini CLI** and **Connect Codex CLI** (each shown when that agent is installed) add Vanzik's hook to the agent's settings so its tool calls are checked. Each offers to add the agent's rules to a policy that has none, and asks what happens while Vanzik isn't running: let calls through with a warning (the default) or block them (`--fail-closed`). **Disconnect** takes the hook out again. See [`CODING_AGENTS.md`](CODING_AGENTS.md).
 
-**Uninstall** offers, in this order: stop the server and don't start it at login; uninstall and keep the policy, key and data; uninstall everything; cancel. It removes the login service, AgentGuard's hooks from the coding agents' settings, and the three binaries — on Windows also the installer's PATH entry, and the running `.exe` right after setup exits — works offline, and prints a link for feedback. Nothing is sent.
+**Uninstall** offers, in this order: stop the server and don't start it at login; uninstall and keep the policy, key and data; uninstall everything; cancel. It removes the login service, Vanzik's hooks from the coding agents' settings, and the three binaries — on Windows also the installer's PATH entry, and the running `.exe` right after setup exits — works offline, and prints a link for feedback. Nothing is sent.
 
-Opening the menu checks GitHub for a newer release unless `AGENTGUARD_NO_UPDATE_CHECK` is set; the menu then offers "Check for updates". setup refuses to run as root (it sets AgentGuard up for your own user; for a system-wide server see [`DEPLOYMENT.md`](DEPLOYMENT.md)) and inside the container image.
+**An AgentGuard 1.x install** (this project's name before 2.0) is moved over before the menu opens, with [`vanzik migrate --from-agentguard`](#vanzik-migrate---from-agentguard); if a step fails, setup stops there. Without a terminal setup only says that one is there.
+
+Opening the menu checks GitHub for a newer release unless `VANZIK_NO_UPDATE_CHECK` is set; the menu then offers "Check for updates". setup refuses to run as root (it sets Vanzik up for your own user; for a system-wide server see [`DEPLOYMENT.md`](DEPLOYMENT.md)) and inside the container image.
 
 ---
 
-## `agentguard hook <agent>`
+## `vanzik hook <agent>`
 
 ```
-agentguard hook claude-code|cursor|gemini-cli|codex [--fail-closed]
+vanzik hook claude-code|cursor|gemini-cli|codex [--fail-closed]
 ```
 
-The command a coding agent runs before each shell command, file read or edit, web fetch and MCP tool call, once `agentguard setup` has connected it. It reads the call as JSON on stdin, in the agent's own format, checks it on the running server as that agent, and answers in the agent's own format: go ahead when the policy allows it, a block with the reason when it denies it; a call that needs approval waits up to 5 minutes for one. It finds the server through `AGENTGUARD_URL`, else the one setup runs, and the key through `AGENTGUARD_API_KEY`, else the saved one. You don't run it yourself; see [`CODING_AGENTS.md`](CODING_AGENTS.md).
+The command a coding agent runs before each shell command, file read or edit, web fetch and MCP tool call, once `vanzik setup` has connected it. It reads the call as JSON on stdin, in the agent's own format, checks it on the running server as that agent, and answers in the agent's own format: go ahead when the policy allows it, a block with the reason when it denies it; a call that needs approval waits up to 5 minutes for one. It finds the server through `VANZIK_URL`, else the one setup runs, and the key through `VANZIK_API_KEY`, else the saved one. You don't run it yourself; see [`CODING_AGENTS.md`](CODING_AGENTS.md).
 
 | Agent | Checked as agent | Audit transport |
 |---|---|---|
@@ -102,15 +104,15 @@ The command a coding agent runs before each shell command, file read or edit, we
 
 | Flag | Default | Description |
 |---|---|---|
-| `--fail-closed` | `false` | Block calls AgentGuard can't check (server down, API key refused, unreadable input), with rule `deny:hook:fail_closed`, instead of letting them through with a warning. Goes before or after the agent. |
+| `--fail-closed` | `false` | Block calls Vanzik can't check (server down, API key refused, unreadable input), with rule `deny:hook:fail_closed`, instead of letting them through with a warning. Goes before or after the agent. |
 
 ---
 
-## `agentguard server`
+## `vanzik server`
 
-Start the AgentGuard server. This is the only subcommand that runs a long-lived process. `agentguard serve` is the same command.
+Start the Vanzik server. This is the only subcommand that runs a long-lived process. `vanzik serve` is the same command.
 
-`agentguard server -h` prints the flags below grouped by topic (network, security, policy, audit log, audit sealing, storage, multi-node, notifications, debugging).
+`vanzik server -h` prints the flags below grouped by topic (network, security, policy, audit log, audit sealing, storage, multi-node, notifications, debugging).
 
 | Flag | Default | Description |
 |---|---|---|
@@ -120,8 +122,8 @@ Start the AgentGuard server. This is the only subcommand that runs a long-lived 
 | `--dashboard` | off | Serve `/dashboard` HTML + `/api/stream` SSE. Required for human approval UI. |
 | `--watch` | off | Log a line each time the policy file is reloaded. The reload itself always happens, with or without this flag (fsnotify events, with a 2 s mtime poll as fallback); no restart needed after policy edits. |
 | `--audit-log <path>` | `audit.jsonl` | Append-only JSON Lines file. Mode `0600`. Rotation is on by default; configurable via `--audit-max-size-mb`, `--audit-max-backups`, `--audit-max-age-days`, `--audit-compress`. Operators following older guidance should NOT also configure logrotate against `audit.jsonl` — the dual-rotator chain corrupts the rotation index. See [`OPERATIONS.md`](OPERATIONS.md#audit-log-rotation). |
-| `--api-key <key>` | `$AGENTGUARD_API_KEY` | Bearer token for gated endpoints. **If empty, the server binds to `127.0.0.1` only** (localhost-only). |
-| `--api-key-file <path>` | *(empty)* | Read the API key from the first line of this file instead of the command line, where other users of the machine could see it. `--api-key` wins over it; it wins over `AGENTGUARD_API_KEY`. The server refuses to start when the file can't be read or is empty, rather than run unprotected. `agentguard setup` uses it. |
+| `--api-key <key>` | `$VANZIK_API_KEY` | Bearer token for gated endpoints. **If empty, the server binds to `127.0.0.1` only** (localhost-only). |
+| `--api-key-file <path>` | *(empty)* | Read the API key from the first line of this file instead of the command line, where other users of the machine could see it. `--api-key` wins over it; it wins over `VANZIK_API_KEY`. The server refuses to start when the file can't be read or is empty, rather than run unprotected. `vanzik setup` uses it. |
 | `--base-url <url>` | `http://localhost:<port>` | External URL used when constructing `approval_url` in check responses. Set this behind a reverse proxy. |
 | `--allowed-origin <url>` | *(empty)* | Exact CORS origin. Empty = permissive-localhost (accepts any `http://localhost:*` or `http://127.0.0.1:*`). Set to `https://app.example` for strict single-origin. |
 | `--tls-terminated-upstream` | off | Issue session cookies with `Secure` even when `r.TLS == nil`. Set when behind a TLS-terminating proxy that does not forward `X-Forwarded-Proto`. See [`DEPLOYMENT.md`](DEPLOYMENT.md). |
@@ -137,15 +139,15 @@ Start the AgentGuard server. This is the only subcommand that runs a long-lived 
 | `--audit-queue-size <int>` | `1024` | Bounded queue size for the buffered async logger. Ignored unless `--audit-buffered`. |
 | `--audit-workers <int>` | `4` | Worker goroutines draining the buffered audit queue. Ignored unless `--audit-buffered`. |
 | `--audit-overflow-path <path>` | `<audit-log>.overflow.jsonl` | Disk-overflow spill file used when the buffered queue saturates. Ignored unless `--audit-buffered`. |
-| `--audit-seal` | off | **(v1.4)** Seal the audit log into a hash chain that [`agentguard audit verify`](#agentguard-audit-verify) checks for edited, removed or reordered entries. File backend only: with `--audit-backend=store` the server refuses to start (exit 2). Not encryption. See [OPERATIONS § Sealing and anchoring](OPERATIONS.md#sealing-and-anchoring). |
-| `--audit-seal-key-file <path>` | *(empty)* | **(v1.4)** HMAC-SHA256 key for `--audit-seal`: the file's content, surrounding whitespace ignored. The server refuses to start when the file is missing, empty, or (on Unix) readable by every user. Without it the chain is plain SHA-256, which anyone who can write the file can recompute; the server warns at startup. Given without `--audit-seal`, it is a usage error. `agentguard setup` uses it. |
-| `--audit-anchor-interval <dur>` | `5m` | **(v1.4)** How often to log the head of the sealed chain (`audit anchor segment=… seq=… hash=…`) and set `agentguard_audit_seal_seq`, when something new was sealed. Anchors are also published at startup, at each rotation and at shutdown. `0` turns the periodic anchor off. Ignored unless `--audit-seal`. |
+| `--audit-seal` | off | **(v1.4)** Seal the audit log into a hash chain that [`vanzik audit verify`](#vanzik-audit-verify) checks for edited, removed or reordered entries. File backend only: with `--audit-backend=store` the server refuses to start (exit 2). Not encryption. See [OPERATIONS § Sealing and anchoring](OPERATIONS.md#sealing-and-anchoring). |
+| `--audit-seal-key-file <path>` | *(empty)* | **(v1.4)** HMAC-SHA256 key for `--audit-seal`: the file's content, surrounding whitespace ignored. The server refuses to start when the file is missing, empty, or (on Unix) readable by every user. Without it the chain is plain SHA-256, which anyone who can write the file can recompute; the server warns at startup. Given without `--audit-seal`, it is a usage error. `vanzik setup` uses it. |
+| `--audit-anchor-interval <dur>` | `5m` | **(v1.4)** How often to log the head of the sealed chain (`audit anchor segment=… seq=… hash=…`) and set `vanzik_audit_seal_seq`, when something new was sealed. Anchors are also published at startup, at each rotation and at shutdown. `0` turns the periodic anchor off. Ignored unless `--audit-seal`. |
 | `--notify-spool <path>` | *(empty)* | *(v0.7)* JSONL spool file for notification events that overflow the dispatch queue — spooled events are redelivered by a recovery loop (including leftovers from a previous process) instead of dropped. Empty disables (drop-on-full). |
 | `--debug-pprof` | off | Expose Go pprof handlers on a **separate localhost-only** listener (`--debug-pprof-port`). Off by default; enable for performance investigations only. Tunnel via `kubectl port-forward` / `ssh -L` to access remotely — this listener never binds beyond `127.0.0.1`. |
 | `--debug-pprof-port <int>` | `6060` | Port for the localhost-only pprof listener. Ignored unless `--debug-pprof`. |
-| `--persist` | `true` | **(v0.6)** Persist runtime state (approvals, rate-limit buckets, cost accumulators) to a durable store so it survives restarts. Zero-config: auto-creates `agentguard.db` (SQLite). Set `false` for pure in-memory (pre-v0.6 behavior). The store is **never** on the `/v1/check` hot path — a background syncer flushes snapshots on a ≥1 s tick and hydrates memory on boot. See [Persistence & multi-tenancy](#persistence--multi-tenancy-v06). |
-| `--store-dsn <dsn>` | *(empty)* | **(v0.6)** Durable store location. Empty ⇒ zero-config SQLite at `<data-dir>/agentguard.db`; a SQLite file path is also accepted. **(v1.0)** A `postgres://` / `postgresql://` DSN selects the PostgreSQL backend — required for [multi-node deployments](OPERATIONS.md#multi-instance-deployments). Ignored when `--persist=false`. |
-| `--data-dir <path>` | `.` | **(v0.6)** Directory for the zero-config SQLite database (`agentguard.db` + its `-wal`/`-shm` sidecars). Ignored when `--store-dsn` is set or `--persist=false`. |
+| `--persist` | `true` | **(v0.6)** Persist runtime state (approvals, rate-limit buckets, cost accumulators) to a durable store so it survives restarts. Zero-config: auto-creates `vanzik.db` (SQLite). Set `false` for pure in-memory (pre-v0.6 behavior). The store is **never** on the `/v1/check` hot path — a background syncer flushes snapshots on a ≥1 s tick and hydrates memory on boot. See [Persistence & multi-tenancy](#persistence--multi-tenancy-v06). |
+| `--store-dsn <dsn>` | *(empty)* | **(v0.6)** Durable store location. Empty ⇒ zero-config SQLite at `<data-dir>/vanzik.db`; a SQLite file path is also accepted. **(v1.0)** A `postgres://` / `postgresql://` DSN selects the PostgreSQL backend — required for [multi-node deployments](OPERATIONS.md#multi-instance-deployments). Ignored when `--persist=false`. |
+| `--data-dir <path>` | `.` | **(v0.6)** Directory for the zero-config SQLite database (`vanzik.db` + its `-wal`/`-shm` sidecars). Ignored when `--store-dsn` is set or `--persist=false`. |
 | `--node-id <id>` | *(hostname)* | **(v1.0)** This replica's identity in the shared PostgreSQL store. Must be distinct per replica (two processes on one host need explicit values; in Kubernetes pass the pod name). No effect on the SQLite backend. |
 | `--reconcile-interval <dur>` | `2s` | **(v1.0)** Cadence of the background reconcile that merges other nodes' rate/cost consumption and approval state into this node's in-memory view (and publishes this node's). Postgres-only: forced off on the SQLite backend. Smaller ⇒ tighter rate-limit overshoot bound and fresher cross-node approvals, more store traffic. Never touches the `/v1/check` hot path. |
 | `--audit-backend <file\|store>` | `file` | **(v0.6)** Where the audit trail lives. `file` = JSONL (rotation + migration, the default). `store` = the durable store's indexed `audit_entries` table (one-file deployment, indexed `/v1/audit` queries). `store` requires `--persist` and always runs buffered (async) — a synchronous DB write per request would break the <3 ms budget, so buffering is forced. |
@@ -154,9 +156,9 @@ Start the AgentGuard server. This is the only subcommand that runs a long-lived 
 
 When `--policy` is not given, `server`, `validate`, `check` and `test` use the first of:
 
-1. `$AGENTGUARD_POLICY`.
+1. `$VANZIK_POLICY`.
 2. `configs/default.yaml` in the current folder (the flag's default, so running from a checkout works as before).
-3. The starter policy the [installer](SETUP.md#1-install) writes: `$XDG_CONFIG_HOME/agentguard/default.yaml` (else `~/.config/agentguard/default.yaml`, on macOS too), then `/etc/agentguard/default.yaml` (a root install, and the container image). On Windows, `%APPDATA%\agentguard\default.yaml`.
+3. The starter policy the [installer](SETUP.md#1-install) writes: `$XDG_CONFIG_HOME/vanzik/default.yaml` (else `~/.config/vanzik/default.yaml`, on macOS too), then `/etc/vanzik/default.yaml` (a root install, and the container image). On Windows, `%APPDATA%\vanzik\default.yaml`.
 
 If none exists, the command stops and lists where it looked. `validate`, `check` and `test` print `Using policy file <path> (…)` on stderr when the file wasn't named with `--policy`; the server's startup log always names it (`Loaded policy: <name> from <path> …`).
 
@@ -168,7 +170,7 @@ If none exists, the command stops and lists where it looked. `validate`, `check`
 
 ### Persistence & multi-tenancy (v0.6)
 
-By default `server` is **stateful**: runtime state survives a restart. On a clean run `agentguard server` creates `agentguard.db` in the working directory (override with `--data-dir`) and:
+By default `server` is **stateful**: runtime state survives a restart. On a clean run `vanzik server` creates `vanzik.db` in the working directory (override with `--data-dir`) and:
 
 - **hydrates** the in-memory approval queue, rate-limit buckets, and cost accumulators from the store on boot, then
 - **write-behind syncs** them back on a background ticker (≥ 1 s) and on graceful shutdown.
@@ -177,22 +179,22 @@ The store is a *cold-path* component — it is never read or written on the `/v1
 
 **Multi-node (v1.0).** With `--store-dsn postgres://…`, every replica shares the same durable tier and additionally reconciles its in-memory state with the other nodes every `--reconcile-interval` (default 2s), identified by `--node-id`. Memory stays authoritative per node — reconciliation is background-only, so distributed rate/cost limiting is bounded-overshoot rather than globally strict, and cross-node approval staleness is at most one interval. Semantics and sizing guidance: [`OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments).
 
-**Tenancy.** The `local` tenant's policy comes from `--policy`. Additional tenants are registered in the store with [`agentguard tenant`](#agentguard-tenant-v06) and addressed via the `/v1/t/<tenant>/...` route family; each tenant is evaluated against its **own** policy, with isolated approvals, rate limits, cost accumulators, and audit. A tenant that has no registered policy is rejected over HTTP with `404 {"error":"tenant not found"}` (see [`API.md`](API.md#url-families-legacy-vs-tenant-aware-v05)); the offline [`agentguard check --tenant-id`](#agentguard-check) path returns a synthetic DENY with `matched_rule="deny:tenant:not_found"`.
+**Tenancy.** The `local` tenant's policy comes from `--policy`. Additional tenants are registered in the store with [`vanzik tenant`](#vanzik-tenant-v06) and addressed via the `/v1/t/<tenant>/...` route family; each tenant is evaluated against its **own** policy, with isolated approvals, rate limits, cost accumulators, and audit. A tenant that has no registered policy is rejected over HTTP with `404 {"error":"tenant not found"}` (see [`API.md`](API.md#url-families-legacy-vs-tenant-aware-v05)); the offline [`vanzik check --tenant-id`](#vanzik-check) path returns a synthetic DENY with `matched_rule="deny:tenant:not_found"`.
 
 ### Examples
 
 ```bash
 # Local dev — localhost-only, dashboard on, a log line per policy reload.
-agentguard server --policy configs/default.yaml --dashboard --watch
+vanzik server --policy configs/default.yaml --dashboard --watch
 
 # After the one-line installer: the starter policy is found automatically.
-agentguard server --dashboard
+vanzik server --dashboard
 
 # Production behind a reverse proxy.
-agentguard server \
-  --policy /etc/agentguard/policy.yaml \
-  --audit-log /var/lib/agentguard/audit.jsonl \
-  --api-key "$AGENTGUARD_API_KEY" \
+vanzik server \
+  --policy /etc/vanzik/policy.yaml \
+  --audit-log /var/lib/vanzik/audit.jsonl \
+  --api-key "$VANZIK_API_KEY" \
   --base-url https://guardrails.example \
   --allowed-origin https://app.example \
   --tls-terminated-upstream \
@@ -201,12 +203,12 @@ agentguard server \
 
 # Multi-node (v1.0) — every replica points at the same PostgreSQL and
 # carries its own --node-id (here: the pod name).
-agentguard server \
-  --policy /etc/agentguard/policy.yaml \
-  --store-dsn "postgres://agentguard:$PGPASS@pg.internal:5432/agentguard" \
+vanzik server \
+  --policy /etc/vanzik/policy.yaml \
+  --store-dsn "postgres://vanzik:$PGPASS@pg.internal:5432/vanzik" \
   --node-id "$POD_NAME" \
   --reconcile-interval 2s \
-  --api-key "$AGENTGUARD_API_KEY"
+  --api-key "$VANZIK_API_KEY"
 ```
 
 ### Signals
@@ -215,9 +217,9 @@ agentguard server \
 
 ---
 
-## `agentguard validate`
+## `vanzik validate`
 
-Load a policy file and report rule count / scope count. Give the file as an argument (`agentguard validate policy.yaml`) or with `--policy`; with neither, it validates the file the server would load (see [Policy file](#policy-file)). Exits `1` on parse error, load-time validation failure (e.g., `..` in a filesystem path), or missing required fields (`version`, `name`).
+Load a policy file and report rule count / scope count. Give the file as an argument (`vanzik validate policy.yaml`) or with `--policy`; with neither, it validates the file the server would load (see [Policy file](#policy-file)). Exits `1` on parse error, load-time validation failure (e.g., `..` in a filesystem path), or missing required fields (`version`, `name`).
 
 Non-fatal warnings go to stderr as `WARN: …` lines and don't change the exit code unless you pass `--strict`: a scope that appears in more than one block (the blocks are merged), a scope name one or two edits away from a built-in one (`shel` → "did you mean `shell`?"), and a path pattern whose single `*` crosses `/`. See [POLICY_REFERENCE § Load-time validation](POLICY_REFERENCE.md#load-time-validation).
 
@@ -227,13 +229,13 @@ Non-fatal warnings go to stderr as `WARN: …` lines and don't change the exit c
 | `--strict` | `false` | **(v1.2)** Exit `1` if the policy loads with any warning. |
 
 ```bash
-agentguard validate configs/examples/trading-bot.yaml
+vanzik validate configs/examples/trading-bot.yaml
 # VALID: trading-bot-policy — 14 rules across 4 scopes
 
-agentguard validate /tmp/broken.yaml
+vanzik validate /tmp/broken.yaml
 # INVALID: yaml: unmarshal errors: line 4: cannot unmarshal !!int into string
 
-agentguard validate /tmp/typo.yaml --strict
+vanzik validate /tmp/typo.yaml --strict
 # WARN: policy: rules[1] scope "shel" is not a built-in scope — did you mean "shell"? …
 # INVALID (--strict): my-policy loads, but with 1 warning(s)
 ```
@@ -242,20 +244,20 @@ Use in CI:
 
 ```bash
 for f in configs/*.yaml configs/examples/*.yaml; do
-  agentguard validate --strict "$f" || exit 1
+  vanzik validate --strict "$f" || exit 1
 done
 ```
 
 ---
 
-## `agentguard check`
+## `vanzik check`
 
 Run a single policy check (or a batch from stdin) against a local policy file **without going through the HTTP server**. Useful in CI pipelines, pre-commit hooks, and one-shot scripts that want a deterministic verdict on a candidate action.
 
 ### Synopsis
 
 ```
-agentguard check [flags]
+vanzik check [flags]
 ```
 
 ### Input modes (mutually exclusive)
@@ -309,19 +311,19 @@ Severity precedence in batch mode is **error > deny > approval > allow**, regard
 
 ```bash
 # Per-field flag mode — the simplest form.
-agentguard check --policy configs/default.yaml \
+vanzik check --policy configs/default.yaml \
   --scope shell --command "rm -rf ./old_data" --agent-id my-bot
 
 # Single check via inline JSON request.
-agentguard check --policy configs/default.yaml \
+vanzik check --policy configs/default.yaml \
   --request '{"scope":"shell","command":"ls","agent_id":"my-bot"}'
 
 # Single check via stdin.
 echo '{"scope":"shell","command":"ls","agent_id":"my-bot"}' | \
-  agentguard check --policy configs/default.yaml --stdin
+  vanzik check --policy configs/default.yaml --stdin
 
 # Batch mode (JSONL via stdin).
-cat <<EOF | agentguard check --policy configs/default.yaml --batch
+cat <<EOF | vanzik check --policy configs/default.yaml --batch
 {"scope":"shell","command":"ls","agent_id":"bot1"}
 {"scope":"shell","command":"rm -rf /","agent_id":"bot1"}
 {"scope":"network","domain":"api.openai.com","agent_id":"bot1"}
@@ -330,10 +332,10 @@ EOF
 # Watch mode: follow a JSONL file and verdict requests as they are
 # appended (one policy load for the whole stream; Ctrl-C to stop and
 # get the aggregate exit code).
-agentguard check --policy configs/default.yaml --watch actions.jsonl
+vanzik check --policy configs/default.yaml --watch actions.jsonl
 
 # JSON output for downstream tooling.
-agentguard check --policy configs/default.yaml \
+vanzik check --policy configs/default.yaml \
   --request '{"scope":"shell","command":"ls"}' --output json
 # {"schema_version":"v1","decision":"DENY","reason":"...","matched_rule":"..."}
 ```
@@ -344,7 +346,7 @@ Fail the pipeline if any deploy command would be denied:
 
 ```bash
 # deploy_actions.jsonl contains one ActionRequest per line.
-if ! agentguard check --policy ci-policy.yaml --batch --output json \
+if ! vanzik check --policy ci-policy.yaml --batch --output json \
        < deploy_actions.jsonl > /tmp/check_out.jsonl; then
   echo "Policy violation in deploy plan; see /tmp/check_out.jsonl"
   exit 1
@@ -355,18 +357,18 @@ fi
 
 - Without `--watch`, the subcommand is **one-shot** — no policy hot-reload. Each invocation reloads the policy, so pipelines that re-invoke `check` per action pay the load cost each time; `--watch <jsonl-file>` streams requests through a single policy load instead.
 - The decoder rejects unknown JSON fields. A typo like `"actions":"read"` (instead of `"action":"read"`) returns exit `3`, so silent default-deny on a malformed request is impossible.
-- Cost-scope evaluations DO reserve session cost into the in-memory accumulator for the lifetime of the process, but the accumulator is discarded on exit. Two consecutive `agentguard check` calls do not see each other's reservations — that's a server feature, not a CLI feature.
+- Cost-scope evaluations DO reserve session cost into the in-memory accumulator for the lifetime of the process, but the accumulator is discarded on exit. Two consecutive `vanzik check` calls do not see each other's reservations — that's a server feature, not a CLI feature.
 
 ---
 
-## `agentguard test`
+## `vanzik test`
 
 Run a policy against test cases and report which pass. Each case is an action and the verdict the policy must give it. Use it in CI so a policy change that allows or blocks the wrong thing fails the build. No server needed.
 
 ### Synopsis
 
 ```
-agentguard test [flags] <fixture.yaml | folder>...
+vanzik test [flags] <fixture.yaml | folder>...
 ```
 
 Give fixture files, folders, or both. A folder is searched for `*_test.yaml` and `*_test.yml` files; its subfolders are not searched. A file holds one YAML document: a second one after `---` is a load error, not something to skip.
@@ -399,7 +401,7 @@ tests:
 | `tests[].name` | Required, and unique within the file. `--run` matches against it. |
 | `tests[].request` | The action, with the `/v1/check` request fields: `scope` (required), `action`, `command`, `path`, `domain`, `url`, `agent_id`, `session_id`, `est_cost`, `meta`. Give this or `hook` and `input`. |
 | `tests[].hook` | Instead of `request`: the coding agent whose tool call `input` is, one of `claude-code`, `cursor`, `gemini-cli`, `codex`. Needs `input`. |
-| `tests[].input` | The tool call as that agent sends it to [`agentguard hook`](CODING_AGENTS.md), written as YAML. It is read by the agent's own hook code, unchanged; Cursor's input needs its `hook_event_name`. When it becomes several checks (a Codex patch, one per file), the most severe verdict counts. See [POLICY_REFERENCE § Testing a coding agent's tool calls](POLICY_REFERENCE.md#testing-a-coding-agents-tool-calls). |
+| `tests[].input` | The tool call as that agent sends it to [`vanzik hook`](CODING_AGENTS.md), written as YAML. It is read by the agent's own hook code, unchanged; Cursor's input needs its `hook_event_name`. When it becomes several checks (a Codex patch, one per file), the most severe verdict counts. See [POLICY_REFERENCE § Testing a coding agent's tool calls](POLICY_REFERENCE.md#testing-a-coding-agents-tool-calls). |
 | `tests[].expect` | Required. `ALLOW`, `DENY` or `REQUIRE_APPROVAL`. |
 | `tests[].expect_rule` | Optional. The exact `matched_rule` the verdict must have, such as `allow:shell:ls *`. It is compared as written: the `*` there is part of the rule's name, not a wildcard, so a case can't pass on a different, broader rule. A default deny has no rule; check its reason instead. |
 | `tests[].expect_reason_contains` | Optional. Text the verdict's reason must contain. |
@@ -428,13 +430,13 @@ Unknown keys are an error at every level, so a misspelled `expect_rul:` fails th
 ### Examples
 
 ```bash
-agentguard test configs/tests
+vanzik test configs/tests
 # configs/tests/default_test.yaml (policy configs/default.yaml)
 #   PASS  plain ls is allowed
 #   ...
 # PASS: 115 case(s) passed
 
-agentguard test --run 'claude-code' configs/tests
+vanzik test --run 'claude-code' configs/tests
 
 # A failed case shows what was expected and what the policy said.
 #   FAIL  deploy once the tests ran
@@ -443,7 +445,7 @@ agentguard test --run 'claude-code' configs/tests
 #         reason: "No matching allow rule (default deny)"
 # FAIL: 1 of 2 case(s) failed
 
-agentguard test --output junit configs/tests > policy-tests.xml
+vanzik test --output junit configs/tests > policy-tests.xml
 ```
 
 ### Behavior notes
@@ -456,41 +458,41 @@ agentguard test --output junit configs/tests > policy-tests.xml
 
 ---
 
-## `agentguard approve <id>` / `agentguard deny <id>`
+## `vanzik approve <id>` / `vanzik deny <id>`
 
 POST to `/v1/approve/{id}` or `/v1/deny/{id}`. Used by humans or scripts to resolve `REQUIRE_APPROVAL` decisions.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--url <url>` | `$AGENTGUARD_URL`, else `http://localhost:8080` | Server URL. Must include the scheme (`http://` or `https://`). |
+| `--url <url>` | `$VANZIK_URL`, else `http://localhost:8080` | Server URL. Must include the scheme (`http://` or `https://`). |
 | `--guard-url <url>` | | Same as `--url` (the name the MCP gateway and LLM proxy use). |
-| `--api-key <key>` | `$AGENTGUARD_API_KEY` | Bearer token. Required if the server was started with `--api-key`. |
+| `--api-key <key>` | `$VANZIK_API_KEY` | Bearer token. Required if the server was started with `--api-key`. |
 
 ```bash
-agentguard approve ap_1a2b3c4d5e6f7890abcdef1234567890
+vanzik approve ap_1a2b3c4d5e6f7890abcdef1234567890
 # Approved ap_1a2b3c4d5e6f7890abcdef1234567890
 
-AGENTGUARD_API_KEY=$KEY agentguard deny ap_deadbeef… --url https://guardrails.example
+VANZIK_API_KEY=$KEY vanzik deny ap_deadbeef… --url https://guardrails.example
 # Denied ap_deadbeef…
 ```
 
-Exit `1` when the server can't be reached or answers with an error, each with a message that says what to do: `Cannot connect to AgentGuard at … (connection refused). Is 'agentguard server' running there?`, `the server requires an API key (HTTP 401)`, `no pending approval ap_… (…)`, `ap_… was already approved`. Exit `2` for a missing or extra argument. Approval IDs are `ap_<32hex>` as returned by `/v1/check`.
+Exit `1` when the server can't be reached or answers with an error, each with a message that says what to do: `Cannot connect to Vanzik at … (connection refused). Is 'vanzik server' running there?`, `the server requires an API key (HTTP 401)`, `no pending approval ap_… (…)`, `ap_… was already approved`. Exit `2` for a missing or extra argument. Approval IDs are `ap_<32hex>` as returned by `/v1/check`.
 
 ---
 
-## `agentguard status`
+## `vanzik status`
 
 Quick human-readable health + pending list. Hits `/health` (unauthenticated) then `/api/pending` (authenticated).
 
 | Flag | Default | Description |
 |---|---|---|
-| `--url <url>` | `$AGENTGUARD_URL`, else `http://localhost:8080` | Server URL. |
+| `--url <url>` | `$VANZIK_URL`, else `http://localhost:8080` | Server URL. |
 | `--guard-url <url>` | | Same as `--url`. |
-| `--api-key <key>` | `$AGENTGUARD_API_KEY` | Bearer token. |
+| `--api-key <key>` | `$VANZIK_API_KEY` | Bearer token. |
 
 ```bash
-agentguard status
-# AgentGuard server: OK (http://localhost:8080)
+vanzik status
+# Vanzik server: OK (http://localhost:8080)
 # Pending approvals: 2
 #   [ap_123…] scope=shell action="rm -rf ./old_data" agent=researcher-01
 #   [ap_456…] scope=cost  action=""                   agent=trading-bot
@@ -500,13 +502,13 @@ If the server is running without `--api-key`, pending approvals appear unauthent
 
 ---
 
-## `agentguard audit`
+## `vanzik audit`
 
 Query `/v1/audit` for recent decisions. All filters are optional and AND-combined.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--url <url>` | `$AGENTGUARD_URL`, else `http://localhost:8080` | Server URL. |
+| `--url <url>` | `$VANZIK_URL`, else `http://localhost:8080` | Server URL. |
 | `--guard-url <url>` | | Same as `--url`. |
 | `--agent <id>` | *(none)* | Filter by exact `agent_id`. |
 | `--decision <D>` | *(none)* | `ALLOW`, `DENY`, or `REQUIRE_APPROVAL`. |
@@ -520,11 +522,11 @@ Query `/v1/audit` for recent decisions. All filters are optional and AND-combine
 A server older than 1.4 ignores the parameters behind `--since`, `--until` and `--parent-session` and returns every entry. So when one of those flags is set, the CLI first asks the server whether it reads them (one `/v1/audit` request with a `since` that isn't a time: 1.4 answers `400`, older servers `200`), and exits 1 if it doesn't. Asking, rather than comparing version numbers, also works with dev builds.
 | `--limit <int>` | `50` | Max entries. Server clamps silently above configured ceiling (default 1000). |
 | `--order <desc\|asc>` | `desc` | **(v1.2)** `desc` shows the newest entries first; `asc`, the oldest (the order before v1.2, when `--limit` returned the first entries in the log rather than the latest). |
-| `--api-key <key>` | `$AGENTGUARD_API_KEY` | Bearer token. |
+| `--api-key <key>` | `$VANZIK_API_KEY` | Bearer token. |
 
 ```bash
-agentguard audit --session sess-42 --since 2h --order asc
-agentguard audit --decision DENY --scope shell --limit 20
+vanzik audit --session sess-42 --since 2h --order asc
+vanzik audit --decision DENY --scope shell --limit 20
 # Showing 20 audit entries:
 #
 #   2026-04-19T12:03:44Z  DENY                scope=shell         agent=researcher-01     rm -rf /
@@ -534,12 +536,12 @@ agentguard audit --decision DENY --scope shell --limit 20
 
 The CLI uses `/v1/audit?limit=N` directly — pagination (`?offset=`) is supported on the HTTP API but not exposed as a CLI flag yet; use `curl` for paginated exports, or page by time with `--since` and `--until`. To see sessions grouped, with their parent and child sessions, use the dashboard's Sessions view or [`GET /v1/sessions`](API.md#get-v1sessions--tenant-aware-mirror).
 
-## `agentguard audit verify`
+## `vanzik audit verify`
 
 **(v1.4)** Check a sealed audit log (`server --audit-seal`) for tampering. It reads files only, so the server does not need to run, and it works on a copy. It finds the live file, follows `_meta.rotated_from` back through the rotated archives (gzip or plain), and checks oldest to newest: each entry's hash, the `seq` and `prev_hash` links between entries, and the link between each file and the one before it.
 
 ```
-agentguard audit verify [--audit-log <path>] [--key-file <file> ...] [--anchor <seq>:<hash> ...] [--output text|json]
+vanzik audit verify [--audit-log <path>] [--key-file <file> ...] [--anchor <seq>:<hash> ...] [--output text|json]
 ```
 
 | Flag | Default | Description |
@@ -552,9 +554,9 @@ agentguard audit verify [--audit-log <path>] [--key-file <file> ...] [--anchor <
 The report lists the files, the sealed `seq` range, where the chain starts when older files were pruned, how many entries were written before sealing began (not protected), the first broken `file:line` and what broke (hash mismatch, seq gap, prev_hash mismatch, segment link broken, incomplete line), and each anchor: matches, does not match, missing (the log ends before it: entries were removed), or not checkable (its `seq` is in the pruned part).
 
 ```bash
-agentguard audit verify --audit-log /var/lib/agentguard/audit.jsonl \
-  --key-file /var/lib/agentguard/audit-seal.key --anchor 1200:3f9a…
-# Audit log: /var/lib/agentguard/audit.jsonl
+vanzik audit verify --audit-log /var/lib/vanzik/audit.jsonl \
+  --key-file /var/lib/vanzik/audit-seal.key --anchor 1200:3f9a…
+# Audit log: /var/lib/vanzik/audit.jsonl
 # Files:     3, oldest first
 #   audit.jsonl.20261012T080000Z.gz
 #   audit.jsonl.20261013T020000Z.gz
@@ -570,12 +572,12 @@ Exit status: `0` the chain is intact, `1` it is broken, no entry is sealed (`NOT
 
 ---
 
-## `agentguard report`
+## `vanzik report`
 
 **(v1.4)** Write a compliance evidence report for a period: decisions by decision, scope, transport, tenant and agent; the top deny and `require_approval` rules; the approvals on record; the agents and sessions seen; whether the audit log is sealed and intact; posture checks; and a mapping to SOC 2 criteria. It is supporting evidence for an audit, not a certification. What the report holds, its JSON shape and its limits: [`COMPLIANCE.md`](COMPLIANCE.md).
 
 ```
-agentguard report [--since <time>] [--until <time>]
+vanzik report [--since <time>] [--until <time>]
                   [--audit-log <path> [--key-file <file> ...] | --url <url> [--api-key <key>] [--tenant-id <id>]]
                   [--policy <file>] [--output md|json|html] [--out-file <file>]
 ```
@@ -586,8 +588,8 @@ agentguard report [--since <time>] [--until <time>]
 | `--until <time>` | now | End of the period, exclusive. |
 | `--audit-log <path>` | `audit.jsonl` | The live audit log. Its rotated archives (gzip or plain) are read too. |
 | `--key-file <file>` | *(none)* | HMAC seal key, passed to the audit verify check. Repeatable. |
-| `--url <url>` | *(none)* | Read the audit log from this server instead of the files. `--guard-url` is the same. `AGENTGUARD_URL` does not switch to server mode. |
-| `--api-key <key>` | `$AGENTGUARD_API_KEY`, then the key `setup` saved | Bearer token for `--url`. |
+| `--url <url>` | *(none)* | Read the audit log from this server instead of the files. `--guard-url` is the same. `VANZIK_URL` does not switch to server mode. |
+| `--api-key <key>` | `$VANZIK_API_KEY`, then the key `setup` saved | Bearer token for `--url`. |
 | `--tenant-id <id>` | `local` | Tenant to report on with `--url` (uses `/v1/t/<id>/audit`). |
 | `--policy <file>` | see below | Policy file named in the report with its SHA-256. |
 | `--output <md\|json\|html>` | `md` | Markdown, JSON (a stable shape) or one self-contained HTML page. |
@@ -600,9 +602,9 @@ Reading files (the default), the report runs the same check as `audit verify` an
 Without `--policy`, a report on files names the policy `server` would load ([Policy file](#policy-file)); with `--url`, only `--policy` names one.
 
 ```bash
-agentguard report --since 2026-09-01 --until 2026-10-01 \
-  --audit-log /var/lib/agentguard/audit.jsonl \
-  --key-file /var/lib/agentguard/audit-seal.key \
+vanzik report --since 2026-09-01 --until 2026-10-01 \
+  --audit-log /var/lib/vanzik/audit.jsonl \
+  --key-file /var/lib/vanzik/audit-seal.key \
   --output html --out-file september.html
 # Report written to september.html (audit entries in the period: 48211; audit log: intact).
 ```
@@ -611,14 +613,14 @@ Exit status: `0` the report was written, `1` it was written but the audit log fa
 
 ---
 
-## `agentguard tenant` (v0.6)
+## `vanzik tenant` (v0.6)
 
 Manage per-tenant policies in the durable store. Operates directly on the store database (the server need not be running — SQLite WAL permits a concurrent writer, and a running server picks up a new tenant on its next lookup). Requires persistence (the store); these commands open it directly.
 
 ```
-agentguard tenant put <tenant-id> --policy <file.yaml> [--store-dsn <dsn>] [--data-dir <dir>]
-agentguard tenant list                                 [--store-dsn <dsn>] [--data-dir <dir>]
-agentguard tenant rm  <tenant-id>                      [--store-dsn <dsn>] [--data-dir <dir>]
+vanzik tenant put <tenant-id> --policy <file.yaml> [--store-dsn <dsn>] [--data-dir <dir>]
+vanzik tenant list                                 [--store-dsn <dsn>] [--data-dir <dir>]
+vanzik tenant rm  <tenant-id>                      [--store-dsn <dsn>] [--data-dir <dir>]
 ```
 
 | Subcommand | Description |
@@ -627,12 +629,12 @@ agentguard tenant rm  <tenant-id>                      [--store-dsn <dsn>] [--da
 | `list` | List every registered tenant id (the `local` tenant is served from `--policy`, not the store, so it is not listed). |
 | `rm <id>` | Remove a tenant's policy. Reports whether a row existed. |
 
-`--store-dsn` / `--data-dir` resolve the database exactly like [`server`](#agentguard-server) (empty DSN ⇒ `<data-dir>/agentguard.db`).
+`--store-dsn` / `--data-dir` resolve the database exactly like [`server`](#vanzik-server) (empty DSN ⇒ `<data-dir>/vanzik.db`).
 
 ```bash
 # Register a tenant, then check it via its tenant-aware route.
-agentguard tenant put acme --policy acme-policy.yaml
-agentguard tenant list
+vanzik tenant put acme --policy acme-policy.yaml
+vanzik tenant list
 #   Registered tenants (1):
 #     acme
 curl -s -X POST localhost:8080/v1/t/acme/check \
@@ -645,14 +647,14 @@ curl -s -X POST localhost:8080/v1/t/acme/check \
 
 ---
 
-## `agentguard migrate`
+## `vanzik migrate`
 
 Run registered on-disk audit-schema migrations. Each migration has a `Detect()` step — it only runs if the on-disk format matches. See [`FILE_FORMATS.md`](FILE_FORMATS.md) for the schema history.
 
 | Flag | Default | Description |
 |---|---|---|
 | `--audit-log <path>` | `audit.jsonl` | Audit log to migrate in place. |
-| `--checkpoint <path>` | `<audit-log>.replay-checkpoint` | The replay checkpoint `agentguard server` reads at boot — `audit.CheckpointSuffix` appended to the audit log path, i.e. the very file the startup seeder writes. |
+| `--checkpoint <path>` | `<audit-log>.replay-checkpoint` | The replay checkpoint `vanzik server` reads at boot — `audit.CheckpointSuffix` appended to the audit log path, i.e. the very file the startup seeder writes. |
 | `--backup-dir <path>` | `<audit-dir>` | Where rollback copies are written. |
 | `--dry-run` | off | Log intended actions without writing. |
 | `--list` | off | Print registered migrations and exit. |
@@ -660,22 +662,32 @@ Run registered on-disk audit-schema migrations. Each migration has a `Detect()` 
 | `--reset-checkpoint` | off | Delete the replay checkpoint first (forces a full replay on the next server start). Prints `checkpoint removed (<path>)` when a file was deleted and `no checkpoint found at <path>` otherwise — it never reports success for a file that was not there. |
 
 ```bash
-agentguard migrate --list
-agentguard migrate --dry-run
-agentguard migrate --audit-log /var/lib/agentguard/audit.jsonl
+vanzik migrate --list
+vanzik migrate --dry-run
+vanzik migrate --audit-log /var/lib/vanzik/audit.jsonl
 ```
 
-Startup migrations run automatically inside `agentguard server` before the audit logger opens — the `migrate` subcommand is for operator-driven out-of-band runs.
+Startup migrations run automatically inside `vanzik server` before the audit logger opens — the `migrate` subcommand is for operator-driven out-of-band runs.
+
+### `vanzik migrate --from-agentguard`
+
+Moves this user's AgentGuard 1.x install to Vanzik. It takes no other flag. In order, it stops and removes AgentGuard's login service (and changes nothing if it can't), moves `~/.config/agentguard` and the data folder to Vanzik's by renaming them (files unchanged), leaves a link in the old config folder's place, updates `setup.json`'s paths, renames `agentguard.db` to `vanzik.db`, points the Claude Code, Cursor, Gemini CLI and Codex hook entries AgentGuard wrote at `vanzik` (keeping each old file as `.vanzik-backup`), and starts the server at login again. It ends with what is left to do. Run again, it finds nothing.
+
+The installers run it after installing, and `vanzik setup` before its menu. Run as root it changes nothing: it lists a system-wide install to move by hand. Exit codes: 0 migrated or nothing to migrate; 1 a step failed (the summary says which and what to do); 2 usage. See [`MIGRATION.md`](MIGRATION.md#v1x-to-v20).
+
+```bash
+vanzik migrate --from-agentguard
+```
 
 ---
 
-## `agentguard version`
+## `vanzik version`
 
-`agentguard --version` (or `-version`) is the same command since v1.2, matching the MCP gateway and LLM proxy flags.
+`vanzik --version` (or `-version`) is the same command since v1.2, matching the MCP gateway and LLM proxy flags.
 
 ```bash
-agentguard version
-# agentguard 1.4.0 (abc1234)
+vanzik version
+# vanzik 2.0.0 (abc1234)
 ```
 
 The version comes from the source; the part in parentheses identifies the build:
@@ -683,7 +695,7 @@ The version comes from the source; the part in parentheses identifies the build:
 | Built with | Shows |
 |---|---|
 | `make build` (`-ldflags "-X main.commit=…"`) | the git short hash, e.g. `abc1234` |
-| `go install …/cmd/agentguard@vX.Y.Z` or `@latest` | `module vX.Y.Z` (from Go build info) |
+| `go install …/cmd/vanzik@vX.Y.Z` or `@latest` | `module vX.Y.Z` (from Go build info) |
 | `go build` in a git checkout | the short VCS revision, with `-dirty` if the tree had local changes |
 | `make docker` (`--build-arg COMMIT=…`) | the git short hash |
 | any build with neither ldflags nor VCS information | `dev` |
@@ -693,20 +705,20 @@ The version comes from the source; the part in parentheses identifies the build:
 The interactive subcommands (`check`, `validate`, `approve`, `deny`, `status`, `audit`, `migrate`, `tenant`, `version`) kick off an async best-effort check against the GitHub Releases API at startup (800 ms wait budget, 1.5 s HTTP timeout). If a newer release exists, one line lands on stderr before subcommand output; otherwise silent.
 
 ```
-Notice: AgentGuard v1.3.0 is available (you have v1.2.0). Update: agentguard setup — what's new: https://github.com/Caua-ferraz/AgentGuard/releases/latest
+Notice: Vanzik v1.3.0 is available (you have v1.2.0). Update: vanzik setup — what's new: https://github.com/lictorate/vanzik/releases/latest
 ```
 
 The command it names depends on how this copy was installed:
 
 | Installed with | Update command in the notice |
 |---|---|
-| The one-line installer or a release archive | `agentguard setup` (choose Update); re-running the installer works too |
-| `go install …@vX.Y.Z` / `@latest` | `go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard@latest` |
-| The container image (it sets `AGENTGUARD_DISTRIBUTION=container`) | `docker pull ghcr.io/caua-ferraz/agentguard:latest`, then recreate the container |
+| The one-line installer or a release archive | `vanzik setup` (choose Update); re-running the installer works too |
+| `go install …@vX.Y.Z` / `@latest` | `go install lictorate.com/vanzik/v2/cmd/vanzik@latest` |
+| The container image (it sets `VANZIK_DISTRIBUTION=container`) | `docker pull ghcr.io/lictorate/vanzik:latest`, then recreate the container |
 
 Both replace the binaries and keep your policy, and say whether they updated or downgraded (with a warning). See [`SETUP.md`](SETUP.md#update).
 
-`server` never performs the check (nor does `serve`, the same command): the enforcement server opens no outbound connection the operator did not configure (see [`THREAT_MODEL.md`](THREAT_MODEL.md#outbound-connections)). The check is also skipped for development builds — a version string containing `dev`, or no `-ldflags` commit (`commit=dev`) *and* no tagged release version in the Go build info, as with `go build` on an untagged or modified checkout. `go install …@vX.Y.Z` and `@latest` builds record the release tag, so they do check. It is also skipped when `AGENTGUARD_NO_UPDATE_CHECK` is set to any value other than `0`, or when the HTTP request fails. It is not run for `agentguard help` or a mistyped command either. Never touches stdout, never affects exit codes. Only the `agentguard` binary has the check; the MCP gateway and LLM proxy never had one.
+`server` never performs the check (nor does `serve`, the same command): the enforcement server opens no outbound connection the operator did not configure (see [`THREAT_MODEL.md`](THREAT_MODEL.md#outbound-connections)). The check is also skipped for development builds — a version string containing `dev`, or no `-ldflags` commit (`commit=dev`) *and* no tagged release version in the Go build info, as with `go build` on an untagged or modified checkout. `go install …@vX.Y.Z` and `@latest` builds record the release tag, so they do check. It is also skipped when `VANZIK_NO_UPDATE_CHECK` is set to any value other than `0`, or when the HTTP request fails. It is not run for `vanzik help` or a mistyped command either. Never touches stdout, never affects exit codes. Only the `vanzik` binary has the check; the MCP gateway and LLM proxy never had one.
 
 ---
 
@@ -714,12 +726,12 @@ Both replace the binaries and keep your policy, and say whether they updated or 
 
 | Var | Consumed by | Default |
 |---|---|---|
-| `AGENTGUARD_API_KEY` | `server`, `approve`, `deny`, `status`, `audit`, `report --url` (when `--api-key` unset); the MCP gateway and LLM proxy; the SDKs | empty |
-| `AGENTGUARD_URL` | `approve`, `deny`, `status`, `audit` (when `--url` unset); the MCP gateway and LLM proxy (when `--guard-url` unset); the SDKs | `http://localhost:8080` (CLI, SDKs), `http://127.0.0.1:8080` (gateway, proxy) |
-| `AGENTGUARD_POLICY` | `server`, `validate`, `check`, `test` (when `--policy` unset) — see [Policy file](#policy-file) | unset |
-| `AGENTGUARD_NO_UPDATE_CHECK` | Every subcommand except `server` (which never checks) — disables the GitHub Releases startup check when set to any value other than `0` | unset |
+| `VANZIK_API_KEY` | `server`, `approve`, `deny`, `status`, `audit`, `report --url` (when `--api-key` unset); the MCP gateway and LLM proxy; the SDKs | empty |
+| `VANZIK_URL` | `approve`, `deny`, `status`, `audit` (when `--url` unset); the MCP gateway and LLM proxy (when `--guard-url` unset); the SDKs | `http://localhost:8080` (CLI, SDKs), `http://127.0.0.1:8080` (gateway, proxy) |
+| `VANZIK_POLICY` | `server`, `validate`, `check`, `test` (when `--policy` unset) — see [Policy file](#policy-file) | unset |
+| `VANZIK_NO_UPDATE_CHECK` | Every subcommand except `server` (which never checks) — disables the GitHub Releases startup check when set to any value other than `0` | unset |
 
-A flag always wins over its environment variable. When no key is given at all, `approve`, `deny`, `status`, `audit`, `report --url`, the MCP gateway and the LLM proxy use the key [`agentguard setup`](#agentguard-setup) saved (`~/.config/agentguard/api-key`, `%APPDATA%\agentguard\api-key`). The server never picks that file up by itself — a key changes which interfaces it listens on — only through `--api-key-file`.
+A flag always wins over its environment variable. The variables' AgentGuard 1.x names (`AGENTGUARD_*`) are never read: a command that would fall back to one that is set, with its `VANZIK_*` name unset, exits naming the new one (see [`MIGRATION.md`](MIGRATION.md#v1x-to-v20)). `vanzik hook` is the exception; it runs anyway and names the variable when it couldn't check a call. When no key is given at all, `approve`, `deny`, `status`, `audit`, `report --url`, the MCP gateway and the LLM proxy use the key [`vanzik setup`](#vanzik-setup) saved (`~/.config/vanzik/api-key`, `%APPDATA%\vanzik\api-key`). The server never picks that file up by itself — a key changes which interfaces it listens on — only through `--api-key-file`.
 
 ---
 
@@ -729,5 +741,5 @@ A flag always wins over its environment variable. When no key is given at all, `
 - [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) — reverse proxy, TLS, CORS, bind behavior.
 - [`docs/API.md`](API.md) — HTTP surface the CLI calls.
 - [`docs/POLICY_REFERENCE.md`](POLICY_REFERENCE.md) — what `validate` checks.
-- [`docs/MCP_GATEWAY.md`](MCP_GATEWAY.md) — flags and configuration for the `agentguard-mcp-gateway` binary.
-- [`docs/LLM_API_PROXY.md`](LLM_API_PROXY.md) — flags and configuration for the `agentguard-llm-proxy` binary.
+- [`docs/MCP_GATEWAY.md`](MCP_GATEWAY.md) — flags and configuration for the `vanzik-mcp-gateway` binary.
+- [`docs/LLM_API_PROXY.md`](LLM_API_PROXY.md) — flags and configuration for the `vanzik-llm-proxy` binary.

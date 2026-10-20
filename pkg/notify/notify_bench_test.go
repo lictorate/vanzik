@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // blockingNotifier never returns from Notify. Used by the queue-full
@@ -27,7 +27,7 @@ func (b *blockingNotifier) Notify(_ Event) error {
 // What we measure: the cost of the redaction pass + the per-notifier
 // non-blocking select that decides between enqueue and drop. This is
 // the steady-state hot path under overload — the system that protects
-// the rest of AgentGuard from a slow webhook stalling /v1/check.
+// the rest of Vanzik from a slow webhook stalling /v1/check.
 func BenchmarkDispatcher_Send_QueueFull(b *testing.B) {
 	hold := make(chan struct{})
 	bn := &blockingNotifier{hold: hold}

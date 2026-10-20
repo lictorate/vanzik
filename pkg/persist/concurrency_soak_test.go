@@ -19,7 +19,7 @@ package persist
 // cross-request-leak assertion in llmproxy's TestAT_Concurrency_NoCrossRequestLeak.
 //
 // Measurement mirrors the existing integration test's dual-signal approach:
-//   - ENFORCED guard: the server's own X-AgentGuard-Total-Ms (the
+//   - ENFORCED guard: the server's own X-Vanzik-Total-Ms (the
 //     network-EXCLUDED hot-path processing time), aggregated across every
 //     concurrent request -> p99 < 3ms. That header is the correct definition of
 //     "hot path" per CLAUDE.md (client byte in -> forwarded upstream and back);
@@ -33,7 +33,7 @@ package persist
 // Determinism / non-flakiness: correctness depends only on the p99 and
 // decision/error assertions, never on a wall-clock sleep. The load phase is
 // bounded by a deadline (a stop condition, not a correctness sleep) so the
-// default run stays ~2s and gates cheaply in CI; set AGENTGUARD_SOAK=1 for an
+// default run stays ~2s and gates cheaply in CI; set VANZIK_SOAK=1 for an
 // extended soak. Worker count scales with GOMAXPROCS and is clamped to [16,64]
 // so oversubscription stays modest (real lock contention, bounded scheduling
 // tail) even under `go test -race`.
@@ -56,11 +56,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/notify"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
-	"github.com/Caua-ferraz/AgentGuard/pkg/proxy"
-	"github.com/Caua-ferraz/AgentGuard/pkg/store"
+	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/notify"
+	"lictorate.com/vanzik/v2/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/proxy"
+	"lictorate.com/vanzik/v2/pkg/store"
 )
 
 // soakPolicy mirrors itPolicy but lifts the rate-limit ceiling so a multi-second
@@ -149,12 +149,12 @@ func (s *shardedFileLogger) Close() error {
 }
 
 // newSoakServer builds the same store + Syncer + buffered-async-audit wiring as
-// newITServer (persistence + reconcile armed, mirroring cmd/agentguard), but
+// newITServer (persistence + reconcile armed, mirroring cmd/vanzik), but
 // with soakPolicy so a sustained-load run stays decision-deterministic. It
 // returns the shared *itServer so the existing close() teardown is reused.
 //
 // Audit backend — why this soak uses the DEFAULT file backend, not the
-// store/SQLite one newITServer uses: v0.9 moved the X-AgentGuard-Total-Ms
+// store/SQLite one newITServer uses: v0.9 moved the X-Vanzik-Total-Ms
 // measurement to AFTER the audit enqueue, so the hot path now includes
 // BufferedAsyncLogger.Log. That enqueue is microseconds ONLY while the async
 // drain keeps up. If the queue saturates, Log's documented durability fallback
@@ -228,7 +228,7 @@ func newSoakServer(t *testing.T, st store.Store, overflowDir string) *itServer {
 func TestIntegration_ConcurrentHotPathLatencyWithPersistence(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	st, err := store.NewSQLiteStore(filepath.Join(dir, "agentguard.db"))
+	st, err := store.NewSQLiteStore(filepath.Join(dir, "vanzik.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestIntegration_ConcurrentHotPathLatencyWithPersistence(t *testing.T) {
 	}
 
 	loadDur := 2 * time.Second
-	if os.Getenv("AGENTGUARD_SOAK") == "1" {
+	if os.Getenv("VANZIK_SOAK") == "1" {
 		loadDur = 15 * time.Second
 	}
 
@@ -319,9 +319,9 @@ func TestIntegration_ConcurrentHotPathLatencyWithPersistence(t *testing.T) {
 		if res.Decision != want {
 			return 0, fmt.Sprintf("wrong decision for %q: got %s want %s", cmd, res.Decision, want)
 		}
-		ms, err := strconv.ParseFloat(resp.Header.Get("X-AgentGuard-Total-Ms"), 64)
+		ms, err := strconv.ParseFloat(resp.Header.Get("X-Vanzik-Total-Ms"), 64)
 		if err != nil {
-			return 0, "bad X-AgentGuard-Total-Ms header: " + resp.Header.Get("X-AgentGuard-Total-Ms")
+			return 0, "bad X-Vanzik-Total-Ms header: " + resp.Header.Get("X-Vanzik-Total-Ms")
 		}
 		return ms, ""
 	}
@@ -389,7 +389,7 @@ func TestIntegration_ConcurrentHotPathLatencyWithPersistence(t *testing.T) {
 		t.Fatalf("collected only %d successful samples under load (want >=2000 for a meaningful p99); machine may be stalled", len(all))
 	}
 
-	// Honesty guard for the p99 measured below. Since v0.9, X-AgentGuard-Total-Ms
+	// Honesty guard for the p99 measured below. Since v0.9, X-Vanzik-Total-Ms
 	// is captured AFTER the audit enqueue, so a fast reading is only valid if the
 	// async drain kept up at steady state. If the queue had saturated, Buffered-
 	// AsyncLogger.Log would have spilled each entry to the disk-overflow file
@@ -408,17 +408,17 @@ func TestIntegration_ConcurrentHotPathLatencyWithPersistence(t *testing.T) {
 	// backend deficit (observed 2026-07-17: 32 spills in-suite on a loaded
 	// 16-thread box; 0 spills isolated at higher throughput on the same box).
 	// The BLOCKING run is CI's isolated latency-gate job
-	// (AGENTGUARD_SOAK_P99_GATE=1), where a spill is attributable to the audit
+	// (VANZIK_SOAK_P99_GATE=1), where a spill is attributable to the audit
 	// pipeline and nothing else.
 	dropped := s.buflog.DroppedToOverflow()
 	t.Logf("audit steady-state drain: DroppedToOverflow=%d (0 == the async pipeline kept up, so the p99 below is the true async enqueue, not the disk-overflow fallback)", dropped)
 	if dropped != 0 {
 		msg := fmt.Sprintf("audit overflow-spilled %d entries during the %d-worker soak — the measured hot-path p99 would reflect the disk-overflow durability fallback, not the true async enqueue; the audit drain must keep up at steady state (provision a faster backend / more drain workers), not spill",
 			dropped, workers)
-		if os.Getenv("AGENTGUARD_SOAK_P99_GATE") == "1" {
+		if os.Getenv("VANZIK_SOAK_P99_GATE") == "1" {
 			t.Error(msg)
 		} else {
-			t.Logf("ADVISORY (in-suite run; co-scheduling can starve the drain goroutines — the blocking, isolated check is CI's latency-gate job with AGENTGUARD_SOAK_P99_GATE=1): %s", msg)
+			t.Logf("ADVISORY (in-suite run; co-scheduling can starve the drain goroutines — the blocking, isolated check is CI's latency-gate job with VANZIK_SOAK_P99_GATE=1): %s", msg)
 		}
 	}
 
@@ -432,7 +432,7 @@ func TestIntegration_ConcurrentHotPathLatencyWithPersistence(t *testing.T) {
 	// coarse clocks because it is an aggregate, not a per-op reading.
 	meanPerOpUs := elapsed.Seconds() * float64(workers) / float64(len(all)) * 1e6
 
-	t.Logf("concurrent /v1/check hot-path (X-AgentGuard-Total-Ms, network-EXCLUDED) under %d workers x %s: p50=%.3fms p99=%.3fms max=%.3fms (samples=%d, failures=%d)",
+	t.Logf("concurrent /v1/check hot-path (X-Vanzik-Total-Ms, network-EXCLUDED) under %d workers x %s: p50=%.3fms p99=%.3fms max=%.3fms (samples=%d, failures=%d)",
 		workers, elapsed.Round(time.Millisecond), p50, p99, max, len(all), totalFailures)
 	t.Logf("aggregate client-observed (network-INCLUDED): throughput=%.0f req/s, mean per-op=%.1fµs",
 		throughput, meanPerOpUs)
@@ -448,14 +448,14 @@ func TestIntegration_ConcurrentHotPathLatencyWithPersistence(t *testing.T) {
 	// path (the failures==0 assert above always enforces; the
 	// DroppedToOverflow==0 drain guard is env-gated the same way as this
 	// p99, see above). The BLOCKING run is the isolated one: CI's
-	// latency-gate job sets AGENTGUARD_SOAK_P99_GATE=1 and runs this test
+	// latency-gate job sets VANZIK_SOAK_P99_GATE=1 and runs this test
 	// alone, where the p99 is attributable to the hot path and nothing else.
 	if p99 >= 3.0 {
 		msg := fmt.Sprintf("concurrent hot-path p99 = %.3fms violates the <3ms budget under %d-worker sustained load with persistence on", p99, workers)
-		if os.Getenv("AGENTGUARD_SOAK_P99_GATE") == "1" {
+		if os.Getenv("VANZIK_SOAK_P99_GATE") == "1" {
 			t.Error(msg)
 		} else {
-			t.Logf("ADVISORY (in-suite run; co-scheduling noise included — the blocking, isolated check is CI's latency-gate job with AGENTGUARD_SOAK_P99_GATE=1): %s", msg)
+			t.Logf("ADVISORY (in-suite run; co-scheduling noise included — the blocking, isolated check is CI's latency-gate job with VANZIK_SOAK_P99_GATE=1): %s", msg)
 		}
 	}
 }

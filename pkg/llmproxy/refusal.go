@@ -12,7 +12,7 @@ package llmproxy
 //     cross-reference the audit JSONL by approval id.
 //   - On REQUIRE_APPROVAL, embeds BOTH the approval URL the human
 //     visits AND the approval_id with a hint to round-trip it through
-//     `_meta.dev.agentguard/approval_id` on retry. Closes the
+//     `_meta.dev.vanzik/approval_id` on retry. Closes the
 //     "approve once, model proceeds" loop with the central-server
 //     approval_id round-trip.
 //   - Provider-specific shape:
@@ -95,7 +95,7 @@ func buildRefusalMessage(d Decision) string {
 	}
 
 	var b strings.Builder
-	b.WriteString("AgentGuard ")
+	b.WriteString("Vanzik ")
 
 	if d.RequiresApproval || d.ApprovalURL != "" || d.ApprovalID != "" {
 		b.WriteString("paused this action pending human approval.")
@@ -112,7 +112,7 @@ func buildRefusalMessage(d Decision) string {
 		if d.ApprovalID != "" {
 			b.WriteString("\nApproval ID: ")
 			b.WriteString(d.ApprovalID)
-			b.WriteString(" (preserve in _meta.dev.agentguard/approval_id on retry to resume after approval)")
+			b.WriteString(" (preserve in _meta.dev.vanzik/approval_id on retry to resume after approval)")
 		}
 		b.WriteString("\n\nWait for human approval, then retry the same call.")
 		return b.String()
@@ -120,7 +120,7 @@ func buildRefusalMessage(d Decision) string {
 
 	b.WriteString("denied this action.")
 	b.WriteString("\n\nReason: ")
-	b.WriteString(refusalReasonOrDefault(d, "tool call denied by AgentGuard policy"))
+	b.WriteString(refusalReasonOrDefault(d, "tool call denied by Vanzik policy"))
 	if d.Rule != "" {
 		b.WriteString("\nRule: ")
 		b.WriteString(d.Rule)
@@ -133,7 +133,7 @@ func buildRefusalMessage(d Decision) string {
 // recovery is mechanical.
 func buildOverflowMessage(d Decision) string {
 	var b strings.Builder
-	b.WriteString("AgentGuard refused this tool call: its accumulated arguments exceeded the gating buffer cap.")
+	b.WriteString("Vanzik refused this tool call: its accumulated arguments exceeded the gating buffer cap.")
 	b.WriteString("\n\nReason: ")
 	b.WriteString(refusalReasonOrDefault(d, "tool call arguments exceed gating buffer"))
 	b.WriteString("\nRule: ")
@@ -167,7 +167,7 @@ func refusalReasonOrDefault(d Decision, fallback string) string {
 func buildOpenAIRefusalSSE(message string) []byte {
 	payload := map[string]interface{}{
 		// Synthetic id; SDKs accept any non-empty string.
-		"id":      "agentguard-refusal",
+		"id":      "vanzik-refusal",
 		"object":  "chat.completion.chunk",
 		"created": 0,
 		"choices": []map[string]interface{}{
@@ -185,7 +185,7 @@ func buildOpenAIRefusalSSE(message string) []byte {
 	if err != nil {
 		// Marshal of a known-shape map cannot fail in practice; the
 		// fallback keeps the stream well-formed if it ever does.
-		fallback, _ := json.Marshal(map[string]string{"error": "agentguard refusal marshal failed"})
+		fallback, _ := json.Marshal(map[string]string{"error": "vanzik refusal marshal failed"})
 		return []byte("data: " + string(fallback) + "\n\ndata: [DONE]\n\n")
 	}
 	return []byte("data: " + string(b) + "\n\ndata: [DONE]\n\n")
@@ -202,14 +202,14 @@ func buildOpenAIRefusalSSE(message string) []byte {
 // completes the conversation cleanly.
 //
 // model is the original request's model name when available; empty
-// falls back to "agentguard-refusal" so the response is still a valid
+// falls back to "vanzik-refusal" so the response is still a valid
 // JSON object the SDK can decode without errors on the model field.
 func buildOpenAIRefusalNonStreaming(message, model string) []byte {
 	if model == "" {
-		model = "agentguard-refusal"
+		model = "vanzik-refusal"
 	}
 	payload := map[string]interface{}{
-		"id":      "agentguard-refusal",
+		"id":      "vanzik-refusal",
 		"object":  "chat.completion",
 		"created": time.Now().Unix(),
 		"model":   model,
@@ -234,7 +234,7 @@ func buildOpenAIRefusalNonStreaming(message, model string) []byte {
 		// Marshal of a known-shape map cannot fail in practice; the
 		// fallback keeps the response decodable as a minimal JSON
 		// object.
-		return []byte(`{"id":"agentguard-refusal","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"AgentGuard refusal"},"finish_reason":"stop"}]}`)
+		return []byte(`{"id":"vanzik-refusal","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"Vanzik refusal"},"finish_reason":"stop"}]}`)
 	}
 	return b
 }
@@ -247,10 +247,10 @@ func buildOpenAIRefusalNonStreaming(message, model string) []byte {
 // "end_turn" so the SDK does not expect a tool result to follow.
 func buildAnthropicRefusalNonStreaming(message, model string) []byte {
 	if model == "" {
-		model = "agentguard-refusal"
+		model = "vanzik-refusal"
 	}
 	payload := map[string]interface{}{
-		"id":    "agentguard-refusal",
+		"id":    "vanzik-refusal",
 		"type":  "message",
 		"role":  "assistant",
 		"model": model,
@@ -268,7 +268,7 @@ func buildAnthropicRefusalNonStreaming(message, model string) []byte {
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {
-		return []byte(`{"id":"agentguard-refusal","type":"message","role":"assistant","content":[{"type":"text","text":"AgentGuard refusal"}],"stop_reason":"end_turn"}`)
+		return []byte(`{"id":"vanzik-refusal","type":"message","role":"assistant","content":[{"type":"text","text":"Vanzik refusal"}],"stop_reason":"end_turn"}`)
 	}
 	return b
 }
@@ -294,7 +294,7 @@ func buildAnthropicRefusalSSE(message string, toolUseIndex int) []byte {
 		body, err := json.Marshal(payload)
 		if err != nil {
 			// Defensive fallback (see buildOpenAIRefusalSSE rationale).
-			body = []byte(`{"error":"agentguard refusal marshal failed"}`)
+			body = []byte(`{"error":"vanzik refusal marshal failed"}`)
 		}
 		fmt.Fprintf(&buf, "event: %s\ndata: %s\n\n", eventName, string(body))
 	}

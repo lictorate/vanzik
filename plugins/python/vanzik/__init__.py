@@ -1,0 +1,95 @@
+"""
+Vanzik Python SDK
+
+Lightweight client for checking actions against Vanzik policies.
+
+Usage:
+    from vanzik import Guard
+
+    guard = Guard("http://localhost:8080")
+    result = guard.check("shell", command="rm -rf ./data")
+
+    if result.allowed:
+        execute(command)
+    elif result.needs_approval:
+        print(f"Approve at: {result.approval_url}")
+    else:
+        print(f"Blocked: {result.reason}")
+
+Layout: the :class:`Guard` client, :class:`CheckResult`, exceptions and
+constants live in :mod:`vanzik.core`; the ``@guarded`` decorator in
+:mod:`vanzik.decorators`; framework integrations in
+:mod:`vanzik.adapters`. Everything public is re-exported here —
+import from the package root.
+"""
+
+# The SDK's release version; scripts/bump-version.sh keeps it in step with
+# pyproject.toml.
+__version__ = "2.0.0"
+
+# Back-compat module aliases. The pre-split __init__ imported these
+# stdlib modules directly, which made e.g. ``vanzik.request`` and
+# ``vanzik.time`` valid mock.patch targets ("vanzik.request.
+# urlopen", "vanzik.time.sleep", ...). Patching through these names
+# mutates the shared stdlib module, so it intercepts vanzik.core's
+# calls exactly as it did before the split. Do not remove without a
+# deprecation cycle.
+import functools  # noqa: F401
+import json  # noqa: F401
+import logging  # noqa: F401
+import os  # noqa: F401
+import random  # noqa: F401
+import time  # noqa: F401
+from urllib import request, error  # noqa: F401
+from urllib.parse import quote as urlquote  # noqa: F401
+
+from vanzik.core import (
+    DEFAULT_BASE_URL,
+    DEFAULT_TIMEOUT,
+    DEFAULT_APPROVAL_TIMEOUT,
+    DEFAULT_POLL_INTERVAL,
+    DECISION_ALLOW,
+    DECISION_DENY,
+    DECISION_REQUIRE_APPROVAL,
+    ENDPOINT_CHECK,
+    ENDPOINT_APPROVE,
+    ENDPOINT_DENY,
+    ENDPOINT_STATUS,
+    LOCAL_TENANT_ID,
+    FAIL_MODE_DENY,
+    FAIL_MODE_ALLOW,
+    VanzikError,
+    VanzikDenied,
+    VanzikApprovalRequired,
+    VanzikApprovalTimeout,
+    VanzikAuthError,
+    VanzikTimeoutError,
+    CheckResult,
+    Guard,
+    log,
+)
+from vanzik.decorators import guarded
+
+
+# Public API surface. Everything else is internal.
+__all__ = [
+    "__version__",
+    "Guard",
+    "CheckResult",
+    "guarded",
+    "VanzikError",
+    "VanzikDenied",
+    "VanzikApprovalRequired",
+    "VanzikApprovalTimeout",
+    "VanzikAuthError",
+    "DEFAULT_BASE_URL",
+    "DEFAULT_TIMEOUT",
+    "DEFAULT_APPROVAL_TIMEOUT",
+    "DEFAULT_POLL_INTERVAL",
+    "DECISION_ALLOW",
+    "DECISION_DENY",
+    "DECISION_REQUIRE_APPROVAL",
+    "LOCAL_TENANT_ID",
+    "FAIL_MODE_DENY",
+    "FAIL_MODE_ALLOW",
+]

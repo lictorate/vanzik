@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 func indexEntry(i int, session, parent string) audit.Entry {
@@ -26,7 +26,7 @@ func indexEntry(i int, session, parent string) audit.Entry {
 // Every audit and session query works before the v1.4 indexes exist, and
 // Migrate builds them on a table that already holds rows, saying so.
 func TestSQLiteStore_AuditIndexesBuiltAfterRowsExist(t *testing.T) {
-	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "agentguard.db"))
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "vanzik.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

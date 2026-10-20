@@ -8,7 +8,7 @@ import (
 // --upstream-http and --upstream-header: what parses, what is refused, and
 // that a refusal never echoes a header value (it may be a token).
 func TestParseConfig_HTTPUpstreams(t *testing.T) {
-	t.Setenv("AGENTGUARD_URL", "")
+	t.Setenv("VANZIK_URL", "")
 	t.Setenv("MCPGW_TEST_TOKEN", "s3cret-token")
 	t.Setenv("MCPGW_TEST_CTRL", "s3cret-token\x7f")
 	base := []string{"--policy-mode", "fast"}

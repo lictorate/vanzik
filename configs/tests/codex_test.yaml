@@ -3,9 +3,9 @@
 # coding-agents.yaml: the starter policy with every agent's block. Run them
 # with:
 #
-#   agentguard test configs/tests
+#   vanzik test configs/tests
 #
-# Each case is a tool call as Codex CLI sends it to `agentguard hook codex`
+# Each case is a tool call as Codex CLI sends it to `vanzik hook codex`
 # (its PreToolUse input). A patch is checked once for every file it
 # touches, and the most severe verdict counts. See
 # docs/POLICY_REFERENCE.md § Testing policies.
