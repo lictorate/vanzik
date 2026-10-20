@@ -194,7 +194,10 @@ if ($newer) {
     $env:VANZIK_PURGE = '1'
     $m = Install-Vanzik
     Remove-Item Env:VANZIK_PURGE -ErrorAction SilentlyContinue
-    if ($m.Code -ne 0 -and $m.Out -match 'only applies together with VANZIK_UNINSTALL') { Pass 'purge on its own is refused' } else { Write-Host $m.Out; Fail 'purge on its own was not refused' }
+    # pwsh 7 renders the refusal as a coloured error wrapped to the console
+    # width, which can split the phrase across lines; match it unwrapped.
+    $plain = ($m.Out -replace "\e\[[0-9;]*m", '') -replace '\s+', ' '
+    if ($m.Code -ne 0 -and $plain -match 'only applies together with VANZIK_UNINSTALL') { Pass 'purge on its own is refused' } else { Write-Host $m.Out; Fail 'purge on its own was not refused' }
 }
 
 # 9. Over an AgentGuard 1.x install (this project's name before 2.0), the
