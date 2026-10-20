@@ -20,7 +20,7 @@ import (
 	"testing/quick"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // noopNotifier accepts events without doing any I/O, but records that it

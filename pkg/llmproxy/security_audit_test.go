@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/metrics"
 )
 
 // H1: an Anthropic stream that opens a SECOND tool_use content block before
@@ -84,7 +84,7 @@ func TestAudit_H1_AnthropicInterleavedToolUse_DoesNotBypassGate(t *testing.T) {
 		t.Errorf("H1 BYPASS: denied bash arguments leaked to client: %q", gotStr)
 	}
 	// The stream must have been refused (fail-closed).
-	if !strings.Contains(gotStr, "AgentGuard denied") {
+	if !strings.Contains(gotStr, "Vanzik denied") {
 		t.Errorf("expected a synthetic refusal in the response; got %q", gotStr)
 	}
 	if after := metrics.LLMProxyProtocolViolationFor("anthropic"); after != before+1 {
@@ -151,7 +151,7 @@ func TestAudit_H2_AnthropicStartInputGated(t *testing.T) {
 	if strings.Contains(gotStr, "toolu_x") {
 		t.Errorf("H2 BYPASS: denied tool_use reached client: %q", gotStr)
 	}
-	if !strings.Contains(gotStr, "AgentGuard denied") {
+	if !strings.Contains(gotStr, "Vanzik denied") {
 		t.Errorf("expected refusal; got %q", gotStr)
 	}
 }
@@ -240,7 +240,7 @@ func TestAudit_H3_DuplicateKeyArguments_Refused(t *testing.T) {
 	if strings.Contains(gotStr, "call_dup") {
 		t.Errorf("H3 BYPASS: duplicate-key tool_call reached client: %q", gotStr)
 	}
-	if !strings.Contains(gotStr, "AgentGuard denied") {
+	if !strings.Contains(gotStr, "Vanzik denied") {
 		t.Errorf("expected duplicate-key refusal; got %q", gotStr)
 	}
 	if hookCalled {

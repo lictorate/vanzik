@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/audit"
 )
 
 func TestHandleAuditHead(t *testing.T) {

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/migrate"
+	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/migrate"
 )
 
 // legacyContent is a minimal pair of v0.4.0-style audit records — headerless

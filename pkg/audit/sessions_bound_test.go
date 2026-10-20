@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // manySessions is one entry per session for n sessions, plus a session

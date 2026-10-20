@@ -7,11 +7,11 @@ package mcpgw_test
 // stub at testdata/stub_server and hand-code read_file semantics — the
 // substitution exercises the SAME bridge code path; the filesystem-
 // server-specific behaviour (real read of /etc/passwd) is irrelevant
-// for verifying the AgentGuard DENY before the call.
+// for verifying the Vanzik DENY before the call.
 //
 // What this test exercises end-to-end:
 //
-//   1. A real central AgentGuard server (pkg/proxy.NewServer) backed
+//   1. A real central Vanzik server (pkg/proxy.NewServer) backed
 //      by an on-disk audit log and a real Engine.
 //   2. A real MCP gateway (pkg/mcpgw.Bridge) wired against the central
 //      server via mcpgw.HTTPPolicyClient (A18's gate).
@@ -35,11 +35,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/mcpgw"
-	"github.com/Caua-ferraz/AgentGuard/pkg/notify"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
-	"github.com/Caua-ferraz/AgentGuard/pkg/proxy"
+	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/mcpgw"
+	"lictorate.com/vanzik/v2/pkg/notify"
+	"lictorate.com/vanzik/v2/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/proxy"
 )
 
 // startCentralServer boots a real pkg/proxy.Server with the supplied

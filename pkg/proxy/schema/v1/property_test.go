@@ -19,7 +19,7 @@ import (
 	"testing"
 	"testing/quick"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // scopes / decisions that are valid in v1. The property generator

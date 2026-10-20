@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/internal/gateclient"
+	"lictorate.com/vanzik/v2/pkg/internal/gateclient"
 )
 
 // newTestServer builds a Server pointed at the given upstream test
@@ -368,8 +368,8 @@ func TestServer_UserAgentRewritten(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	if !strings.Contains(gotUA, "agentguard-llm-proxy/1.0.0-test") {
-		t.Errorf("UA = %q, want contains agentguard-llm-proxy/1.0.0-test", gotUA)
+	if !strings.Contains(gotUA, "vanzik-llm-proxy/1.0.0-test") {
+		t.Errorf("UA = %q, want contains vanzik-llm-proxy/1.0.0-test", gotUA)
 	}
 	if !strings.Contains(gotUA, "openai-python/1.2.3") {
 		t.Errorf("UA = %q, want preserves original openai-python suffix", gotUA)

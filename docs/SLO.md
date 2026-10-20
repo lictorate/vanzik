@@ -1,4 +1,4 @@
-# Service Level Objectives — AgentGuard v1.0
+# Service Level Objectives — Vanzik v1.0
 
 **Status:** baseline established (captured on v0.5.0; still the recorded
 floor). Targets below are operational expectations for a single-replica
@@ -19,7 +19,7 @@ queries, dashboard, SSE) is best-effort and **not** part of this SLO.
 
 The targets below assume:
 
-- **Single-replica** AgentGuard process on commodity hardware (modern x86
+- **Single-replica** Vanzik process on commodity hardware (modern x86
   laptop / small cloud VM, ≥4 cores, ≥8 GiB RAM, local SSD).
 - **In-process file-backed audit logger** (`audit.FileLogger` writing to
   local SSD). Network-attached storage will degrade the audit-write tail.
@@ -134,15 +134,15 @@ plus the HTTP-path persistence-on check
 (`TestIntegration_HotPathLatencyWithPersistence`). What remains for full
 SLO validation:
 
-1. A `vegeta`/`hey` harness against `agentguard server` running with
+1. A `vegeta`/`hey` harness against `vanzik server` running with
    `--policy configs/default.yaml` and a tmpfs-backed audit log,
    driving 1 kRPS sustained for 5 minutes. **Still not automated** as
    of v1.0 (the in-suite concurrent soak — `pkg/persist`, 32 workers,
    ~11 kRPS locally — is the closest current proxy for it).
 2. Latency histograms exported via `/metrics`
-   (`agentguard_request_duration_ms`,
-   `agentguard_policy_eval_duration_ms`,
-   `agentguard_audit_write_duration_ms`).
+   (`vanzik_request_duration_ms`,
+   `vanzik_policy_eval_duration_ms`,
+   `vanzik_audit_write_duration_ms`).
 3. p99 reported by Prometheus' `histogram_quantile(0.99, …)` over a
    30-second window.
 

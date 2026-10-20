@@ -1,6 +1,6 @@
 # Claude Code
 
-AgentGuard checks Claude Code's tool calls against your policy with a Claude Code hook, `agentguard hook claude-code`. Connect it with `agentguard setup` → **Connect Claude Code**.
+Vanzik checks Claude Code's tool calls against your policy with a Claude Code hook, `vanzik hook claude-code`. Connect it with `vanzik setup` → **Connect Claude Code**.
 
 The guide for Claude Code, Cursor, Gemini CLI and Codex CLI is now one page: [`CODING_AGENTS.md`](CODING_AGENTS.md).
 

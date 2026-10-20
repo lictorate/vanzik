@@ -1,5 +1,5 @@
 /**
- * Tests for the v0.5+ tenantId option on the AgentGuard TypeScript SDK.
+ * Tests for the v0.5+ tenantId option on the Vanzik TypeScript SDK.
  *
  * Mirrors plugins/python/tests/test_tenant_routing.py: the SDK accepts
  * an optional `tenantId` constructor field that controls whether HTTP
@@ -10,7 +10,7 @@
  * here we only verify the URL builder via a `globalThis.fetch` mock.
  */
 
-import { AgentGuard, LOCAL_TENANT_ID } from "../index";
+import { Vanzik, LOCAL_TENANT_ID } from "../index";
 
 type FetchArgs = [string | URL, RequestInit?];
 type FetchMock = jest.Mock<Promise<Response>, FetchArgs>;
@@ -31,22 +31,22 @@ function jsonResponse(body: unknown, init: ResponseInit = { status: 200 }): Resp
 const ORIGINAL_ENV = { ...process.env };
 
 beforeEach(() => {
-  // Wipe AgentGuard-controlled env vars before every test so one test's
+  // Wipe Vanzik-controlled env vars before every test so one test's
   // setting cannot leak into another.
-  delete process.env.AGENTGUARD_URL;
-  delete process.env.AGENTGUARD_API_KEY;
-  delete process.env.AGENTGUARD_TENANT_ID;
+  delete process.env.VANZIK_URL;
+  delete process.env.VANZIK_API_KEY;
+  delete process.env.VANZIK_TENANT_ID;
 });
 
 afterAll(() => {
   process.env = ORIGINAL_ENV;
 });
 
-describe("AgentGuard tenantId — URL builder", () => {
+describe("Vanzik tenantId — URL builder", () => {
   test("legacy URL when no tenantId", async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(jsonResponse({ decision: "ALLOW", reason: "ok" }));
-    const guard = new AgentGuard({ baseUrl: "http://example.test:8080" });
+    const guard = new Vanzik({ baseUrl: "http://example.test:8080" });
     await guard.check("shell", { command: "ls" });
     expect(String(fetchMock.mock.calls[0][0])).toBe(
       "http://example.test:8080/v1/check"
@@ -56,7 +56,7 @@ describe("AgentGuard tenantId — URL builder", () => {
   test("tenantId=\"local\" is an alias for the legacy URL family", async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(jsonResponse({ decision: "ALLOW", reason: "ok" }));
-    const guard = new AgentGuard({
+    const guard = new Vanzik({
       baseUrl: "http://example.test:8080",
       tenantId: LOCAL_TENANT_ID,
     });
@@ -69,7 +69,7 @@ describe("AgentGuard tenantId — URL builder", () => {
   test("custom tenantId routes through /v1/t/{tenantId}/check", async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(jsonResponse({ decision: "ALLOW", reason: "ok" }));
-    const guard = new AgentGuard({
+    const guard = new Vanzik({
       baseUrl: "http://example.test:8080",
       tenantId: "acme",
     });
@@ -82,7 +82,7 @@ describe("AgentGuard tenantId — URL builder", () => {
   test("tenantId is URL-encoded", async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(jsonResponse({ decision: "ALLOW", reason: "ok" }));
-    const guard = new AgentGuard({
+    const guard = new Vanzik({
       baseUrl: "http://example.test:8080",
       tenantId: "weird/tenant",
     });
@@ -94,11 +94,11 @@ describe("AgentGuard tenantId — URL builder", () => {
     );
   });
 
-  test("AGENTGUARD_TENANT_ID env populates tenantId by default", async () => {
-    process.env.AGENTGUARD_TENANT_ID = "fromenv";
+  test("VANZIK_TENANT_ID env populates tenantId by default", async () => {
+    process.env.VANZIK_TENANT_ID = "fromenv";
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(jsonResponse({ decision: "ALLOW", reason: "ok" }));
-    const guard = new AgentGuard({ baseUrl: "http://example.test:8080" });
+    const guard = new Vanzik({ baseUrl: "http://example.test:8080" });
     await guard.check("shell", { command: "ls" });
     expect(String(fetchMock.mock.calls[0][0])).toBe(
       "http://example.test:8080/v1/t/fromenv/check"
@@ -106,10 +106,10 @@ describe("AgentGuard tenantId — URL builder", () => {
   });
 
   test("explicit tenantId wins over env", async () => {
-    process.env.AGENTGUARD_TENANT_ID = "fromenv";
+    process.env.VANZIK_TENANT_ID = "fromenv";
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(jsonResponse({ decision: "ALLOW", reason: "ok" }));
-    const guard = new AgentGuard({
+    const guard = new Vanzik({
       baseUrl: "http://example.test:8080",
       tenantId: "explicit",
     });
@@ -120,10 +120,10 @@ describe("AgentGuard tenantId — URL builder", () => {
   });
 
   test("explicit tenantId=\"\" suppresses env var", async () => {
-    process.env.AGENTGUARD_TENANT_ID = "fromenv";
+    process.env.VANZIK_TENANT_ID = "fromenv";
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(jsonResponse({ decision: "ALLOW", reason: "ok" }));
-    const guard = new AgentGuard({
+    const guard = new Vanzik({
       baseUrl: "http://example.test:8080",
       tenantId: "",
     });
@@ -133,11 +133,11 @@ describe("AgentGuard tenantId — URL builder", () => {
     );
   });
 
-  test("string-form constructor honors AGENTGUARD_TENANT_ID env", async () => {
-    process.env.AGENTGUARD_TENANT_ID = "fromenv";
+  test("string-form constructor honors VANZIK_TENANT_ID env", async () => {
+    process.env.VANZIK_TENANT_ID = "fromenv";
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(jsonResponse({ decision: "ALLOW", reason: "ok" }));
-    const guard = new AgentGuard("http://example.test:8080");
+    const guard = new Vanzik("http://example.test:8080");
     await guard.check("shell", { command: "ls" });
     expect(String(fetchMock.mock.calls[0][0])).toBe(
       "http://example.test:8080/v1/t/fromenv/check"
@@ -145,13 +145,13 @@ describe("AgentGuard tenantId — URL builder", () => {
   });
 });
 
-describe("AgentGuard tenantId — propagates to all endpoints", () => {
+describe("Vanzik tenantId — propagates to all endpoints", () => {
   test("approve uses tenant-aware path", async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ status: "approved", id: "ap_xyz" })
     );
-    const guard = new AgentGuard({
+    const guard = new Vanzik({
       baseUrl: "http://example.test:8080",
       tenantId: "acme",
       apiKey: "k",
@@ -167,7 +167,7 @@ describe("AgentGuard tenantId — propagates to all endpoints", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ status: "denied", id: "ap_xyz" })
     );
-    const guard = new AgentGuard({
+    const guard = new Vanzik({
       baseUrl: "http://example.test:8080",
       tenantId: "acme",
       apiKey: "k",
@@ -188,7 +188,7 @@ describe("AgentGuard tenantId — propagates to all endpoints", () => {
         reason: "ok",
       })
     );
-    const guard = new AgentGuard({
+    const guard = new Vanzik({
       baseUrl: "http://example.test:8080",
       tenantId: "acme",
       apiKey: "k",
@@ -204,7 +204,7 @@ describe("AgentGuard tenantId — propagates to all endpoints", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ status: "approved", id: "ap_xyz" })
     );
-    const guard = new AgentGuard({
+    const guard = new Vanzik({
       baseUrl: "http://example.test:8080",
       apiKey: "k",
     });

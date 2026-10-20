@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // writeSegment writes an audit file holding only the given header.

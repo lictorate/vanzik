@@ -2,7 +2,7 @@
 
 These build tools with the SDK's own ``@function_tool`` decorator and call
 the guarded ``on_invoke_tool`` with a real ``ToolContext``, the way the
-runner does. The AgentGuard server is mocked via ``integration_mock``.
+runner does. The Vanzik server is mocked via ``integration_mock``.
 The full Agent + Runner loop lives in ``test_at_real_openai_agents.py``.
 """
 
@@ -26,12 +26,12 @@ except ImportError:  # pragma: no cover - layout differs across versions
         allow_module_level=True,
     )
 
-from agentguard import (  # noqa: E402
-    AgentGuardApprovalRequired,
-    AgentGuardDenied,
+from vanzik import (  # noqa: E402
+    VanzikApprovalRequired,
+    VanzikDenied,
     Guard,
 )
-from agentguard.adapters.openai_agents import guard_tool, guard_tools  # noqa: E402
+from vanzik.adapters.openai_agents import guard_tool, guard_tools  # noqa: E402
 
 from .conftest import allow, deny, require_approval  # noqa: E402
 
@@ -90,7 +90,7 @@ class TestRealFunctionTool:
         run_shell, _ = _make_tools(ran)
         guarded = guard_tool(run_shell, Guard(integration_mock.base_url))
 
-        with pytest.raises(AgentGuardDenied, match="rule:no-rm"):
+        with pytest.raises(VanzikDenied, match="rule:no-rm"):
             _call(guarded, json.dumps({"command": "rm -rf /"}))
         assert ran == []
 
@@ -100,7 +100,7 @@ class TestRealFunctionTool:
         run_shell, _ = _make_tools(ran)
         guarded = guard_tool(run_shell, Guard(integration_mock.base_url))
 
-        with pytest.raises(AgentGuardApprovalRequired) as ei:
+        with pytest.raises(VanzikApprovalRequired) as ei:
             _call(guarded, json.dumps({"command": "terraform apply"}))
         assert ei.value.approval_id == "ap_oa1"
         assert ran == []
@@ -148,7 +148,7 @@ class TestRealFunctionTool:
         run_shell, _ = _make_tools(ran)
         guarded = copy.copy(guard_tool(run_shell, Guard(integration_mock.base_url)))
 
-        with pytest.raises(AgentGuardDenied):
+        with pytest.raises(VanzikDenied):
             _call(guarded, json.dumps({"command": "ls"}))
         assert ran == []
 
@@ -187,7 +187,7 @@ class TestRealFunctionTool:
         guarded = guard_tools(_make_tools(ran), Guard(integration_mock.base_url))
 
         _call(guarded[0], json.dumps({"command": "ls"}))
-        with pytest.raises(AgentGuardDenied):
+        with pytest.raises(VanzikDenied):
             _call(guarded[1], json.dumps({"path": "/etc/shadow"}))
 
         assert ran == ["ls"]

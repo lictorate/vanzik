@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
-	"github.com/Caua-ferraz/AgentGuard/pkg/store"
+	"lictorate.com/vanzik/v2/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/store"
 )
 
 // errInjectedOutage stands in for any store-side failure (DB locked, disk full,

@@ -20,13 +20,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/store"
+	"lictorate.com/vanzik/v2/pkg/store"
 )
 
 func TestIntegration_HotPathLatencyWithPersistence(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	st, err := store.NewSQLiteStore(filepath.Join(dir, "agentguard.db"))
+	st, err := store.NewSQLiteStore(filepath.Join(dir, "vanzik.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestIntegration_HotPathLatencyWithPersistence(t *testing.T) {
 	}
 
 	// Measure the SERVER's self-reported END-TO-END processing time
-	// (X-AgentGuard-Total-Ms) over many requests — the hot path, excluding
+	// (X-Vanzik-Total-Ms) over many requests — the hot path, excluding
 	// httptest/network. Total-Ms now includes the audit enqueue (see
 	// pkg/proxy logAndRespond), so this gate covers policy PLUS the
 	// write-behind store's buffered audit-enqueue cost, not policy alone.
@@ -52,14 +52,14 @@ func TestIntegration_HotPathLatencyWithPersistence(t *testing.T) {
 	samples := make([]float64, 0, n)
 	for i := 0; i < n; i++ {
 		_, _, h := s.postCheck(t, `{"scope":"shell","command":"ls -la","agent_id":"lat"}`)
-		total, err := strconv.ParseFloat(h.Get("X-AgentGuard-Total-Ms"), 64)
+		total, err := strconv.ParseFloat(h.Get("X-Vanzik-Total-Ms"), 64)
 		if err != nil {
-			t.Fatalf("missing/invalid X-AgentGuard-Total-Ms header: %q", h.Get("X-AgentGuard-Total-Ms"))
+			t.Fatalf("missing/invalid X-Vanzik-Total-Ms header: %q", h.Get("X-Vanzik-Total-Ms"))
 		}
 		// Total must account for the audit write — guards the regression where
 		// Total was captured before the audit enqueue and silently understated
 		// the hot path.
-		if audit, aerr := strconv.ParseFloat(h.Get("X-AgentGuard-Audit-Ms"), 64); aerr == nil {
+		if audit, aerr := strconv.ParseFloat(h.Get("X-Vanzik-Audit-Ms"), 64); aerr == nil {
 			if total+0.001 < audit {
 				t.Fatalf("Total-Ms %.3f < Audit-Ms %.3f: audit enqueue not included in end-to-end latency", total, audit)
 			}
@@ -80,7 +80,7 @@ func TestIntegration_HotPathLatencyWithPersistence(t *testing.T) {
 
 	// --- Signal 2 (folded in from the v1.0 branch): client-observed per-op
 	// latency, ns-precision, adaptive ----------------------------------------
-	// The X-AgentGuard-Total-Ms header above is µs-granular and floors to 0 on a
+	// The X-Vanzik-Total-Ms header above is µs-granular and floors to 0 on a
 	// coarse clock (Windows advances the monotonic clock only at the ~0.5ms
 	// system-timer tick), so it is not a legible headline there. Here we measure
 	// the /v1/check round-trip at nanosecond precision: on a fine clock each

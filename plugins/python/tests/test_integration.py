@@ -1,17 +1,17 @@
-"""Integration tests: end-to-end flows against the mock AgentGuard server."""
+"""Integration tests: end-to-end flows against the mock Vanzik server."""
 
 import json
 
 import pytest
 
-from agentguard import Guard, DECISION_ALLOW, DECISION_DENY, DECISION_REQUIRE_APPROVAL
-from tests.conftest import MockAgentGuardHandler
+from vanzik import Guard, DECISION_ALLOW, DECISION_DENY, DECISION_REQUIRE_APPROVAL
+from tests.conftest import MockVanzikHandler
 
 
 class TestFullCheckAllowFlow:
     def test_full_allow_flow(self, mock_server):
         """Guard.check() -> ALLOW -> all fields populated correctly."""
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "ALLOW",
             "reason": "matches allow:shell:ls",
             "matched_rule": "allow:shell:ls",
@@ -27,7 +27,7 @@ class TestFullCheckAllowFlow:
         assert result.matched_rule == "allow:shell:ls"
 
         # Verify the request payload was well-formed
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body["scope"] == "shell"
         assert body["agent_id"] == "integration-agent"
         assert body["command"] == "ls -la /tmp"
@@ -36,7 +36,7 @@ class TestFullCheckAllowFlow:
 class TestFullCheckDenyFlow:
     def test_full_deny_flow(self, mock_server):
         """Guard.check() -> DENY -> fail-closed semantics verified."""
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "DENY",
             "reason": "fork bomb detected",
             "matched_rule": "deny:shell:forkbomb",
@@ -53,7 +53,7 @@ class TestFullCheckDenyFlow:
 class TestApproveFlow:
     def test_approve_after_require_approval(self, mock_server):
         """Guard.check() returns REQUIRE_APPROVAL, then Guard.approve() succeeds."""
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "REQUIRE_APPROVAL",
             "reason": "sudo requires approval",
             "approval_id": "ap_test_456",
@@ -73,7 +73,7 @@ class TestApproveFlow:
 class TestWaitForApprovalResolved:
     def test_resolved_immediately(self, mock_server):
         """Mock returns resolved status; wait_for_approval should return quickly."""
-        MockAgentGuardHandler.status_response = {
+        MockVanzikHandler.status_response = {
             "id": "ap_789",
             "status": "resolved",
             "decision": "ALLOW",
@@ -90,7 +90,7 @@ class TestWaitForApprovalResolved:
 class TestWaitForApprovalTimeout:
     def test_timeout_returns_deny(self, mock_server):
         """Mock always returns pending; wait_for_approval should time out and deny."""
-        MockAgentGuardHandler.status_response = {
+        MockVanzikHandler.status_response = {
             "id": "ap_timeout",
             "status": "pending",
         }

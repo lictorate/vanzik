@@ -1,7 +1,7 @@
-// Package llmproxy implements the AgentGuard LLM API Proxy: an HTTP
+// Package llmproxy implements the Vanzik LLM API Proxy: an HTTP
 // server that speaks OpenAI Chat Completions and Anthropic Messages
 // wire formats, forwards requests to the real upstreams, and gates
-// any tool calls the model emits through the central AgentGuard
+// any tool calls the model emits through the central Vanzik
 // policy engine.
 //
 // Major pieces:
@@ -31,8 +31,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Caua-ferraz/AgentGuard/internal/clihelp"
-	"github.com/Caua-ferraz/AgentGuard/pkg/internal/gateclient"
+	"lictorate.com/vanzik/v2/internal/clihelp"
+	"lictorate.com/vanzik/v2/pkg/internal/gateclient"
 )
 
 // Default flag values. Centralised here so tests can refer to them
@@ -98,18 +98,18 @@ type Config struct {
 	// (/v1/messages).
 	UpstreamAnthropic string
 
-	// GuardURL is the central AgentGuard server's base URL — the
+	// GuardURL is the central Vanzik server's base URL — the
 	// PolicyCheck hook calls <GuardURL>/v1/check.
 	GuardURL string
 
 	// APIKey is the bearer token sent on the /v1/check side channel.
-	// Falls back to AGENTGUARD_API_KEY env var when the flag is empty.
+	// Falls back to VANZIK_API_KEY env var when the flag is empty.
 	// Distinct from the user's upstream Authorization header (which
 	// is forwarded verbatim, never read).
 	APIKey string
 
 	// ProxyAPIKey is the OPTIONAL bearer the proxy enforces on inbound
-	// requests via the X-AgentGuard-Proxy-Auth header. Empty disables
+	// requests via the X-Vanzik-Proxy-Auth header. Empty disables
 	// proxy-level auth (safe on loopback). Sent in a separate header
 	// from Authorization so the upstream's own bearer token can be
 	// forwarded unambiguously.
@@ -164,38 +164,38 @@ type Config struct {
 
 // ParseConfig parses CLI args (without the leading binary name) and
 // returns a Config. Errors are returned for the caller to surface.
-// API-key resolution: explicit --api-key wins over AGENTGUARD_API_KEY.
+// API-key resolution: explicit --api-key wins over VANZIK_API_KEY.
 func ParseConfig(args []string) (*Config, error) {
 	return ParseConfigWithOutput(args, os.Stderr)
 }
 
-// proxyFlagGroups is the layout of `agentguard-llm-proxy -h`. Every flag
+// proxyFlagGroups is the layout of `vanzik-llm-proxy -h`. Every flag
 // must be in one group (TestConfig_HelpGroupsEveryFlag).
 var proxyFlagGroups = []clihelp.Group{
 	{Title: "Listening", Names: []string{"listen", "proxy-api-key", "max-concurrent-streams", "max-buffer-bytes"}},
 	{Title: "Model providers", Names: []string{"upstream-openai", "upstream-anthropic"}},
-	{Title: "AgentGuard server", Names: []string{"guard-url", "api-key", "tenant-id"}},
+	{Title: "Vanzik server", Names: []string{"guard-url", "api-key", "tenant-id"}},
 	{Title: "Policy", Names: []string{"policy"}},
-	{Title: "When the AgentGuard server is unreachable", Names: []string{"fail-mode", "fail-audit-log"}},
+	{Title: "When the Vanzik server is unreachable", Names: []string{"fail-mode", "fail-audit-log"}},
 	{Title: "Logging", Names: []string{"log-level"}},
 }
 
 // ParseConfigWithOutput is ParseConfig with the usage stream pluggable
 // for tests. Mirrors mcpgw.ParseConfigWithOutput.
 func ParseConfigWithOutput(args []string, errOut io.Writer) (*Config, error) {
-	fs := flag.NewFlagSet("agentguard-llm-proxy", flag.ContinueOnError)
+	fs := flag.NewFlagSet("vanzik-llm-proxy", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	fs.Usage = func() {
-		fmt.Fprintf(errOut, `Usage: agentguard-llm-proxy [flags]
+		fmt.Fprintf(errOut, `Usage: vanzik-llm-proxy [flags]
 
-agentguard-llm-proxy is a drop-in OpenAI/Anthropic base URL: it speaks
+vanzik-llm-proxy is a drop-in OpenAI/Anthropic base URL: it speaks
 the OpenAI Chat Completions and Anthropic Messages wire formats,
 forwards traffic to the real upstreams, and gates every tool call the
-model emits through a central AgentGuard server's /v1/check endpoint.
+model emits through a central Vanzik server's /v1/check endpoint.
 
 Example:
-  agentguard-llm-proxy --guard-url http://127.0.0.1:8080 \
-      --policy /etc/agentguard/policy.yaml
+  vanzik-llm-proxy --guard-url http://127.0.0.1:8080 \
+      --policy /etc/vanzik/policy.yaml
   # then point the agent's SDK at the proxy:
   #   OPENAI_BASE_URL=http://127.0.0.1:8081/v1
   #   ANTHROPIC_BASE_URL=http://127.0.0.1:8081
@@ -207,8 +207,8 @@ Other:
   --version  Print the version and exit (checked before any other flag)
 
 Environment:
-  AGENTGUARD_URL       Used when --guard-url is not set.
-  AGENTGUARD_API_KEY   Used when --api-key is not set.
+  VANZIK_URL       Used when --guard-url is not set.
+  VANZIK_API_KEY   Used when --api-key is not set.
 `)
 	}
 
@@ -217,7 +217,7 @@ Environment:
 	listen := fs.String("listen", DefaultListen, "Address to bind (host:port)")
 	upstreamOpenAI := fs.String("upstream-openai", DefaultUpstreamOpenAI, "Base URL for OpenAI-shape requests")
 	upstreamAnthropic := fs.String("upstream-anthropic", DefaultUpstreamAnthropic, "Base URL for Anthropic-shape requests")
-	proxyAPIKey := fs.String("proxy-api-key", "", "Optional bearer the proxy itself enforces on inbound requests (X-AgentGuard-Proxy-Auth). Empty = no proxy auth.")
+	proxyAPIKey := fs.String("proxy-api-key", "", "Optional bearer the proxy itself enforces on inbound requests (X-Vanzik-Proxy-Auth). Empty = no proxy auth.")
 	maxBufferBytes := fs.Int("max-buffer-bytes", DefaultMaxBufferBytes, "Per-stream tool-call buffer cap in bytes")
 	maxConcurrentStreams := fs.Int("max-concurrent-streams", DefaultMaxConcurrentStreams, "Global cap on simultaneous streaming requests; 0 disables the cap. Excess requests are refused with 503 + Retry-After: 5.")
 
@@ -227,7 +227,9 @@ Environment:
 	if err := gateclient.RejectArgs(fs.Args(), ""); err != nil {
 		return nil, err
 	}
-	gate.ApplyEnv()
+	if err := gate.ApplyEnv(); err != nil {
+		return nil, err
+	}
 
 	cfg := &Config{
 		Listen:               *listen,

@@ -2,9 +2,9 @@
 
 The gateway spawns a downstream MCP server via stdio, brokers JSON-RPC
 frames between the client and the downstream, and gates every
-``tools/call`` through AgentGuard.
+``tools/call`` through Vanzik.
 
-Closes R7 E6 partial: ``python -m agentguard.adapters.mcp --upstream ...``
+Closes R7 E6 partial: ``python -m vanzik.adapters.mcp --upstream ...``
 is now a real entry point with tools registered via the upstream, not
 the empty-server footgun. Full multi-upstream + capability merging is
 deferred to v0.6 (Phase 4B Gateway).
@@ -18,13 +18,13 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-from agentguard import Guard
-from agentguard.adapters.mcp import (
+from vanzik import Guard
+from vanzik.adapters.mcp import (
     GuardedMCPGateway,
     GuardedMCPServer,
     _UpstreamProcess,
 )
-from tests.conftest import MockAgentGuardHandler
+from tests.conftest import MockVanzikHandler
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +103,7 @@ class _FakeUpstream:
 def gateway_with_fake(mock_server):
     """Build a gateway whose upstream is a _FakeUpstream.
 
-    Wires real Guard + MockAgentGuardHandler so /v1/check responses can
+    Wires real Guard + MockVanzikHandler so /v1/check responses can
     be configured per test.
     """
     guard = Guard(mock_server, agent_id="gateway-test")
@@ -143,7 +143,7 @@ class TestGatewayToolsList:
 
 class TestGatewayToolsCall:
     def test_allow_forwards_to_upstream(self, gateway_with_fake):
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         gw, fake = gateway_with_fake
 
         # Trigger the lazy tools/list refresh first so scope cache is populated.
@@ -159,7 +159,7 @@ class TestGatewayToolsCall:
         assert "upstream ran read_file" in resp["result"]["content"][0]["text"]
 
     def test_deny_does_not_forward(self, gateway_with_fake):
-        MockAgentGuardHandler.check_response = {"decision": "DENY", "reason": "blocked"}
+        MockVanzikHandler.check_response = {"decision": "DENY", "reason": "blocked"}
         gw, fake = gateway_with_fake
 
         gw.handle({"jsonrpc": "2.0", "id": 0, "method": "tools/list"})
@@ -175,7 +175,7 @@ class TestGatewayToolsCall:
         assert "denied" in resp["result"]["content"][0]["text"].lower()
 
     def test_require_approval_does_not_forward(self, gateway_with_fake):
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "REQUIRE_APPROVAL",
             "reason": "needs review",
             "approval_id": "ap_xyz",
@@ -196,7 +196,7 @@ class TestGatewayToolsCall:
         assert all(c.get("method") != "tools/call" for c in fake.calls)
 
     def test_path_argument_upgrades_scope_to_filesystem(self, gateway_with_fake):
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         gw, fake = gateway_with_fake
 
         gw.handle({"jsonrpc": "2.0", "id": 0, "method": "tools/list"})
@@ -205,12 +205,12 @@ class TestGatewayToolsCall:
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": "read_file", "arguments": {"path": "/tmp/x"}},
         })
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body["scope"] == "filesystem"
         assert body["path"] == "/tmp/x"
 
     def test_url_argument_upgrades_scope_to_network(self, gateway_with_fake):
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         gw, fake = gateway_with_fake
 
         # Add a network-flavoured tool to the fake.
@@ -221,12 +221,12 @@ class TestGatewayToolsCall:
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": "fetch", "arguments": {"url": "https://api.example.com/x"}},
         })
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body["scope"] == "network"
         assert body["domain"] == "api.example.com"
 
     def test_upstream_failure_returns_internal_error(self, gateway_with_fake):
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         gw, fake = gateway_with_fake
         # Pre-populate the scope cache so the lazy `tools/list` refresh
         # inside `_gate_tools_call` does not eat our `fail_next` flag.
@@ -260,7 +260,7 @@ class TestServerFrameRobustness:
     def test_malformed_json_does_not_crash(self, mock_server, capsys):
         """A bad frame is logged and dropped; the next valid frame still
         gets a response. R5 E6 / S9 regression coupon."""
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         s = GuardedMCPServer(guard_url=mock_server)
         s.add_tool("ping", "", handler=lambda **_: "pong", scope="shell")
 
@@ -277,8 +277,8 @@ class TestServerFrameRobustness:
         stdin.seek(0)
         stdout = io.StringIO()
 
-        with _patch("agentguard.adapters.mcp.sys.stdin", stdin), \
-             _patch("agentguard.adapters.mcp.sys.stdout", stdout):
+        with _patch("vanzik.adapters.mcp.sys.stdin", stdin), \
+             _patch("vanzik.adapters.mcp.sys.stdout", stdout):
             s.run()
 
         # Only the valid frame produced a response.
@@ -293,7 +293,7 @@ class TestServerFrameRobustness:
         """When ``_handle_request`` raises (not the wrapped handler — the
         request *router* itself), the server emits a JSON-RPC -32603
         Internal error response and keeps reading."""
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         s = GuardedMCPServer(guard_url=mock_server)
 
         # Force _handle_request to throw on the first frame.
@@ -317,8 +317,8 @@ class TestServerFrameRobustness:
         stdin.seek(0)
         stdout = io.StringIO()
 
-        with _patch("agentguard.adapters.mcp.sys.stdin", stdin), \
-             _patch("agentguard.adapters.mcp.sys.stdout", stdout):
+        with _patch("vanzik.adapters.mcp.sys.stdin", stdin), \
+             _patch("vanzik.adapters.mcp.sys.stdout", stdout):
             s.run()
 
         responses = [json.loads(l) for l in stdout.getvalue().splitlines() if l]
@@ -343,7 +343,7 @@ class TestSynthesizedCommandRedaction:
         ``f"{tool} {json.dumps(args)}"``; if the args carry a literal
         ``password=hunter2`` style token it must be redacted before it
         reaches /v1/check (audit log + DENY reason echo)."""
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         s = GuardedMCPServer(guard_url=mock_server)
         s.add_tool("custom_thing", "", handler=lambda **_: "", scope="shell")
 
@@ -355,7 +355,7 @@ class TestSynthesizedCommandRedaction:
             },
         })
 
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         # Synthesized command was forwarded to the policy server.
         cmd = body.get("command", "")
         # Either the value is replaced by [REDACTED] or the whole `password=hunter2`
@@ -365,7 +365,7 @@ class TestSynthesizedCommandRedaction:
         assert "[REDACTED]" in cmd
 
     def test_caller_supplied_command_also_redacted(self, mock_server):
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         s = GuardedMCPServer(guard_url=mock_server)
         s.add_tool("run", "", handler=lambda **_: "", scope="shell")
 
@@ -377,6 +377,6 @@ class TestSynthesizedCommandRedaction:
             },
         })
 
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert "sk-abc123xyz" not in body["command"]
         assert "[REDACTED]" in body["command"]

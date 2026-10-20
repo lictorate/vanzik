@@ -1,4 +1,4 @@
-"""Shared fixtures for AgentGuard Python SDK tests."""
+"""Shared fixtures for Vanzik Python SDK tests."""
 
 import json
 import threading
@@ -7,8 +7,8 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import pytest
 
 
-class MockAgentGuardHandler(BaseHTTPRequestHandler):
-    """Configurable mock for the AgentGuard /v1/* endpoints.
+class MockVanzikHandler(BaseHTTPRequestHandler):
+    """Configurable mock for the Vanzik /v1/* endpoints.
 
     Class-level attributes control the response for each endpoint.
     Override them via the ``mock_server`` fixture's ``handler_class`` before
@@ -50,15 +50,15 @@ class MockAgentGuardHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length) if content_length else b""
-        MockAgentGuardHandler.last_request_body = body
-        MockAgentGuardHandler.last_request_headers = dict(self.headers)
-        MockAgentGuardHandler.request_log.append(
+        MockVanzikHandler.last_request_body = body
+        MockVanzikHandler.last_request_headers = dict(self.headers)
+        MockVanzikHandler.request_log.append(
             {"method": "POST", "path": self.path, "body": body}
         )
 
         if self.path == "/v1/check":
-            if MockAgentGuardHandler.check_response_queue:
-                self._json_response(200, MockAgentGuardHandler.check_response_queue.pop(0))
+            if MockVanzikHandler.check_response_queue:
+                self._json_response(200, MockVanzikHandler.check_response_queue.pop(0))
             else:
                 self._json_response(200, self.check_response)
         elif self.path.startswith("/v1/approve/"):
@@ -71,18 +71,18 @@ class MockAgentGuardHandler(BaseHTTPRequestHandler):
             self._json_response(404, {"error": "not found"})
 
     def do_GET(self):
-        MockAgentGuardHandler.request_log.append(
+        MockVanzikHandler.request_log.append(
             {"method": "GET", "path": self.path, "body": b""}
         )
         if self.path.startswith("/v1/status/"):
-            if MockAgentGuardHandler.status_raw_queue:
-                code, ctype, raw = MockAgentGuardHandler.status_raw_queue.pop(0)
+            if MockVanzikHandler.status_raw_queue:
+                code, ctype, raw = MockVanzikHandler.status_raw_queue.pop(0)
                 self.send_response(code)
                 self.send_header("Content-Type", ctype)
                 self.end_headers()
                 self.wfile.write(raw)
-            elif MockAgentGuardHandler.status_response_queue:
-                self._json_response(200, MockAgentGuardHandler.status_response_queue.pop(0))
+            elif MockVanzikHandler.status_response_queue:
+                self._json_response(200, MockVanzikHandler.status_response_queue.pop(0))
             else:
                 self._json_response(200, self.status_response)
         else:
@@ -112,7 +112,7 @@ class _DeepBacklogHTTPServer(ThreadingHTTPServer):
 
 @pytest.fixture()
 def mock_server():
-    """Start a mock AgentGuard HTTP server on an OS-assigned port.
+    """Start a mock Vanzik HTTP server on an OS-assigned port.
 
     Yields the base URL (e.g. ``http://127.0.0.1:54321``).
     Resets class-level response overrides after each test.
@@ -122,7 +122,7 @@ def mock_server():
     # ConnectionResetError under load (reproduced flakily in CI); the
     # deep-backlog subclass further prevents the 32-thread burst from
     # overflowing the listen queue.
-    server = _DeepBacklogHTTPServer(("127.0.0.1", 0), MockAgentGuardHandler)
+    server = _DeepBacklogHTTPServer(("127.0.0.1", 0), MockVanzikHandler)
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -132,15 +132,15 @@ def mock_server():
     server.shutdown()
 
     # Reset class-level overrides so the next test gets clean defaults
-    MockAgentGuardHandler.check_response = {
+    MockVanzikHandler.check_response = {
         "decision": "ALLOW",
         "reason": "test policy",
         "matched_rule": "allow:test",
     }
-    MockAgentGuardHandler.status_response = {"id": "ap_123", "status": "pending"}
-    MockAgentGuardHandler.check_response_queue = []
-    MockAgentGuardHandler.status_response_queue = []
-    MockAgentGuardHandler.status_raw_queue = []
-    MockAgentGuardHandler.request_log = []
-    MockAgentGuardHandler.last_request_body = None
-    MockAgentGuardHandler.last_request_headers = None
+    MockVanzikHandler.status_response = {"id": "ap_123", "status": "pending"}
+    MockVanzikHandler.check_response_queue = []
+    MockVanzikHandler.status_response_queue = []
+    MockVanzikHandler.status_raw_queue = []
+    MockVanzikHandler.request_log = []
+    MockVanzikHandler.last_request_body = None
+    MockVanzikHandler.last_request_headers = None

@@ -1,6 +1,6 @@
 # HTTP API Reference
 
-Every endpoint AgentGuard exposes, with auth requirements, request/response shapes, and status codes. Source: `pkg/proxy/server.go`, `pkg/proxy/auth.go`, `pkg/proxy/tenant.go`.
+Every endpoint Vanzik exposes, with auth requirements, request/response shapes, and status codes. Source: `pkg/proxy/server.go`, `pkg/proxy/auth.go`, `pkg/proxy/tenant.go`.
 
 ```
 Base URL: http(s)://<host>:<port>
@@ -18,7 +18,7 @@ Every operational endpoint is exposed at **both** of these paths:
 | Legacy | `/v1/<suffix>` | Always evaluates against tenant `local`. Wire-compatible with v0.4.x clients. |
 | Tenant-aware | `/v1/t/{tenant}/<suffix>` | `{tenant}` is extracted from the URL and validated by the engine's `PolicyProvider`. |
 
-Since v0.6, `{tenant}` is validated against the policy registry: `local` is always recognised (the bundled file policy), and additional tenants are registered with `agentguard tenant put <id> --policy <yaml>` (requires `--persist`). An unregistered tenant returns `404` with body `{"error":"tenant not found"}`; a store infrastructure failure during tenant resolution returns `500 {"error":"policy provider error"}`. `/v1/check` and `/v1/t/local/check` remain identical in responses, audit entries, and headers.
+Since v0.6, `{tenant}` is validated against the policy registry: `local` is always recognised (the bundled file policy), and additional tenants are registered with `vanzik tenant put <id> --policy <yaml>` (requires `--persist`). An unregistered tenant returns `404` with body `{"error":"tenant not found"}`; a store infrastructure failure during tenant resolution returns `500 {"error":"policy provider error"}`. `/v1/check` and `/v1/t/local/check` remain identical in responses, audit entries, and headers.
 
 **Tenant ID format constraints:**
 - Non-empty after URL-decoding.
@@ -35,10 +35,10 @@ The legacy paths are not deprecated. v0.5 documents both as supported.
 
 ## Auth model
 
-AgentGuard uses two orthogonal auth schemes:
+Vanzik uses two orthogonal auth schemes:
 
 1. **Bearer token** (`Authorization: Bearer <key>`) — for machine-to-machine access. Comes from the `--api-key` flag on the server.
-2. **Session cookie + CSRF** — for browser (`/dashboard`) access. `POST /auth/login` with the same API key sets an HttpOnly `ag_session` cookie and a JS-readable `ag_csrf` cookie (double-submit). State-changing endpoints additionally require `X-CSRF-Token: <ag_csrf value>`.
+2. **Session cookie + CSRF** — for browser (`/dashboard`) access. `POST /auth/login` with the same API key sets an HttpOnly `vanzik_session` cookie and a JS-readable `vanzik_csrf` cookie (double-submit). State-changing endpoints additionally require `X-CSRF-Token: <vanzik_csrf value>`.
 
 **When the server is started without `--api-key`**, auth middleware is a pass-through and the server binds to `127.0.0.1` only.
 
@@ -115,7 +115,7 @@ Content-Type: application/json
 | `parent_session_id` | string | — | **(v1.4)** The session that started this one, e.g. an orchestrator's session for a sub-agent. Policy ignores it; the audit log keeps it so `GET /v1/sessions` can link parent and child sessions. |
 | `est_cost` | float | — | For `cost` scope. Negative values denied. |
 | `meta` | object | — | Free-form string→string map; logged as-is. |
-| `approval_id` | string | — | Replay of a previously issued approval (see [`APPROVAL_WORKFLOW.md`](APPROVAL_WORKFLOW.md)). Honored only when the request's operationally-meaningful fields match the original, the resolution is younger than `--approval-validity` (default 5m), and — for ALLOW — **at most once**: approvals are one-shot capabilities, so a second replay of the same id falls through to fresh policy evaluation and re-enters the approval flow under a new id. Refusals are counted in `agentguard_approval_replay_refused_total`. |
+| `approval_id` | string | — | Replay of a previously issued approval (see [`APPROVAL_WORKFLOW.md`](APPROVAL_WORKFLOW.md)). Honored only when the request's operationally-meaningful fields match the original, the resolution is younger than `--approval-validity` (default 5m), and — for ALLOW — **at most once**: approvals are one-shot capabilities, so a second replay of the same id falls through to fresh policy evaluation and re-enters the approval flow under a new id. Refusals are counted in `vanzik_approval_replay_refused_total`. |
 
 Body is limited to `MaxRequestBodyBytes` (default 1 MB; configurable via `proxy.request.max_body_bytes`). Exceeded → `413`.
 
@@ -142,9 +142,9 @@ Body is limited to `MaxRequestBodyBytes` (default 1 MB; configurable via `proxy.
 
 | Header | Unit | What it measures |
 |---|---|---|
-| `X-AgentGuard-Policy-Ms` | ms (3-decimal) | Time in `Engine.Check`. |
-| `X-AgentGuard-Audit-Ms` | ms (3-decimal) | Time in `Logger.Log`. |
-| `X-AgentGuard-Total-Ms` | ms (3-decimal) | End-to-end server processing. |
+| `X-Vanzik-Policy-Ms` | ms (3-decimal) | Time in `Engine.Check`. |
+| `X-Vanzik-Audit-Ms` | ms (3-decimal) | Time in `Logger.Log`. |
+| `X-Vanzik-Total-Ms` | ms (3-decimal) | End-to-end server processing. |
 
 ### Status codes
 
@@ -178,7 +178,7 @@ Authorization: Bearer $KEY
 
 ```http
 POST /v1/approve/ap_1a2b…890 HTTP/1.1
-Cookie: ag_session=…; ag_csrf=xyz…
+Cookie: vanzik_session=…; vanzik_csrf=xyz…
 X-CSRF-Token: xyz…
 ```
 
@@ -301,7 +301,7 @@ If a window holds more than `limit` entries, page inside it with `offset`, or st
 
 Tenant-aware mirror: `GET /v1/t/{tenant}/audit/head`. **(v1.4)** Same auth as `GET /v1/audit`: Bearer or session.
 
-Returns the head of the sealed audit log (`agentguard server --audit-seal`): the newest sealed entry's `seq` and `hash`, the `segment_id` of the file that holds it, and when the head was read. Copy it somewhere the audit host can't rewrite; `agentguard audit verify --anchor <seq>:<hash>` checks it later. See [OPERATIONS § Sealing and anchoring](OPERATIONS.md#sealing-and-anchoring).
+Returns the head of the sealed audit log (`vanzik server --audit-seal`): the newest sealed entry's `seq` and `hash`, the `segment_id` of the file that holds it, and when the head was read. Copy it somewhere the audit host can't rewrite; `vanzik audit verify --anchor <seq>:<hash>` checks it later. See [OPERATIONS § Sealing and anchoring](OPERATIONS.md#sealing-and-anchoring).
 
 ```json
 {"segment_id":"5f3d3bd62a0c92261d2c7de09991f4c0","seq":1200,"hash":"3f9a…","at":"2026-10-13T17:20:00Z"}
@@ -404,7 +404,7 @@ Returns one session: its summary (same shape as in the list), the sessions it st
 
 ## `POST /v1/audit` · `POST /v1/t/{tenant}/audit`
 
-Records a DENY that was decided **outside** the policy engine, without running the engine. `agentguard-llm-proxy` uses it when it refuses a tool call on its own — for example `deny:llm_api_proxy:malformed_tool_call` — so the central audit log records the verdict the client actually received.
+Records a DENY that was decided **outside** the policy engine, without running the engine. `vanzik-llm-proxy` uses it when it refuses a tool call on its own — for example `deny:llm_api_proxy:malformed_tool_call` — so the central audit log records the verdict the client actually received.
 
 ### Request
 
@@ -474,8 +474,8 @@ Sets cookies:
 
 | Cookie | Flags | Purpose |
 |---|---|---|
-| `ag_session` | `HttpOnly`, `Secure` (if TLS or `--tls-terminated-upstream`), `SameSite=Strict`, `Path=/` | Opaque session ID. |
-| `ag_csrf` | `Secure` (same rules), `SameSite=Strict`, `Path=/` — **not** HttpOnly so JS can read it | Double-submit CSRF token. |
+| `vanzik_session` | `HttpOnly`, `Secure` (if TLS or `--tls-terminated-upstream`), `SameSite=Strict`, `Path=/` | Opaque session ID. |
+| `vanzik_csrf` | `Secure` (same rules), `SameSite=Strict`, `Path=/` — **not** HttpOnly so JS can read it | Double-submit CSRF token. |
 
 ### Status codes
 
@@ -496,7 +496,7 @@ Destroys the current session and expires both cookies.
 
 ```http
 POST /auth/logout HTTP/1.1
-Cookie: ag_session=…
+Cookie: vanzik_session=…
 ```
 
 Returns `204 No Content`. Safe to call with no session (no-op).
@@ -506,7 +506,7 @@ Returns `204 No Content`. Safe to call with no session (no-op).
 ## `GET /health`
 
 ```json
-{ "status": "ok", "version": "1.4.0" }
+{ "status": "ok", "version": "2.0.0" }
 ```
 
 Always `200` once the HTTP server is accepting connections. Use for liveness probes (see [`DEPLOYMENT.md`](DEPLOYMENT.md)). The legacy `/health` body shape is unchanged in v0.5 — for the richer operator probe see `/v1/health` below.
@@ -522,7 +522,7 @@ Operator-grade health endpoint introduced in v0.5. Richer than `/health`: includ
 ```json
 {
   "status": "ok",
-  "version": "1.4.0",
+  "version": "2.0.0",
   "tenant": "local",
   "last_request_at": "2026-05-05T19:04:54.646Z",
   "last_policy_load_at": "2026-05-05T19:04:53.549Z",
@@ -544,7 +544,7 @@ Operator-grade health endpoint introduced in v0.5. Richer than `/health`: includ
 | Code | Meaning |
 |---|---|
 | `200` | Tenant resolved; body returned. |
-| `404` | Tenant unknown (only on the `/v1/t/{tenant}/health` variant; the tenant must be `local` or registered via `agentguard tenant put`). Body: `{"error":"tenant not found"}`. |
+| `404` | Tenant unknown (only on the `/v1/t/{tenant}/health` variant; the tenant must be `local` or registered via `vanzik tenant put`). Body: `{"error":"tenant not found"}`. |
 
 ---
 
@@ -554,9 +554,9 @@ Prometheus text exposition format. Unauthenticated. Full metric catalog in [`OBS
 
 ```bash
 curl -s http://localhost:8080/metrics | head
-# HELP agentguard_checks_total Total number of policy check requests
-# TYPE agentguard_checks_total counter
-# agentguard_checks_total 12034
+# HELP vanzik_checks_total Total number of policy check requests
+# TYPE vanzik_checks_total counter
+# vanzik_checks_total 12034
 # ...
 ```
 
@@ -631,7 +631,7 @@ data: {"type":"check","timestamp":"2026-04-19T12:03:44Z","request":{…},"result
 
 Events are unnamed SSE messages (no `event:` field), so an `EventSource` receives them through `onmessage`. Each carries `transport` (`sdk`, `mcp_gateway`, `llm_api_proxy`, or a coding-agent hook's `claude_code`, `cursor`, `gemini_cli`, `codex_cli`) and, for tenants other than `local`, `tenant`, alongside `request` and `result`. `approval_required` and `denied` are **notifier** event types (webhook / Slack / console), not stream events — see [`APPROVAL_WORKFLOW.md`](APPROVAL_WORKFLOW.md#2-notification-fan-out).
 
-Subscriber channel buffer is `64` (`SSEChannelBufferSize`). Slow consumers drop events — counted in `agentguard_sse_events_dropped_total{reason="slow_consumer"}`.
+Subscriber channel buffer is `64` (`SSEChannelBufferSize`). Slow consumers drop events — counted in `vanzik_sse_events_dropped_total{reason="slow_consumer"}`.
 
 **The client must handle disconnects.** There is no server-side auto-reconnect; use `EventSource` in the browser (which auto-reconnects) or handle `io.EOF` in a custom consumer and refetch `/api/stats` on reconnect.
 
@@ -648,7 +648,7 @@ Referrer-Policy: no-referrer
 Cache-Control: no-store
 ```
 
-The dashboard JS loads `/api/stats`, `/api/pending`, `/v1/audit?order=desc&limit=200` (the newest 200 entries; before v1.2 it loaded `?limit=200`, the oldest), and subscribes to `/api/stream`. CSRF token is read from `document.cookie['ag_csrf']` and echoed as `X-CSRF-Token` on approve/deny.
+The dashboard JS loads `/api/stats`, `/api/pending`, `/v1/audit?order=desc&limit=200` (the newest 200 entries; before v1.2 it loaded `?limit=200`, the oldest), and subscribes to `/api/stream`. CSRF token is read from `document.cookie['vanzik_csrf']` and echoed as `X-CSRF-Token` on approve/deny.
 
 ---
 
@@ -684,8 +684,8 @@ Other error responses (auth 401/403, `/v1/check` 400 for bad JSON, audit 400 for
 | Symptom | Cause | Fix |
 |---|---|---|
 | `401` on every gated endpoint | Server has `--api-key`; client sending none. | Set `Authorization: Bearer …` or log in. |
-| `403` on POST approve/deny from dashboard | Session valid, CSRF missing. | Echo `document.cookie['ag_csrf']` as `X-CSRF-Token`. |
-| `404` on every `/v1/t/<x>/...` | Tenant `<x>` not registered. | Register it (`agentguard tenant put <x> --policy <yaml>`, requires `--persist`) or use `/v1/...` / `/v1/t/local/...`. |
+| `403` on POST approve/deny from dashboard | Session valid, CSRF missing. | Echo `document.cookie['vanzik_csrf']` as `X-CSRF-Token`. |
+| `404` on every `/v1/t/<x>/...` | Tenant `<x>` not registered. | Register it (`vanzik tenant put <x> --policy <yaml>`, requires `--persist`) or use `/v1/...` / `/v1/t/local/...`. |
 | `413` on `/v1/check` | Body > 1 MB. | Trim `meta` payloads or raise `proxy.request.max_body_bytes`. |
 | `503` on `/auth/login` | 1024 concurrent sessions. | Probing bot; firewall it. |
 | SSE connection drops every minute | Idle proxy timeout upstream. | Set `proxy_read_timeout 3600s` on reverse proxy. |
@@ -701,7 +701,7 @@ Both SDKs accept an optional tenant identifier that switches every HTTP call to 
 **Python:**
 
 ```python
-from agentguard import Guard
+from vanzik import Guard
 
 # Default — legacy /v1/... URLs.
 g = Guard("http://localhost:8080", agent_id="my-agent")
@@ -710,7 +710,7 @@ g = Guard("http://localhost:8080", agent_id="my-agent")
 g = Guard("http://localhost:8080", agent_id="my-agent", tenant_id="acme")
 
 # Env var fallback. Empty string explicitly suppresses the env var.
-# Env: AGENTGUARD_TENANT_ID=acme
+# Env: VANZIK_TENANT_ID=acme
 g = Guard("http://localhost:8080", agent_id="my-agent")  # → /v1/t/acme/...
 g = Guard("http://localhost:8080", agent_id="my-agent", tenant_id="")  # → /v1/...
 ```
@@ -720,20 +720,20 @@ g = Guard("http://localhost:8080", agent_id="my-agent", tenant_id="")  # → /v1
 **TypeScript:**
 
 ```typescript
-import { AgentGuard } from "@lictorate/agentguard";
+import { Vanzik } from "@lictorate/vanzik";
 
 // Default — legacy /v1/... URLs.
-const g = new AgentGuard({ baseUrl: "http://localhost:8080", agentId: "my-agent" });
+const g = new Vanzik({ baseUrl: "http://localhost:8080", agentId: "my-agent" });
 
 // Tenant-aware — /v1/t/acme/... URLs.
-const g = new AgentGuard({
+const g = new Vanzik({
   baseUrl: "http://localhost:8080",
   agentId: "my-agent",
   tenantId: "acme",
 });
 ```
 
-Same env-var fallback (`AGENTGUARD_TENANT_ID`) and same `"local"` alias semantics as Python.
+Same env-var fallback (`VANZIK_TENANT_ID`) and same `"local"` alias semantics as Python.
 
 ---
 

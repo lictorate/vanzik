@@ -1,6 +1,6 @@
 # Test cases for configs/examples/research-agent.yaml. Run them with:
 #
-#   agentguard test configs/tests
+#   vanzik test configs/tests
 
 policy: ../examples/research-agent.yaml
 

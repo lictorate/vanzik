@@ -22,9 +22,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/notify"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/notify"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // writeReloadablePolicy writes a YAML file with shell rules. cmd is the

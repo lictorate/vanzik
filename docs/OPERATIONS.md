@@ -1,12 +1,12 @@
 # Operations Guide
 
-Day-2 concerns for running AgentGuard in production: log rotation, scaling, capacity limits, and restart semantics. Read [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) first — this guide assumes you already have a correctly configured server.
+Day-2 concerns for running Vanzik in production: log rotation, scaling, capacity limits, and restart semantics. Read [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) first — this guide assumes you already have a correctly configured server.
 
 ---
 
 ## Audit log rotation
 
-**AgentGuard rotates `audit.jsonl` by default.** The size-triggered rotator is wired into `runServe` and active out of the box, controlled by these `agentguard server` flags:
+**Vanzik rotates `audit.jsonl` by default.** The size-triggered rotator is wired into `runServe` and active out of the box, controlled by these `vanzik server` flags:
 
 | Flag | Default | Purpose |
 |---|---|---|
@@ -17,12 +17,12 @@ Day-2 concerns for running AgentGuard in production: log rotation, scaling, capa
 
 Rotated files carry a `_meta.rotated_from` chain pointing to the previous segment (see [`docs/FILE_FORMATS.md`](FILE_FORMATS.md#rotated-file-headers)) so external consumers can stitch the timeline.
 
-> **Do not stack rotators.** Operators following older guidance should NOT also configure `logrotate` (or any external rotator) against `audit.jsonl` — the dual-rotator chain corrupts the rotation index and breaks the `_meta.rotated_from` continuity. Pick one. If you need `logrotate`'s archival semantics, set `--audit-max-size-mb 0` first to disable AgentGuard's own rotator.
+> **Do not stack rotators.** Operators following older guidance should NOT also configure `logrotate` (or any external rotator) against `audit.jsonl` — the dual-rotator chain corrupts the rotation index and breaks the `_meta.rotated_from` continuity. Pick one. If you need `logrotate`'s archival semantics, set `--audit-max-size-mb 0` first to disable Vanzik's own rotator.
 
 Two follow-on consequences regardless of who rotates:
 
 1. **Disk usage** grows proportional to request volume × retention. A busy deployment can produce hundreds of MB per day; the defaults bound this to ~500 MiB across 5 backups.
-2. **Startup replay** seeds the decision counters from the replay checkpoint (`<audit-log>.replay-checkpoint`, which carries the lifetime tally) and re-reads only the entries written since it was last written — following the `_meta.rotated_from` chain through any archives rotated in between — so `/metrics` and `/api/stats` survive restarts with the totals a never-restarted process would show. Since v1.2.0 the file audit logger also rewrites the checkpoint after every rotation (before `--audit-max-backups` prunes old archives) and on shutdown; before that, a server that rotated more than `--audit-max-backups` times between restarts lost the counts of the pruned files. The first boot after upgrading from v1.0.0, or after `agentguard migrate --reset-checkpoint`, replays the whole live file once; a multi-GB live file delays counter accuracy until that scan completes. The `--audit-backend=store` logger has no checkpoint and re-queries the store on every boot.
+2. **Startup replay** seeds the decision counters from the replay checkpoint (`<audit-log>.replay-checkpoint`, which carries the lifetime tally) and re-reads only the entries written since it was last written — following the `_meta.rotated_from` chain through any archives rotated in between — so `/metrics` and `/api/stats` survive restarts with the totals a never-restarted process would show. Since v1.2.0 the file audit logger also rewrites the checkpoint after every rotation (before `--audit-max-backups` prunes old archives) and on shutdown; before that, a server that rotated more than `--audit-max-backups` times between restarts lost the counts of the pruned files. The first boot after upgrading from v1.0.0, or after `vanzik migrate --reset-checkpoint`, replays the whole live file once; a multi-GB live file delays counter accuracy until that scan completes. The `--audit-backend=store` logger has no checkpoint and re-queries the store on every boot.
 
 ### External shipping (compatible with default rotation)
 
@@ -30,23 +30,23 @@ The audit log is append-only JSON Lines with one decision per line (schema in [`
 
 ### Disabling default rotation (legacy / external rotator path)
 
-Set `--audit-max-size-mb 0`. AgentGuard then opens `audit.jsonl` with `O_CREATE|O_WRONLY|O_APPEND` at mode `0600` and never rotates it. Use this when you operate a managed log pipeline that handles rotation upstream (e.g., a sidecar that reads via `tail -F`).
+Set `--audit-max-size-mb 0`. Vanzik then opens `audit.jsonl` with `O_CREATE|O_WRONLY|O_APPEND` at mode `0600` and never rotates it. Use this when you operate a managed log pipeline that handles rotation upstream (e.g., a sidecar that reads via `tail -F`).
 
-If you must use `logrotate` against AgentGuard's audit file, use the `copytruncate` directive AND `--audit-max-size-mb 0`:
+If you must use `logrotate` against Vanzik's audit file, use the `copytruncate` directive AND `--audit-max-size-mb 0`:
 
 ```
-/var/lib/agentguard/audit.jsonl {
+/var/lib/vanzik/audit.jsonl {
     daily
     rotate 14
     compress
     copytruncate
     missingok
     notifempty
-    create 0600 agentguard agentguard
+    create 0600 vanzik vanzik
 }
 ```
 
-Keep `copytruncate` — the default `create`-based rotation breaks AgentGuard's open fd.
+Keep `copytruncate` — the default `create`-based rotation breaks Vanzik's open fd.
 
 ### Reducing startup replay time
 
@@ -61,36 +61,36 @@ Historical audit queries then become a two-tier lookup: recent entries from the 
 
 ## Audit redaction
 
-Since v1.2.0, `agentguard server` masks secrets in every request before it is stored or shown (`--audit-redact`, default `true`). Matches are replaced with `[REDACTED]` in the command, path, domain, action, URL, reason and every `meta` value.
+Since v1.2.0, `vanzik server` masks secrets in every request before it is stored or shown (`--audit-redact`, default `true`). Matches are replaced with `[REDACTED]` in the command, path, domain, action, URL, reason and every `meta` value.
 
 **What is masked:** bearer tokens, `Authorization:` / `x-api-key:` / `api-key:` header values, AWS access keys (`AKIA…`), GitHub tokens (`ghp_`, `gho_`, `ghs_`, `ghu_`, `ghr_`, `github_pat_`), Slack tokens (`xox?-`), LLM provider keys (`sk-…`), Google API keys (`AIza…`), JWTs, PEM private keys, and `secret=` / `token=` / `password=` / `api_key=` pairs — plus the policy's `notifications.redaction.extra_patterns`. It is pattern-based and best effort: a secret in a shape none of these match is stored as sent.
 
 **Where:** the audit file or store, the overflow spill file, `GET /v1/audit`, the SSE stream (so the dashboard feed), and `/api/pending`. The MCP gateway and LLM proxy mask their `--fail-audit-log` entries with the built-in patterns. Redaction runs in the audit worker goroutines and the SSE writers, not on the `/v1/check` request goroutine — except with `--audit-buffered=false`, where the audit write itself is synchronous.
 
 **What still holds the original request:**
-- The approval store (the `approvals` table in SQLite or Postgres): replaying an `approval_id` compares the retry to the original request field by field. Protect `agentguard.db` / the database credentials accordingly.
+- The approval store (the `approvals` table in SQLite or Postgres): replaying an `approval_id` compares the retry to the original request field by field. Protect `vanzik.db` / the database credentials accordingly.
 - The in-memory `require_prior` index, until the next restart; after a restart it is rebuilt from the redacted audit trail, so a `require_prior` condition that names a secret-bearing command may stop matching.
 
 **Also note:** only the `--policy` file's `extra_patterns` are used (not tenant policies'); audit files written before 1.2.0 are not rewritten; notifications were already redacted and still are. `--audit-redact=false` restores verbatim audit content and logs `WARNING: --audit-redact=false: …` at startup.
 
 ## Sealing and anchoring
 
-Since v1.4.0 the file audit log can be sealed into a hash chain: `agentguard server --audit-seal --audit-seal-key-file <key>`. Every entry gets `seq`, `prev_hash` and `hash`, and each rotated file's header names the last entry of the file before it. `agentguard audit verify` checks all of it offline. Sealing is off by default, works with the file backend only (`--audit-backend=store` with `--audit-seal` is refused at startup), and is not encryption. The format and the hashing rule are in [FILE_FORMATS](FILE_FORMATS.md#current-on-disk-artifacts). `agentguard setup` turns it on for new setups, with a key at `<data-dir>/audit-seal.key`.
+Since v1.4.0 the file audit log can be sealed into a hash chain: `vanzik server --audit-seal --audit-seal-key-file <key>`. Every entry gets `seq`, `prev_hash` and `hash`, and each rotated file's header names the last entry of the file before it. `vanzik audit verify` checks all of it offline. Sealing is off by default, works with the file backend only (`--audit-backend=store` with `--audit-seal` is refused at startup), and is not encryption. The format and the hashing rule are in [FILE_FORMATS](FILE_FORMATS.md#current-on-disk-artifacts). `vanzik setup` turns it on for new setups, with a key at `<data-dir>/audit-seal.key`.
 
 **The key.** Any random string works; `openssl rand -hex 32 > audit-seal.key && chmod 600 audit-seal.key` makes a good one. The server refuses a key file that is missing, empty or readable by every user. Keep a copy somewhere other than the audit host: `verify` needs it, and anyone who has it can forge a valid chain. To change keys, restart the server with the new key file; the entries after the restart are sealed with it, and `verify` needs both (`--key-file old --key-file new`). Without `--audit-seal-key-file` the chain is plain SHA-256 and the server warns at startup: it shows naive edits, but anyone who can write the file can recompute it.
 
 **Anchors.** An anchor is the head of the chain: the `seq` and `hash` of the newest sealed entry. The server publishes one every `--audit-anchor-interval` (default `5m`, `0` turns the periodic one off; skipped when nothing new was sealed), at startup, at each rotation and at shutdown:
 
 - a log line, `audit anchor segment=<segment_id> seq=<n> hash=<hex>`, on stderr, so it reaches journald, syslog or whatever collects the server's log;
-- the `agentguard_audit_seal_seq` gauge on `/metrics`;
+- the `vanzik_audit_seal_seq` gauge on `/metrics`;
 - `GET /v1/audit/head` (Bearer or session, like `GET /v1/audit`) returns the current head as JSON at any time. See [API](API.md#get-v1audithead--tenant-aware-mirror).
 
-Ship anchors off the box: forward the server log to a SIEM, scrape the gauge into Prometheus, or poll `/v1/audit/head` from another machine and keep what it returns. Later, `agentguard audit verify --anchor <seq>:<hash>` checks that the log still contains that entry with that hash.
+Ship anchors off the box: forward the server log to a SIEM, scrape the gauge into Prometheus, or poll `/v1/audit/head` from another machine and keep what it returns. Later, `vanzik audit verify --anchor <seq>:<hash>` checks that the log still contains that entry with that hash.
 
 **What verify proves.** If `verify` passes with your key, no sealed entry was changed, removed, inserted or reordered by someone without the key, and no file between the oldest one left and the live file is missing. Archives are named in write order and pruning deletes the oldest first, so `verify` tells pruning apart from a removed or unlinked archive: an archive still on disk behind a missing link is reported as broken. Once a file says it is sealed, an entry without a hash is reported as inserted, and with `--key-file` a log that declares no seal at all, or declares it only after every entry, fails. Without a key, a log whose entries are all unsealed is reported as `NOT SEALED` (exit 1), never as intact. With an anchor that matches, nothing up to the anchor's `seq` was rewritten, even by someone with the key.
 
 **What it does not prove.**
-- That the newest entries are all there. Cutting entries off the end leaves a shorter chain that still verifies. An anchor taken before the cut shows it (`MISSING: the log ends at seq …`); so does the startup check against the replay checkpoint (`WARNING audit: … possible truncation`, `agentguard_audit_seal_tail_mismatch_total`).
+- That the newest entries are all there. Cutting entries off the end leaves a shorter chain that still verifies. An anchor taken before the cut shows it (`MISSING: the log ends at seq …`); so does the startup check against the replay checkpoint (`WARNING audit: … possible truncation`, `vanzik_audit_seal_tail_mismatch_total`).
 - Anything about pruned files. When `--audit-max-backups` or `--audit-max-age-days` delete archives, `verify` says where the chain starts (`The chain starts at seq N (older files were pruned)`) and reports anchors in the pruned range as not checkable.
 - Anything about entries written before sealing was turned on. `verify` counts them and says they are not protected.
 - That an entry is true. The chain covers what the server wrote, after redaction.
@@ -144,10 +144,10 @@ survive a *restart*, but each replica keeps its own working copy):
 
 Mitigations if you must run multiple replicas *without* PostgreSQL:
 
-1. **Run one replica.** Scale vertically. AgentGuard is a latency-sensitive sidecar, not a throughput bottleneck — one well-sized instance usually handles thousands of agents.
+1. **Run one replica.** Scale vertically. Vanzik is a latency-sensitive sidecar, not a throughput bottleneck — one well-sized instance usually handles thousands of agents.
 2. **Pin sessions.** Configure your load balancer for session affinity on `session_id` (header or cookie). Rate-limit buckets still drift across replicas for multi-session agents, but cost accounting becomes accurate.
 3. **Divide limits by replica count.** If you run 3 replicas and want a global cap of 30 req/min, set `max_requests: 10`. Works only for steady-state traffic; burst behavior remains sloppy.
-4. **Aggregate externally.** Have each replica emit `/metrics` to Prometheus; alert on aggregate drift between declared and observed rates. Treat AgentGuard rate limits as best-effort and backstop with an upstream rate limiter (the reverse proxy, a CDN, or an API gateway).
+4. **Aggregate externally.** Have each replica emit `/metrics` to Prometheus; alert on aggregate drift between declared and observed rates. Treat Vanzik rate limits as best-effort and backstop with an upstream rate limiter (the reverse proxy, a CDN, or an API gateway).
 
 ---
 
@@ -169,7 +169,7 @@ Operational guidance:
 - **Resolve approvals fast.** A backlog >1k almost always means nobody is triaging.
 - **Set SDK approval timeouts higher than your human SLA**, but not so high that a restart silently hangs agents. A practical rule: `timeout = expected_human_response_time + restart_budget`.
 - **Avoid restarts during business hours.** Use rolling restarts with drained approval queues if at all possible.
-- **Watch `agentguard_pending_approvals`** (gauge in `/metrics`). Sustained growth = triage is not keeping up.
+- **Watch `vanzik_pending_approvals`** (gauge in `/metrics`). Sustained growth = triage is not keeping up.
 
 ---
 
@@ -206,10 +206,10 @@ Operational guidance:
 
 Dispatch is **non-blocking**: `Dispatcher.Send(event)` enqueues one job per configured notifier. If the queue is full (a slow Slack webhook is the usual culprit), the event is dropped and counted:
 
-- `agentguard_notify_events_dropped_total{notifier, reason}` — Prometheus counter.
+- `vanzik_notify_events_dropped_total{notifier, reason}` — Prometheus counter.
 - `notify.DroppedEvents` — atomic `uint64` for in-process Go consumers.
-- `agentguard_notify_queue_depth{notifier}` — current queue depth.
-- `agentguard_notify_dispatch_duration_seconds{notifier}` — histogram of per-target HTTP latency.
+- `vanzik_notify_queue_depth{notifier}` — current queue depth.
+- `vanzik_notify_dispatch_duration_seconds{notifier}` — histogram of per-target HTTP latency.
 
 Tune by:
 
@@ -224,7 +224,7 @@ Tune by:
 If your agents use long-lived `session_id`s, the `sessionCosts` map can grow unbounded. Two flags control eviction:
 
 ```bash
-agentguard server \
+vanzik server \
   --session-cost-ttl 24h \
   --session-cost-sweep-interval 1h \
   ...
@@ -241,10 +241,10 @@ Trade-off: a short TTL resets session totals mid-run if an agent goes idle longe
 
 ## MCP Gateway and LLM API Proxy
 
-Both wire-level enforcement points are **stateless** — they fan every gated request out to the AgentGuard server. Restart freely, no audit replay on boot.
+Both wire-level enforcement points are **stateless** — they fan every gated request out to the Vanzik server. Restart freely, no audit replay on boot.
 
 - **Health:** the LLM API Proxy serves `GET /healthz` on its listen port — use it as the readiness probe. The MCP Gateway is a stdio bridge with no HTTP listener; probe the process, not a port.
-- **Metrics:** neither proxy binary exposes `/metrics` — the central `agentguard server` does. See [`OBSERVABILITY.md`](OBSERVABILITY.md#mcp-gateway--llm-api-proxy-metrics-v05) for what is and isn't observable at the proxies.
+- **Metrics:** neither proxy binary exposes `/metrics` — the central `vanzik server` does. See [`OBSERVABILITY.md`](OBSERVABILITY.md#mcp-gateway--llm-api-proxy-metrics-v05) for what is and isn't observable at the proxies.
 - **Shutdown:** the LLM API Proxy buffers tool calls inside streaming responses; give it 30 s graceful drain (`TimeoutStopSec=30s` / `terminationGracePeriodSeconds: 30`). A hard kill truncates the client's response.
 - **Version skew:** keep all binaries on the same `0.x.y`. The wire protocol is stable within a minor line; cross-minor mixing is unsupported. Upgrade the server first, then the proxies.
 - **Topology:** prefer per-agent sidecars — shared proxies couple every agent's lifecycle.
@@ -255,9 +255,9 @@ Both wire-level enforcement points are **stateless** — they fan every gated re
 
 Three things are worth backing up:
 
-1. **Policy files** (`configs/*.yaml`) — version control them. Every change should land through a commit and, if possible, a CI `agentguard validate` check.
+1. **Policy files** (`configs/*.yaml`) — version control them. Every change should land through a commit and, if possible, a CI `vanzik validate` check.
 2. **Audit log archive** — whatever your shipper lands in S3 / object storage. The local `audit.jsonl` is the working copy; the archive is truth. Retain per your compliance requirements.
-3. **The durable store** (v0.6) — `agentguard.db` plus its `-wal`/`-shm` sidecars in `--data-dir`. It holds pending approvals, rate-limit buckets, cost accumulators, and (with `--audit-backend=store`) the audit trail. Snapshot it with the process stopped, or use SQLite-aware tooling (`sqlite3 .backup`) on a live file — copying `agentguard.db` alone mid-write can produce a torn backup.
+3. **The durable store** (v0.6) — `vanzik.db` plus its `-wal`/`-shm` sidecars in `--data-dir`. It holds pending approvals, rate-limit buckets, cost accumulators, and (with `--audit-backend=store`) the audit trail. Snapshot it with the process stopped, or use SQLite-aware tooling (`sqlite3 .backup`) on a live file — copying `vanzik.db` alone mid-write can produce a torn backup.
 
 The dashboard session store is the one piece that stays ephemeral by design — don't back it up.
 
@@ -270,7 +270,7 @@ Before a scheduled restart in production:
 - [ ] Pending approvals checked (`curl .../api/pending`) — with `--persist` (default) they survive the restart but sit unresolvable while the process is down; with `--persist=false` they are lost.
 - [ ] Agents are either idle or configured with a generous `wait_for_approval` / `waitForApproval` timeout.
 - [ ] Audit log recently archived, so replay latency on boot is bounded.
-- [ ] You know how to roll back the binary if the new version fails (`agentguard version`).
+- [ ] You know how to roll back the binary if the new version fails (`vanzik version`).
 
 Graceful shutdown handles SIGINT and SIGTERM — the process drains in-flight requests up to `ShutdownTimeout` before exiting.
 
@@ -284,7 +284,7 @@ For a single replica on modern hardware:
 - Memory: base ~50 MB; linear growth with audit log size during startup replay only.
 - Disk: **audit log drives this**. Size for at least 2× your retention window.
 
-For higher throughput, benchmark with your actual policy before scaling. The response headers `X-AgentGuard-Policy-Ms`, `X-AgentGuard-Audit-Ms`, `X-AgentGuard-Total-Ms` give you a per-request breakdown.
+For higher throughput, benchmark with your actual policy before scaling. The response headers `X-Vanzik-Policy-Ms`, `X-Vanzik-Audit-Ms`, `X-Vanzik-Total-Ms` give you a per-request breakdown.
 
 ---
 

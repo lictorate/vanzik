@@ -1,6 +1,6 @@
 # Local Setup Guide
 
-Get AgentGuard running on your machine in under 5 minutes.
+Get Vanzik running on your machine in under 5 minutes.
 
 ## Prerequisites
 
@@ -14,12 +14,12 @@ Get AgentGuard running on your machine in under 5 minutes.
 
 ## What you're setting up
 
-AgentGuard is the **wire-level checkpoint** that sits between your agent and everything it touches. It runs as one or more of three enforcement layers, plus the AgentGuard server that owns policy + audit + approvals.
+Vanzik is the **wire-level checkpoint** that sits between your agent and everything it touches. It runs as one or more of three enforcement layers, plus the Vanzik server that owns policy + audit + approvals.
 
 | Layer | Binary | Use for | Code change |
 |---|---|---|---|
-| MCP traffic | `agentguard-mcp-gateway` | Claude Desktop, Cursor, Cline, Continue, Zed | None |
-| LLM API calls | `agentguard-llm-proxy` | OpenAI / Anthropic SDK code | One env var |
+| MCP traffic | `vanzik-mcp-gateway` | Claude Desktop, Cursor, Cline, Continue, Zed | None |
+| LLM API calls | `vanzik-llm-proxy` | OpenAI / Anthropic SDK code | One env var |
 | Direct calls | Python / TypeScript SDK + adapters | Custom code, framework integrations | Per-call `guard.check(...)` |
 
 Layer-specific quickstarts: [`QUICKSTART_MCP.md`](QUICKSTART_MCP.md) · [`QUICKSTART_LLM_PROXY.md`](QUICKSTART_LLM_PROXY.md). The rest of this guide covers building the binaries, running the server, and using the SDK.
@@ -30,81 +30,83 @@ Layer-specific quickstarts: [`QUICKSTART_MCP.md`](QUICKSTART_MCP.md) · [`QUICKS
 
 The installers download the prebuilt binaries for your OS and CPU, check them against the release's `checksums.txt`, install all three binaries, and write a starter policy if you don't have one yet. Running the same command again updates to the latest release.
 
+Upgrading from AgentGuard 1.x (this project's name before 2.0)? The same commands move your AgentGuard setup over (its folders, database, login service and coding-agent hooks) with `vanzik migrate --from-agentguard`; see [`MIGRATION.md`](MIGRATION.md#v1x-to-v20).
+
 ```bash
 # Linux / macOS — binaries in ~/.local/bin (or /usr/local/bin as root),
-# starter policy in ~/.config/agentguard/default.yaml (or /etc/agentguard/ as root)
-curl -fsSL https://github.com/Caua-ferraz/AgentGuard/releases/latest/download/install.sh | sh
+# starter policy in ~/.config/vanzik/default.yaml (or /etc/vanzik/ as root)
+curl -fsSL https://github.com/lictorate/vanzik/releases/latest/download/install.sh | sh
 ```
 
 ```powershell
-# Windows — binaries in %LOCALAPPDATA%\Programs\AgentGuard\bin (added to your user PATH),
-# starter policy in %APPDATA%\agentguard\default.yaml
-irm https://github.com/Caua-ferraz/AgentGuard/releases/latest/download/install.ps1 | iex
+# Windows — binaries in %LOCALAPPDATA%\Programs\Vanzik\bin (added to your user PATH),
+# starter policy in %APPDATA%\vanzik\default.yaml
+irm https://github.com/lictorate/vanzik/releases/latest/download/install.ps1 | iex
 ```
 
 | Variable | Effect |
 |---|---|
-| `AGENTGUARD_VERSION` | Install this version (e.g. `1.2.0`) instead of the latest |
-| `AGENTGUARD_INSTALL_DIR` | Install the binaries here |
-| `AGENTGUARD_DOWNLOAD_URL` | Download the release files from this base URL (a mirror, or an internal server for air-gapped hosts) |
-| `AGENTGUARD_NO_MODIFY_PATH=1` | Windows only: leave the user PATH unchanged |
+| `VANZIK_VERSION` | Install this version (e.g. `1.2.0`) instead of the latest |
+| `VANZIK_INSTALL_DIR` | Install the binaries here |
+| `VANZIK_DOWNLOAD_URL` | Download the release files from this base URL (a mirror, or an internal server for air-gapped hosts) |
+| `VANZIK_NO_MODIFY_PATH=1` | Windows only: leave the user PATH unchanged |
 
-The installers never overwrite an existing starter policy. To check provenance as well as checksums, download an archive from the [releases page](https://github.com/Caua-ferraz/AgentGuard/releases) and run `gh attestation verify <archive> --repo Caua-ferraz/AgentGuard`.
+The installers never overwrite an existing starter policy. To check provenance as well as checksums, download an archive from the [releases page](https://github.com/lictorate/vanzik/releases) and run `gh attestation verify <archive> --repo lictorate/vanzik`.
 
-Next, run **`agentguard setup`**. From a menu, it starts AgentGuard at login (no admin rights), protects it with an API key only you can read, and shows how to connect the SDKs and Claude Desktop; the same menu updates and uninstalls later ([`CLI.md`](CLI.md#agentguard-setup)).
+Next, run **`vanzik setup`**. From a menu, it starts Vanzik at login (no admin rights), protects it with an API key only you can read, and shows how to connect the SDKs and Claude Desktop; the same menu updates and uninstalls later ([`CLI.md`](CLI.md#vanzik-setup)).
 
 If you'd rather run the server yourself, the commands below work without the leading `./`, and you can leave out `--policy configs/default.yaml`: `server`, `validate` and `check` find the installer's starter policy on their own ([`CLI.md`](CLI.md#policy-file)).
 
 #### Update
 
-Run `agentguard setup` and choose **Update**: it downloads the new release, checks it against `checksums.txt`, swaps the binaries and restarts the server. Or run the same install command again. It replaces the three binaries, keeps your policy, and says what changed: `Updated AgentGuard 1.2.0 -> 1.3.0`, `Reinstalled AgentGuard 1.3.0 (it was already on this version)`, or — when `AGENTGUARD_VERSION` pins an older release — `Downgraded AgentGuard 1.3.0 -> 1.2.0` followed by a warning. The `agentguard` CLI prints a one-line notice with the right command when a newer release is out (`server` never checks; see [`CLI.md`](CLI.md#update-notice-on-startup-v051)).
+Run `vanzik setup` and choose **Update**: it downloads the new release, checks it against `checksums.txt`, swaps the binaries and restarts the server. Or run the same install command again. It replaces the three binaries, keeps your policy, and says what changed: `Updated Vanzik 1.2.0 -> 1.3.0`, `Reinstalled Vanzik 1.3.0 (it was already on this version)`, or — when `VANZIK_VERSION` pins an older release — `Downgraded Vanzik 1.3.0 -> 1.2.0` followed by a warning. The `vanzik` CLI prints a one-line notice with the right command when a newer release is out (`server` never checks; see [`CLI.md`](CLI.md#update-notice-on-startup-v051)).
 
 #### Uninstall
 
-Run `agentguard setup` and choose **Uninstall…**: it also removes the login service, works offline, and asks whether to keep your policy, key and data. Or use the installer:
+Run `vanzik setup` and choose **Uninstall…**: it also removes the login service, works offline, and asks whether to keep your policy, key and data. Or use the installer:
 
 ```bash
 # Linux / macOS (add --purge to delete the policy folder too)
-curl -fsSL https://github.com/Caua-ferraz/AgentGuard/releases/latest/download/install.sh | sh -s -- --uninstall
+curl -fsSL https://github.com/lictorate/vanzik/releases/latest/download/install.sh | sh -s -- --uninstall
 ```
 
 ```powershell
-# Windows (also set $env:AGENTGUARD_PURGE=1 to delete the policy folder too)
-$env:AGENTGUARD_UNINSTALL=1; irm https://github.com/Caua-ferraz/AgentGuard/releases/latest/download/install.ps1 | iex
+# Windows (also set $env:VANZIK_PURGE=1 to delete the policy folder too)
+$env:VANZIK_UNINSTALL=1; irm https://github.com/lictorate/vanzik/releases/latest/download/install.ps1 | iex
 ```
 
-The uninstall removes the three binaries — on Windows also the folder's entry on your user PATH — and keeps your policy folder, printing where it is. Audit logs and the state database live wherever you ran `agentguard server`, so it cannot know their path and leaves them alone. Run it as the same user that installed (with `sudo` for a root install in `/usr/local/bin`); with `AGENTGUARD_INSTALL_DIR` set, it removes from that folder. On Windows, stop any running AgentGuard first: the uninstall refuses rather than removing half of it. `AGENTGUARD_UNINSTALL=1` works on Linux and macOS too; on Windows the variable is cleared once read, so a later install in the same window installs.
+The uninstall removes the three binaries — on Windows also the folder's entry on your user PATH — and keeps your policy folder, printing where it is. Audit logs and the state database live wherever you ran `vanzik server`, so it cannot know their path and leaves them alone. Run it as the same user that installed (with `sudo` for a root install in `/usr/local/bin`); with `VANZIK_INSTALL_DIR` set, it removes from that folder. On Windows, stop any running Vanzik first: the uninstall refuses rather than removing half of it. `VANZIK_UNINSTALL=1` works on Linux and macOS too; on Windows the variable is cleared once read, so a later install in the same window installs.
 
-For the container image, stop and remove the container; `docker volume rm agentguard-audit` (or whatever volume you mounted at `/var/lib/agentguard`) deletes the audit trail.
+For the container image, stop and remove the container; `docker volume rm vanzik-audit` (or whatever volume you mounted at `/var/lib/vanzik`) deletes the audit trail.
 
 #### Or build from source
 
 ```bash
-git clone https://github.com/Caua-ferraz/AgentGuard.git
-cd AgentGuard
+git clone https://github.com/lictorate/vanzik.git
+cd Vanzik
 
 # Central server (always needed)
-go build -o agentguard ./cmd/agentguard
+go build -o vanzik ./cmd/vanzik
 
 # MCP Gateway (only if you're integrating MCP clients)
-go build -o agentguard-mcp-gateway ./cmd/agentguard-mcp-gateway
+go build -o vanzik-mcp-gateway ./cmd/vanzik-mcp-gateway
 
 # LLM API Proxy (only if you're proxying OpenAI / Anthropic SDK traffic)
-go build -o agentguard-llm-proxy ./cmd/agentguard-llm-proxy
+go build -o vanzik-llm-proxy ./cmd/vanzik-llm-proxy
 ```
 
 On Windows append `.exe` to each `-o` target. Or install everything from a remote tag:
 
 ```bash
-go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard@latest
-go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard-mcp-gateway@latest
-go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard-llm-proxy@latest
+go install lictorate.com/vanzik/v2/cmd/vanzik@latest
+go install lictorate.com/vanzik/v2/cmd/vanzik-mcp-gateway@latest
+go install lictorate.com/vanzik/v2/cmd/vanzik-llm-proxy@latest
 ```
 
 ### 2. Validate the Default Policy
 
 ```bash
-./agentguard validate --policy configs/default.yaml
+./vanzik validate --policy configs/default.yaml
 # Output: VALID: default-sandbox — 61 rules across 5 scopes  (numbers vary as the default ships more rules)
 ```
 
@@ -112,20 +114,20 @@ go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard-llm-proxy@latest
 
 ```bash
 # Basic
-./agentguard server --policy configs/default.yaml
+./vanzik server --policy configs/default.yaml
 
 # With the dashboard, logging each policy reload (reloading is always on)
-./agentguard server --policy configs/default.yaml --dashboard --watch
+./vanzik server --policy configs/default.yaml --dashboard --watch
 
 # Custom port
-./agentguard server --policy configs/default.yaml --port 9090 --dashboard
+./vanzik server --policy configs/default.yaml --port 9090 --dashboard
 ```
 
 ### 4. Verify It's Running
 
 ```bash
 curl http://localhost:8080/health
-# {"status":"ok","version":"1.4.0"}
+# {"status":"ok","version":"2.0.0"}
 ```
 
 Open `http://localhost:8080/dashboard` in your browser to see the live dashboard.
@@ -168,14 +170,14 @@ for local dev, but approve/deny/audit/status are unauthenticated. For
 anything beyond local dev, set an API key:
 
 ```bash
-./agentguard server \
+./vanzik server \
   --policy configs/default.yaml \
   --api-key YOUR_SECRET \
   --dashboard
 
 # Or via environment (server + CLI both read this):
-export AGENTGUARD_API_KEY=YOUR_SECRET
-./agentguard server --policy configs/default.yaml --dashboard
+export VANZIK_API_KEY=YOUR_SECRET
+./vanzik server --policy configs/default.yaml --dashboard
 ```
 
 Which endpoints the key gates (and which stay open), the dashboard
@@ -192,13 +194,13 @@ login/CSRF flow, Bearer-vs-session `curl` recipes, and CORS
 
 ```bash
 # From PyPI
-pip install agentguardproxy
+pip install vanzik
 
 # With framework adapters
-pip install agentguardproxy[langchain]
-pip install agentguardproxy[crewai]
-pip install agentguardproxy[browser-use]
-pip install agentguardproxy[all]
+pip install vanzik[langchain]
+pip install vanzik[crewai]
+pip install vanzik[browser-use]
+pip install vanzik[all]
 
 # Or from source (editable / development)
 cd plugins/python
@@ -208,9 +210,9 @@ pip install -e ".[dev]"
 ### Basic Usage
 
 ```python
-from agentguard import Guard
+from vanzik import Guard
 
-# base_url / api_key fall back to AGENTGUARD_URL / AGENTGUARD_API_KEY.
+# base_url / api_key fall back to VANZIK_URL / VANZIK_API_KEY.
 guard = Guard("http://localhost:8080", agent_id="my-agent", api_key="YOUR_SECRET")
 
 result = guard.check("shell", command="ls -la")
@@ -232,25 +234,25 @@ rules and per-framework gotchas live in [`ADAPTERS.md`](ADAPTERS.md).
 ### Install
 
 ```bash
-# From npm (published from 1.1.1)
-npm install @lictorate/agentguard
+# From npm
+npm install @lictorate/vanzik
 
 # Or from source: build the package, then install it into your project
 cd plugins/typescript
 npm ci
 npm run build
-cd /path/to/your-project && npm install /path/to/AgentGuard/plugins/typescript
+cd /path/to/your-project && npm install /path/to/Vanzik/plugins/typescript
 ```
 
 ### Usage
 
 ```typescript
-import { AgentGuard } from '@lictorate/agentguard';
+import { Vanzik } from '@lictorate/vanzik';
 
-const guard = new AgentGuard({
+const guard = new Vanzik({
   baseUrl: 'http://localhost:8080',
   agentId: 'my-bot',
-  apiKey: process.env.AGENTGUARD_API_KEY,
+  apiKey: process.env.VANZIK_API_KEY,
   // failMode: 'deny' (default) — server unreachable ⇒ check() returns DENY.
 });
 
@@ -269,60 +271,60 @@ See the package README in
 
 ```bash
 # Start the server
-agentguard server --policy configs/default.yaml --dashboard --watch
+vanzik server --policy configs/default.yaml --dashboard --watch
 
-# With authentication (also reads AGENTGUARD_API_KEY from the environment)
-agentguard server --policy configs/default.yaml --api-key YOUR_SECRET --dashboard
+# With authentication (also reads VANZIK_API_KEY from the environment)
+vanzik server --policy configs/default.yaml --api-key YOUR_SECRET --dashboard
 
 # Validate policy files (no server needed)
-agentguard validate --policy configs/default.yaml
+vanzik validate --policy configs/default.yaml
 
-# Approve / deny — accept --api-key or AGENTGUARD_API_KEY env var.
-agentguard approve --api-key YOUR_SECRET ap_abc123def456
-AGENTGUARD_API_KEY=YOUR_SECRET agentguard deny ap_abc123def456
+# Approve / deny — accept --api-key or VANZIK_API_KEY env var.
+vanzik approve --api-key YOUR_SECRET ap_abc123def456
+VANZIK_API_KEY=YOUR_SECRET vanzik deny ap_abc123def456
 
 # Check server status and pending approvals (auth required if server is gated)
-agentguard status --api-key YOUR_SECRET
+vanzik status --api-key YOUR_SECRET
 
 # Query the audit log with filters
-agentguard audit --agent my-bot --decision DENY --limit 20 --api-key YOUR_SECRET
+vanzik audit --agent my-bot --decision DENY --limit 20 --api-key YOUR_SECRET
 
 # Print version
-agentguard version
+vanzik version
 ```
 
 The full `server` flag table (persistence, audit rotation, buffered async
 logger, session-cost TTL, base-url/CORS) lives in
-[`CLI.md`](CLI.md#agentguard-server); `agentguard server -h` prints the same
+[`CLI.md`](CLI.md#vanzik-server); `vanzik server -h` prints the same
 list.
 
 ### Wire-level enforcement points
 
-Two additional binaries enforce at the wire. Both need `--guard-url` pointing at `agentguard server`, and both read `AGENTGUARD_API_KEY` for authenticated server calls.
+Two additional binaries enforce at the wire. Both need `--guard-url` pointing at `vanzik server`, and both read `VANZIK_API_KEY` for authenticated server calls.
 
-- **`agentguard-mcp-gateway`** — sits between an MCP client and one or more MCP servers. Quickstart with copy-paste configs: [`QUICKSTART_MCP.md`](QUICKSTART_MCP.md). Reference: [`MCP_GATEWAY.md`](MCP_GATEWAY.md).
-- **`agentguard-llm-proxy`** — sits between OpenAI / Anthropic SDK code and the providers. Quickstart: [`QUICKSTART_LLM_PROXY.md`](QUICKSTART_LLM_PROXY.md). Reference: [`LLM_API_PROXY.md`](LLM_API_PROXY.md).
+- **`vanzik-mcp-gateway`** — sits between an MCP client and one or more MCP servers. Quickstart with copy-paste configs: [`QUICKSTART_MCP.md`](QUICKSTART_MCP.md). Reference: [`MCP_GATEWAY.md`](MCP_GATEWAY.md).
+- **`vanzik-llm-proxy`** — sits between OpenAI / Anthropic SDK code and the providers. Quickstart: [`QUICKSTART_LLM_PROXY.md`](QUICKSTART_LLM_PROXY.md). Reference: [`LLM_API_PROXY.md`](LLM_API_PROXY.md).
 
 ---
 
 ## Using Docker
 
 ```bash
-docker build -t agentguard:latest .
+docker build -t vanzik:latest .
 
 # The API key is required: without it the server binds 127.0.0.1 inside
 # the container and the published port is unreachable.
 # Default policy is baked in; mount a named volume so the audit log
 # survives container restarts.
-export AGENTGUARD_API_KEY="$(openssl rand -hex 32)"
-docker run -d -p 8080:8080 --name agentguard \
-  -e AGENTGUARD_API_KEY="$AGENTGUARD_API_KEY" \
-  -v agentguard-audit:/var/lib/agentguard \
-  agentguard:latest
+export VANZIK_API_KEY="$(openssl rand -hex 32)"
+docker run -d -p 8080:8080 --name vanzik \
+  -e VANZIK_API_KEY="$VANZIK_API_KEY" \
+  -v vanzik-audit:/var/lib/vanzik \
+  vanzik:latest
 ```
 
 `make docker-run` does the same build and run, and stops early if
-`AGENTGUARD_API_KEY` isn't set.
+`VANZIK_API_KEY` isn't set.
 
 Custom-policy mounts, the non-root uid-10001 volume-permission gotcha,
 Compose, and Kubernetes manifests are in
@@ -350,7 +352,7 @@ where fsnotify isn't available). `--watch` only adds a log line for each
 reload:
 
 ```bash
-agentguard server --policy configs/default.yaml --watch
+vanzik server --policy configs/default.yaml --watch
 # 2026/09/23 21:59:11 Policy reloaded: default-sandbox (56 rules)
 ```
 
@@ -389,7 +391,7 @@ make validate
 # Python SDK tests (adapter unit tests need framework extras)
 cd plugins/python
 pip install -e ".[dev,langchain,crewai,mcp]"
-pytest -v --cov=agentguard
+pytest -v --cov=vanzik
 
 # TypeScript SDK tests
 cd plugins/typescript && npm install && npm run build && npm test
@@ -400,15 +402,15 @@ cd plugins/typescript && npm install && npm run build && npm test
 ## Project Structure
 
 ```
-agentguard/
+vanzik/
 ├── cmd/
-│   ├── agentguard/                  # Central server CLI (serve / validate / check / migrate / …)
+│   ├── vanzik/                  # Central server CLI (serve / validate / check / migrate / …)
 │   │   ├── main.go
 │   │   ├── check_cmd.go
 │   │   └── update_check.go
-│   ├── agentguard-mcp-gateway/      # v0.5 MCP Gateway binary
+│   ├── vanzik-mcp-gateway/      # v0.5 MCP Gateway binary
 │   │   └── main.go
-│   └── agentguard-llm-proxy/        # v0.5 LLM API Proxy binary
+│   └── vanzik-llm-proxy/        # v0.5 LLM API Proxy binary
 │       └── main.go
 ├── pkg/
 │   ├── policy/                      # Policy engine (YAML parsing, rule evaluation, providers)
@@ -421,7 +423,7 @@ agentguard/
 │   └── migrate/                     # On-disk schema migrations (audit / checkpoint format)
 ├── plugins/
 │   ├── python/                      # Python SDK + framework adapters
-│   │   ├── agentguard/
+│   │   ├── vanzik/
 │   │   │   ├── __init__.py          # Guard, @guarded, exception hierarchy
 │   │   │   └── adapters/
 │   │   │       ├── langchain.py     # GuardedTool, GuardedToolkit (subclasses BaseTool)
@@ -438,7 +440,7 @@ agentguard/
 │   └── examples/
 ├── examples/                        # MCP-client + SDK config snippets ready to copy
 ├── docs/                            # Documentation
-├── Dockerfile                       # Image shipping the `agentguard` server binary
+├── Dockerfile                       # Image shipping the `vanzik` server binary
 ├── Makefile                         # build / test / test-all / docker / …
 └── README.md
 ```

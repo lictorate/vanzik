@@ -19,7 +19,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // maxRespBytes mirrors the unexported cap inside CallV1Check. If that constant

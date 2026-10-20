@@ -18,11 +18,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
-// mockGuardServer stands in for the central AgentGuard /v1/check
+// mockGuardServer stands in for the central Vanzik /v1/check
 // endpoint. Tests register a handler that returns the desired
 // CheckResult; the server records every received ActionRequest for
 // cross-call assertions.
@@ -330,7 +330,7 @@ func TestLLMHTTPPolicyClient_StampsMappedScope(t *testing.T) {
 	}{
 		{"read_file", map[string]interface{}{"path": "/tmp/x"}, "filesystem"},
 		{"bash", map[string]interface{}{"command": "ls"}, "shell"},
-		{"web_search", map[string]interface{}{"query": "agentguard"}, "network"},
+		{"web_search", map[string]interface{}{"query": "vanzik"}, "network"},
 		{"fetch_url", map[string]interface{}{"url": "https://example.com"}, "network"},
 		{"playwright_click", map[string]interface{}{"selector": "#submit"}, "browser"},
 	}

@@ -1,11 +1,11 @@
 # LLM API Proxy Quickstart (90 seconds)
 
 You'll go from "OpenAI SDK calls api.openai.com directly" to "OpenAI
-SDK calls flow through AgentGuard, with every tool call policy-gated"
+SDK calls flow through Vanzik, with every tool call policy-gated"
 in under 90 seconds.
 
 By the end, every `chat.completions.create(...)` call your agent makes
-passes through AgentGuard, is evaluated against a YAML policy, and
+passes through Vanzik, is evaluated against a YAML policy, and
 shows up live on a dashboard you can approve / deny from.
 
 ## Prerequisites
@@ -19,19 +19,19 @@ This walkthrough uses the OpenAI SDK. The same pattern works for
 Anthropic, LangChain, and CrewAI — see [`examples/`](../examples/)
 for ready-to-run scripts.
 
-## 30 seconds — install AgentGuard
+## 30 seconds — install Vanzik
 
 ```bash
-go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard@latest
-go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard-llm-proxy@latest
+go install lictorate.com/vanzik/v2/cmd/vanzik@latest
+go install lictorate.com/vanzik/v2/cmd/vanzik-llm-proxy@latest
 ```
 
 Confirm both binaries are on `PATH`:
 
 ```bash
-which agentguard agentguard-llm-proxy
-# /Users/you/go/bin/agentguard
-# /Users/you/go/bin/agentguard-llm-proxy
+which vanzik vanzik-llm-proxy
+# /Users/you/go/bin/vanzik
+# /Users/you/go/bin/vanzik-llm-proxy
 ```
 
 If `which` finds nothing, add `$(go env GOPATH)/bin` to your shell's
@@ -39,23 +39,23 @@ If `which` finds nothing, add `$(go env GOPATH)/bin` to your shell's
 
 ## 30 seconds — start the policy server + proxy
 
-You need two AgentGuard processes running side by side: the central
+You need two Vanzik processes running side by side: the central
 policy server (port 8080) and the LLM API Proxy (port 8081). Generate
 a shared API key, then start both.
 
 In the first terminal:
 
 ```bash
-export AGENTGUARD_API_KEY="$(openssl rand -hex 32)"
+export VANZIK_API_KEY="$(openssl rand -hex 32)"
 
-git clone https://github.com/Caua-ferraz/AgentGuard.git
-cd AgentGuard
+git clone https://github.com/lictorate/vanzik.git
+cd Vanzik
 
-agentguard server \
+vanzik server \
     --policy configs/default.yaml \
     --dashboard \
     --watch \
-    --api-key "$AGENTGUARD_API_KEY"
+    --api-key "$VANZIK_API_KEY"
 ```
 
 Open the dashboard at <http://127.0.0.1:8080/dashboard> and log in
@@ -64,13 +64,13 @@ with the API key. Leave this terminal running.
 In a second terminal (same env, same key):
 
 ```bash
-export AGENTGUARD_API_KEY="<paste the key from the first terminal>"
+export VANZIK_API_KEY="<paste the key from the first terminal>"
 
-agentguard-llm-proxy \
+vanzik-llm-proxy \
     --listen 127.0.0.1:8081 \
     --policy configs/default.yaml \
     --guard-url http://127.0.0.1:8080 \
-    --api-key "$AGENTGUARD_API_KEY"
+    --api-key "$VANZIK_API_KEY"
 ```
 
 The proxy refuses to bind to non-loopback hosts without
@@ -117,14 +117,14 @@ rules:
 ```
 
 The proxy hot-reloads the policy file automatically (its own watcher —
-no flag needed; `--watch` on `agentguard server` only logs reload
+no flag needed; `--watch` on `vanzik server` only logs reload
 activity). Modify the prompt in `examples/openai-sdk-config.py` to ask
 the model to `rm -rf /etc` and re-run. The model emits a tool call;
-AgentGuard intercepts it mid-stream and rewrites the response as a
+Vanzik intercepts it mid-stream and rewrites the response as a
 synthetic assistant text:
 
 ```
-AgentGuard denied this action.
+Vanzik denied this action.
 
 Reason: Action denied by shell deny rule
 Rule: deny:shell:rm -rf *

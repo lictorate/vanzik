@@ -2,9 +2,9 @@
 
 Companion to the short [`plugins/python/README.md`](../plugins/python/README.md). This page covers the details you need when things go sideways: fail modes, timeouts, exception semantics, adapter internals, and testing patterns.
 
-Package on PyPI: `agentguardproxy`. Import name: `agentguard`. `agentguard-sdk` on PyPI is an unrelated project that also installs an `agentguard` module — don't install both in the same environment.
+Package on PyPI: `vanzik`. Import name: `vanzik`. Before 2.0 the package was `agentguardproxy`, imported as `agentguard` (see [`MIGRATION.md`](MIGRATION.md#v1x-to-v20)).
 
-Source: `plugins/python/agentguard/core.py` (Guard client, exceptions, constants), `plugins/python/agentguard/decorators.py` (`@guarded`), and `plugins/python/agentguard/adapters/*.py` (framework integrations). The package `__init__.py` re-exports the public surface — always import from the package root.
+Source: `plugins/python/vanzik/core.py` (Guard client, exceptions, constants), `plugins/python/vanzik/decorators.py` (`@guarded`), and `plugins/python/vanzik/adapters/*.py` (framework integrations). The package `__init__.py` re-exports the public surface — always import from the package root.
 
 ---
 
@@ -27,26 +27,26 @@ Source: `plugins/python/agentguard/core.py` (Guard client, exceptions, constants
 ## Install and import
 
 ```bash
-pip install agentguardproxy            # core only
-pip install agentguardproxy[langchain]
-pip install agentguardproxy[crewai]
-pip install agentguardproxy[browser-use]
-pip install agentguardproxy[mcp]
-pip install 'agentguardproxy[openai-agents]'
-pip install agentguardproxy[all]       # everything
-pip install agentguardproxy[dev]       # pytest, coverage, etc.
+pip install vanzik            # core only
+pip install vanzik[langchain]
+pip install vanzik[crewai]
+pip install vanzik[browser-use]
+pip install vanzik[mcp]
+pip install 'vanzik[openai-agents]'
+pip install vanzik[all]       # everything
+pip install vanzik[dev]       # pytest, coverage, etc.
 ```
 
 ```python
-from agentguard import (
+from vanzik import (
     Guard, CheckResult, guarded,
-    AgentGuardError, AgentGuardDenied,
-    AgentGuardApprovalRequired, AgentGuardApprovalTimeout,
-    AgentGuardAuthError,
+    VanzikError, VanzikDenied,
+    VanzikApprovalRequired, VanzikApprovalTimeout,
+    VanzikAuthError,
 )
 ```
 
-**(v1.2)** `agentguard.__version__` is the SDK's version string, e.g. `"1.2.0"` — the same as the `agentguardproxy` release it ships in.
+**(v1.2)** `vanzik.__version__` is the SDK's version string, e.g. `"1.2.0"` — the same as the `vanzik` release it ships in.
 
 The core SDK has **no runtime dependencies** — it uses only the standard library (`urllib`, `json`, `dataclasses`, `functools`, `time`). Adapters pull in their respective frameworks through PyPI extras.
 
@@ -56,9 +56,9 @@ The core SDK has **no runtime dependencies** — it uses only the standard libra
 
 | Variable | Default | Consumed by |
 |---|---|---|
-| `AGENTGUARD_URL` | `http://localhost:8080` | `Guard(base_url="")` fallback. |
-| `AGENTGUARD_API_KEY` | *(empty)* | `Guard(api_key="")` fallback. Sent as `Authorization: Bearer <key>` on `/v1/approve/{id}`, `/v1/deny/{id}`, and every poll of `/v1/status/{id}` inside `wait_for_approval`. |
-| `AGENTGUARD_TENANT_ID` | *(empty)* | `Guard(tenant_id=None)` fallback. A value other than `local` routes every call to `/v1/t/<tenant>/…` (see [`API.md`](API.md#url-families-legacy-vs-tenant-aware-v05)). |
+| `VANZIK_URL` | `http://localhost:8080` | `Guard(base_url="")` fallback. |
+| `VANZIK_API_KEY` | *(empty)* | `Guard(api_key="")` fallback. Sent as `Authorization: Bearer <key>` on `/v1/approve/{id}`, `/v1/deny/{id}`, and every poll of `/v1/status/{id}` inside `wait_for_approval`. |
+| `VANZIK_TENANT_ID` | *(empty)* | `Guard(tenant_id=None)` fallback. A value other than `local` routes every call to `/v1/t/<tenant>/…` (see [`API.md`](API.md#url-families-legacy-vs-tenant-aware-v05)). |
 
 Explicit arguments always win over env vars; env vars always win over package defaults.
 
@@ -78,12 +78,12 @@ Guard(
 )
 ```
 
-- `base_url` — trailing `/` is stripped. Empty string falls back to `AGENTGUARD_URL`, then to `"http://localhost:8080"`.
+- `base_url` — trailing `/` is stripped. Empty string falls back to `VANZIK_URL`, then to `"http://localhost:8080"`.
 - `agent_id` — sent with every `check()` as the `agent_id` JSON field. Policy `agents.<id>.override` blocks key off this value.
 - `timeout` — per-HTTP-call timeout in seconds. Applies to `/v1/check`, `/v1/approve`, `/v1/deny`, and each poll inside `wait_for_approval`.
-- `api_key` — empty string falls back to `AGENTGUARD_API_KEY`. Required whenever the server is started with `--api-key`.
+- `api_key` — empty string falls back to `VANZIK_API_KEY`. Required whenever the server is started with `--api-key`.
 - `fail_mode` — see [Fail-mode semantics](#fail-mode-semantics). Invalid values raise `ValueError` at construction so misconfiguration fails at startup rather than mid-request.
-- `tenant_id` — `None` falls back to `AGENTGUARD_TENANT_ID`; an explicit `""` ignores the env var. Empty or `"local"` uses the legacy `/v1/…` URLs; any other value uses `/v1/t/<tenant>/…`, with the tenant URL-encoded.
+- `tenant_id` — `None` falls back to `VANZIK_TENANT_ID`; an explicit `""` ignores the env var. Empty or `"local"` uses the legacy `/v1/…` URLs; any other value uses `/v1/t/<tenant>/…`, with the tenant URL-encoded.
 - `parent_session_id` — **(v1.4)** sent as `parent_session_id` on every `check()` unless the call passes its own. See [Linking sub-agent sessions](#linking-sub-agent-sessions).
 
 ### Linking sub-agent sessions
@@ -165,17 +165,17 @@ These failures of `check()` collapse into a synthetic `CheckResult` controlled b
 - `urllib.error.URLError` — connection-phase failure (connect refused, DNS, SSL handshake), and HTTP error statuses (urllib raises `HTTPError`, a `URLError` subclass, for `4xx`/`5xx`).
 - `OSError` — post-connect failure (`ConnectionResetError`, `BrokenPipeError`, `socket.timeout` surfaced from `resp.read()`).
 - `json.JSONDecodeError` — the body parsed as non-JSON; from the caller's perspective this is indistinguishable from an unreachable proxy.
-- A response that isn't a valid decision: a `Content-Type` other than `application/json`, or a JSON body without a `decision` field (reason `AgentGuard returned unexpected content-type …` / `AgentGuard returned malformed response body`).
+- A response that isn't a valid decision: a `Content-Type` other than `application/json`, or a JSON body without a `decision` field (reason `Vanzik returned unexpected content-type …` / `Vanzik returned malformed response body`).
 
 ```python
 # fail_mode="deny" (default)
-CheckResult(decision="DENY",  reason="AgentGuard unreachable (deny): <original error>")
+CheckResult(decision="DENY",  reason="Vanzik unreachable (deny): <original error>")
 
 # fail_mode="allow"
-CheckResult(decision="ALLOW", reason="AgentGuard unreachable (allow): <original error>")
+CheckResult(decision="ALLOW", reason="Vanzik unreachable (allow): <original error>")
 ```
 
-**When to use `"allow"`:** rarely. Acceptable only if (a) your agent is already in a trusted environment, (b) AgentGuard is advisory rather than authoritative, and (c) you log and alert on the `"AgentGuard unreachable"` reason so the outage is visible.
+**When to use `"allow"`:** rarely. Acceptable only if (a) your agent is already in a trusted environment, (b) Vanzik is advisory rather than authoritative, and (c) you log and alert on the `"Vanzik unreachable"` reason so the outage is visible.
 
 **When to stick with `"deny"`:** any production path where an unsupervised agent must not act. That is the safe default and the v0.4.0 behavior.
 
@@ -189,7 +189,7 @@ CheckResult(decision="ALLOW", reason="AgentGuard unreachable (allow): <original 
 | `wait_for_approval(timeout=300)` | 300s | Wall-clock deadline for the whole poll loop. |
 | `wait_for_approval(poll_interval=2)` | 2s | Sleep between polls. |
 
-`wait_for_approval` quietly swallows individual poll failures (`URLError`, HTTP errors other than `401`/`403`, other `OSError`s, and a body that is not JSON) and keeps retrying until the deadline — the assumption is that the server is momentarily unreachable but will come back within the approval window. A final deadline miss returns `CheckResult(decision="DENY", reason="Approval timed out")`, which the `@guarded(wait_for_approval=True)` wrapper surfaces as `AgentGuardApprovalTimeout`.
+`wait_for_approval` quietly swallows individual poll failures (`URLError`, HTTP errors other than `401`/`403`, other `OSError`s, and a body that is not JSON) and keeps retrying until the deadline — the assumption is that the server is momentarily unreachable but will come back within the approval window. A final deadline miss returns `CheckResult(decision="DENY", reason="Approval timed out")`, which the `@guarded(wait_for_approval=True)` wrapper surfaces as `VanzikApprovalTimeout`.
 
 **Pick `timeout` higher than your human-SLA.** If approvers need 15 minutes on average, `timeout=300` will fire false negatives.
 
@@ -207,7 +207,7 @@ guard.wait_for_approval("ap_1a2b3c…",
                         poll_interval=2)  # CheckResult
 ```
 
-All three send `Authorization: Bearer <api_key>` when `api_key` is set. If the server was started without `--api-key`, the key is ignored. If the server **was** started with `--api-key` and you do not set one on the SDK side, the server answers `401`: `approve`/`deny` return `False`, and `wait_for_approval` raises `AgentGuardAuthError` (with `.status`) on the first `401`/`403` instead of polling until the deadline.
+All three send `Authorization: Bearer <api_key>` when `api_key` is set. If the server was started without `--api-key`, the key is ignored. If the server **was** started with `--api-key` and you do not set one on the SDK side, the server answers `401`: `approve`/`deny` return `False`, and `wait_for_approval` raises `VanzikAuthError` (with `.status`) on the first `401`/`403` instead of polling until the deadline.
 
 `approve`/`deny` treat any `URLError` as failure and return `False`. They do **not** distinguish network error from 4xx. If you need that distinction, call the HTTP API directly.
 
@@ -215,15 +215,15 @@ All three send `Authorization: Bearer <api_key>` when `api_key` is set. If the s
 
 ## Exception hierarchy
 
-The first three subclasses are raised by the `@guarded` decorator; `AgentGuardAuthError` is raised by `wait_for_approval` (and so also through `@guarded(wait_for_approval=True)`) when a status poll gets `401`/`403`. All extend `PermissionError` so legacy `except PermissionError:` keeps working.
+The first three subclasses are raised by the `@guarded` decorator; `VanzikAuthError` is raised by `wait_for_approval` (and so also through `@guarded(wait_for_approval=True)`) when a status poll gets `401`/`403`. All extend `PermissionError` so legacy `except PermissionError:` keeps working.
 
 ```
 PermissionError
-└── AgentGuardError         .result: Optional[CheckResult]
-    ├── AgentGuardDenied
-    ├── AgentGuardApprovalRequired   .approval_id, .approval_url
-    ├── AgentGuardApprovalTimeout    .approval_id
-    └── AgentGuardAuthError          .status
+└── VanzikError         .result: Optional[CheckResult]
+    ├── VanzikDenied
+    ├── VanzikApprovalRequired   .approval_id, .approval_url
+    ├── VanzikApprovalTimeout    .approval_id
+    └── VanzikAuthError          .status
 ```
 
 The `.result` attribute lets you skip re-parsing the reason string:
@@ -231,10 +231,10 @@ The `.result` attribute lets you skip re-parsing the reason string:
 ```python
 try:
     do_thing()
-except AgentGuardDenied as e:
+except VanzikDenied as e:
     log.warning("blocked by rule %s: %s",
                 e.result.matched_rule, e.result.reason)
-except AgentGuardApprovalRequired as e:
+except VanzikApprovalRequired as e:
     notify_slack(f"Action {e.approval_id} waiting at {e.approval_url}")
 ```
 
@@ -261,9 +261,9 @@ Behavior:
 3. Calls `guard.check(scope, command=..., **check_kwargs)`.
 4. Branches on the decision:
    - `ALLOW` → runs the wrapped function.
-   - `REQUIRE_APPROVAL` + `wait_for_approval=False` → raises `AgentGuardApprovalRequired` immediately.
-   - `REQUIRE_APPROVAL` + `wait_for_approval=True` → blocks on `wait_for_approval`. A resolved ALLOW is replayed through `guard.check(..., approval_id=...)` (consuming the one-shot approval and reserving cost) and the function runs only if that replay allows; a resolved DENY or a denied replay raises `AgentGuardDenied`; a refused replay that re-entered the approval flow raises `AgentGuardApprovalRequired` with the new id; timeout raises `AgentGuardApprovalTimeout`.
-   - `DENY` → raises `AgentGuardDenied`.
+   - `REQUIRE_APPROVAL` + `wait_for_approval=False` → raises `VanzikApprovalRequired` immediately.
+   - `REQUIRE_APPROVAL` + `wait_for_approval=True` → blocks on `wait_for_approval`. A resolved ALLOW is replayed through `guard.check(..., approval_id=...)` (consuming the one-shot approval and reserving cost) and the function runs only if that replay allows; a resolved DENY or a denied replay raises `VanzikDenied`; a refused replay that re-entered the approval flow raises `VanzikApprovalRequired` with the new id; timeout raises `VanzikApprovalTimeout`.
+   - `DENY` → raises `VanzikDenied`.
 
 Any `**check_kwargs` you pass are forwarded verbatim to `Guard.check()`. Useful for pinning `session_id=`, `meta=`, etc.
 
@@ -275,11 +275,11 @@ All adapters import lazily — the extras you do not install are never imported 
 
 | Framework | Entry point | One-liner |
 |---|---|---|
-| LangChain | `agentguard.adapters.langchain` — `GuardedTool`, `GuardedToolkit` | Wrap a tool list; every `run`/`arun` is policy-checked. |
-| CrewAI | `agentguard.adapters.crewai` — `GuardedCrewTool`, `guard_crew_tools` | Same, hooking both `run` and `_run`. |
-| browser-use | `agentguard.adapters.browseruse` — `GuardedBrowser` | Gate navigation, actions, and form input; `wrap_page` enforces `goto` transparently. |
-| MCP | `agentguard.adapters.mcp` — `GuardedMCPServer` (or `python -m agentguard.adapters.mcp`) | A guarded stdio MCP server; every `tools/call` is checked first. |
-| OpenAI Agents SDK | `agentguard.adapters.openai_agents` — `guard_tool`, `guard_tools`, `agentguard_tool_guardrail` | Gated copies of an agent's `FunctionTool`s; a deny raises out of `Runner.run`, or the guardrail shows it to the model. |
+| LangChain | `vanzik.adapters.langchain` — `GuardedTool`, `GuardedToolkit` | Wrap a tool list; every `run`/`arun` is policy-checked. |
+| CrewAI | `vanzik.adapters.crewai` — `GuardedCrewTool`, `guard_crew_tools` | Same, hooking both `run` and `_run`. |
+| browser-use | `vanzik.adapters.browseruse` — `GuardedBrowser` | Gate navigation, actions, and form input; `wrap_page` enforces `goto` transparently. |
+| MCP | `vanzik.adapters.mcp` — `GuardedMCPServer` (or `python -m vanzik.adapters.mcp`) | A guarded stdio MCP server; every `tools/call` is checked first. |
+| OpenAI Agents SDK | `vanzik.adapters.openai_agents` — `guard_tool`, `guard_tools`, `vanzik_tool_guardrail` | Gated copies of an agent's `FunctionTool`s; a deny raises out of `Runner.run`, or the guardrail shows it to the model. |
 
 Per-framework usage, scope-inference rules (keyword tables, runtime
 upgrades, `default_scope` fallback), version pins, and deny/approval
@@ -291,7 +291,7 @@ return semantics are documented once in [`ADAPTERS.md`](ADAPTERS.md).
 
 ### Option A — run the real binary
 
-The repo's `tests/test_end_to_end_real_server.py` does exactly this: spawn `./agentguard serve --policy <test-policy.yaml>` on a random port, talk to it with `Guard`, and assert decisions. This is the most realistic path and what CI uses.
+The repo's `tests/test_end_to_end_real_server.py` does exactly this: spawn `./vanzik serve --policy <test-policy.yaml>` on a random port, talk to it with `Guard`, and assert decisions. This is the most realistic path and what CI uses.
 
 ### Option B — `responses` / `httpretty`
 
@@ -299,7 +299,7 @@ For unit tests, stub the HTTP layer:
 
 ```python
 import responses
-from agentguard import Guard
+from vanzik import Guard
 
 @responses.activate
 def test_denies_rm_rf():

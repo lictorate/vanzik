@@ -1,14 +1,14 @@
 {
   "format_version": 1,
   "generated_at": "2026-10-08T01:00:00Z",
-  "agentguard_version": "1.4.0 (test)",
+  "vanzik_version": "1.4.0 (test)",
   "period": {
     "since": "2026-10-01T00:00:00Z",
     "until": "2026-10-08T00:00:00Z"
   },
   "source": {
     "mode": "file",
-    "audit_log": "/var/lib/agentguard/audit.jsonl",
+    "audit_log": "/var/lib/vanzik/audit.jsonl",
     "files": [
       "audit.jsonl.20260930T120000Z.gz",
       "audit.jsonl"
@@ -23,7 +23,7 @@
   "integrity": {
     "method": "verify",
     "status": "intact",
-    "summary": "agentguard audit verify checked 14 sealed entries (seq 1 to 14): the chain is intact.",
+    "summary": "vanzik audit verify checked 14 sealed entries (seq 1 to 14): the chain is intact.",
     "seals": [
       "hmac-sha256 key 0123456789abcdef"
     ],
@@ -200,7 +200,7 @@
     {
       "name": "Seal chain verified",
       "status": "pass",
-      "detail": "agentguard audit verify checked 14 sealed entries (seq 1 to 14): the chain is intact."
+      "detail": "vanzik audit verify checked 14 sealed entries (seq 1 to 14): the chain is intact."
     },
     {
       "name": "Entries outside the seal chain",
@@ -227,7 +227,7 @@
     {
       "criterion": "CC6.1",
       "title": "Logical access to protected assets is restricted",
-      "shows": "Agent actions that reached AgentGuard were checked against a policy (the policy file's SHA-256 abababababab…): 12 decisions, 3 denied, broken down by scope and agent.",
+      "shows": "Agent actions that reached Vanzik were checked against a policy (the policy file's SHA-256 abababababab…): 12 decisions, 3 denied, broken down by scope and agent.",
       "where": [
         "Summary",
         "Activity",
@@ -238,7 +238,7 @@
     {
       "criterion": "CC6.6",
       "title": "Access from outside the system boundary is controlled",
-      "shows": "Actions reaching outside the agent (network, browser, MCP tools, LLM tool calls) went through AgentGuard; the scope and transport breakdowns and the deny rules show what was let through and what was blocked (2 scopes, 3 transports).",
+      "shows": "Actions reaching outside the agent (network, browser, MCP tools, LLM tool calls) went through Vanzik; the scope and transport breakdowns and the deny rules show what was let through and what was blocked (2 scopes, 3 transports).",
       "where": [
         "Activity",
         "Top rules"
@@ -274,7 +274,7 @@
     }
   ],
   "limits": [
-    "The report counts what the audit log recorded. An action that never reached AgentGuard is not in it.",
+    "The report counts what the audit log recorded. An action that never reached Vanzik is not in it.",
     "Approval outcomes show only when the agent came back with the approval id after a person decided. The log does not record the decision itself, who made it, or a request that timed out.",
     "The policy SHA-256 is of the file as it was when the report was made. The audit log does not record which version of the policy made each decision.",
     "The secret check uses the built-in patterns only, not a policy's notifications.redaction.extra_patterns.",

@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 var testSealKey = []byte("0123456789abcdef0123456789abcdef")

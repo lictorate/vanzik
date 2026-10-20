@@ -1,6 +1,6 @@
-# Deploying AgentGuard in Production
+# Deploying Vanzik in Production
 
-This guide covers what you **must** get right before exposing AgentGuard beyond `localhost`:
+This guide covers what you **must** get right before exposing Vanzik beyond `localhost`:
 
 1. [Setting an API key](#1-always-set-an-api-key) (and what happens if you do not)
 2. [Running behind a TLS-terminating reverse proxy](#2-behind-a-tls-terminating-reverse-proxy)
@@ -13,14 +13,14 @@ Each section shows the exact flag/setting, the failure mode if you skip it, and 
 
 > **TL;DR** — minimum safe flags for a production server behind an HTTPS proxy:
 > ```bash
-> agentguard server \
->   --policy /etc/agentguard/policy.yaml \
->   --api-key "$AGENTGUARD_API_KEY" \
+> vanzik server \
+>   --policy /etc/vanzik/policy.yaml \
+>   --api-key "$VANZIK_API_KEY" \
 >   --base-url https://guard.example.com \
 >   --allowed-origin https://app.example.com \
 >   --tls-terminated-upstream \
 >   --dashboard \
->   --audit-log /var/lib/agentguard/audit.jsonl \
+>   --audit-log /var/lib/vanzik/audit.jsonl \
 >   --watch
 > ```
 
@@ -28,16 +28,16 @@ Each section shows the exact flag/setting, the failure mode if you skip it, and 
 
 ## 1. Always set an API key
 
-AgentGuard changes how it binds based on whether `--api-key` is set:
+Vanzik changes how it binds based on whether `--api-key` is set:
 
 | `--api-key` | Bind address | Who can reach `/v1/approve`, `/v1/deny`, `/v1/audit`, `/api/*` |
 |---|---|---|
 | **unset** | `127.0.0.1:<port>` **only** | Processes on the same host (all gated endpoints become open) |
 | **set** | `0.0.0.0:<port>` (all interfaces) | Anything with the Bearer token (or a valid session cookie) |
 
-**(v1.2)** `--bind <host>` overrides the address: with `--api-key` set, AgentGuard listens on exactly `<host>:<port>`. Without a key only loopback hosts (`127.0.0.1`, `::1`, `localhost`) are accepted; a non-loopback `--bind` without `--api-key` exits 2 at startup rather than exposing the open gated endpoints.
+**(v1.2)** `--bind <host>` overrides the address: with `--api-key` set, Vanzik listens on exactly `<host>:<port>`. Without a key only loopback hosts (`127.0.0.1`, `::1`, `localhost`) are accepted; a non-loopback `--bind` without `--api-key` exits 2 at startup rather than exposing the open gated endpoints.
 
-Source: the bind-address logic in `proxy.NewServer` (`pkg/proxy/server.go`) and `validateBind` (`cmd/agentguard/main.go`).
+Source: the bind-address logic in `proxy.NewServer` (`pkg/proxy/server.go`) and `validateBind` (`cmd/vanzik/main.go`).
 
 **Symptom if you forget:** agents running on a different host get `connection refused` or `connect: timed out`. The server log shows:
 
@@ -48,11 +48,11 @@ INFO: binding to 127.0.0.1:8080 (localhost only) — set --api-key to listen on 
 **Fix:**
 
 ```bash
-export AGENTGUARD_API_KEY="$(openssl rand -hex 32)"
-agentguard server --api-key "$AGENTGUARD_API_KEY" ...
+export VANZIK_API_KEY="$(openssl rand -hex 32)"
+vanzik server --api-key "$VANZIK_API_KEY" ...
 ```
 
-The same key is used by `agentguard approve|deny|status|audit` (falls back to `AGENTGUARD_API_KEY` env; see `resolveAPIKey` in `cmd/agentguard/main.go`) and by the Python / TypeScript SDKs (`AGENTGUARD_API_KEY` env var).
+The same key is used by `vanzik approve|deny|status|audit` (falls back to `VANZIK_API_KEY` env; see `resolveAPIKey` in `cmd/vanzik/main.go`) and by the Python / TypeScript SDKs (`VANZIK_API_KEY` env var).
 
 > **Note:** `/v1/check`, `/health`, `/metrics`, `/auth/login`, and `/auth/logout` are open by design even when `--api-key` is set. See [section 4](#4-v1check-is-intentionally-open).
 
@@ -60,11 +60,11 @@ The same key is used by `agentguard approve|deny|status|audit` (falls back to `A
 
 ## 2. Behind a TLS-terminating reverse proxy
 
-Most production deployments terminate TLS at an nginx / HAProxy / ALB / Cloudflare edge and speak plaintext HTTP to AgentGuard on a private network. Two things break if you do not tell AgentGuard about this:
+Most production deployments terminate TLS at an nginx / HAProxy / ALB / Cloudflare edge and speak plaintext HTTP to Vanzik on a private network. Two things break if you do not tell Vanzik about this:
 
 ### 2a. Session cookies without `Secure` → login loop
 
-`/auth/login` sets `ag_session` (HttpOnly) and `ag_csrf` cookies. The `Secure` attribute is decided at emit time by:
+`/auth/login` sets `vanzik_session` (HttpOnly) and `vanzik_csrf` cookies. The `Secure` attribute is decided at emit time by:
 
 ```go
 Secure: r.TLS != nil || s.cfg.TLSTerminatedUpstream
@@ -77,19 +77,19 @@ Modern browsers reject non-`Secure` cookies from `SameSite=Strict` origins serve
 **Fix:** pass `--tls-terminated-upstream`.
 
 ```bash
-agentguard server --tls-terminated-upstream ...
+vanzik server --tls-terminated-upstream ...
 ```
 
 This forces `Secure=true` on session cookies regardless of `r.TLS`. Only use it when TLS is actually terminated upstream — marking cookies `Secure` over plaintext would make them unreadable.
 
 ### 2b. Approval links point at the wrong host
 
-`approval_url` in `POST /v1/check` responses and in webhook/Slack notifications is built from `cfg.BaseURL`. If you do not set `--base-url`, AgentGuard defaults to `http://localhost:<port>` (`runServe` in `cmd/agentguard/main.go`) — Slack messages will link to `http://localhost:8080/...` which is useless to a human approver on their laptop.
+`approval_url` in `POST /v1/check` responses and in webhook/Slack notifications is built from `cfg.BaseURL`. If you do not set `--base-url`, Vanzik defaults to `http://localhost:<port>` (`runServe` in `cmd/vanzik/main.go`) — Slack messages will link to `http://localhost:8080/...` which is useless to a human approver on their laptop.
 
 **Fix:** set `--base-url` to the public URL the dashboard is reachable at:
 
 ```bash
-agentguard server --base-url https://guard.example.com ...
+vanzik server --base-url https://guard.example.com ...
 ```
 
 ### 2c. nginx reference config
@@ -102,7 +102,7 @@ server {
     ssl_certificate     /etc/ssl/guard.example.com.crt;
     ssl_certificate_key /etc/ssl/guard.example.com.key;
 
-    # AgentGuard uses Server-Sent Events on /api/stream — disable buffering.
+    # Vanzik uses Server-Sent Events on /api/stream — disable buffering.
     location /api/stream {
         proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
@@ -124,42 +124,42 @@ server {
 }
 ```
 
-With nginx on the same host, start AgentGuard with `--bind 127.0.0.1` **(v1.2)** as well as `--api-key`, so the plaintext port is reachable only through nginx and not from the network:
+With nginx on the same host, start Vanzik with `--bind 127.0.0.1` **(v1.2)** as well as `--api-key`, so the plaintext port is reachable only through nginx and not from the network:
 
 ```bash
-agentguard server --api-key "$AGENTGUARD_API_KEY" --bind 127.0.0.1 --tls-terminated-upstream \
+vanzik server --api-key "$VANZIK_API_KEY" --bind 127.0.0.1 --tls-terminated-upstream \
   --base-url https://guard.example.com ...
 ```
 
 ### 2d. Docker Compose reference
 
 Every release publishes a multi-arch image (linux/amd64 and linux/arm64) to
-`ghcr.io/caua-ferraz/agentguard`, tagged with the version and `latest`. It
+`ghcr.io/lictorate/vanzik`, tagged with the version and `latest`. It
 holds all three binaries; the server is the default entrypoint. Pin the
 version tag in production so an upgrade is a deliberate change. The image sets
-`AGENTGUARD_DISTRIBUTION=container`, so the CLI's update notice (never shown
+`VANZIK_DISTRIBUTION=container`, so the CLI's update notice (never shown
 by `server`) suggests pulling a new image rather than the one-line installer. To build the
 image yourself instead, replace `image:` with `build: .` at the repo root.
 
 ```yaml
 services:
-  agentguard:
-    image: ghcr.io/caua-ferraz/agentguard:1.4.0
+  vanzik:
+    image: ghcr.io/lictorate/vanzik:2.0.0
     restart: unless-stopped
     command: >
       serve
-      --policy /etc/agentguard/default.yaml
-      --audit-log /var/lib/agentguard/audit.jsonl
-      --api-key ${AGENTGUARD_API_KEY}
+      --policy /etc/vanzik/default.yaml
+      --audit-log /var/lib/vanzik/audit.jsonl
+      --api-key ${VANZIK_API_KEY}
       --base-url https://guard.example.com
       --allowed-origin https://app.example.com
       --tls-terminated-upstream
       --dashboard --watch
     environment:
-      - AGENTGUARD_API_KEY
+      - VANZIK_API_KEY
     volumes:
-      - ./policy.yaml:/etc/agentguard/default.yaml:ro
-      - agentguard-audit:/var/lib/agentguard
+      - ./policy.yaml:/etc/vanzik/default.yaml:ro
+      - vanzik-audit:/var/lib/vanzik
     expose:
       - "8080"
     networks: [internal]
@@ -170,52 +170,52 @@ services:
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - /etc/ssl:/etc/ssl:ro
-    depends_on: [agentguard]
+    depends_on: [vanzik]
     networks: [internal]
 
 volumes:
-  agentguard-audit:
+  vanzik-audit:
 networks:
   internal:
 ```
 
-Mount your own policy over `/etc/agentguard/default.yaml` — **not** the whole `/etc/agentguard` directory, which would hide the image's baked-in default.
+Mount your own policy over `/etc/vanzik/default.yaml` — **not** the whole `/etc/vanzik` directory, which would hide the image's baked-in default.
 
 ### 2e. Kubernetes stub
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: agentguard }
+metadata: { name: vanzik }
 spec:
   replicas: 1   # ⚠ per-instance limits on the default SQLite store; replicas > 1 needs --store-dsn postgres:// — see docs/OPERATIONS.md
   template:
     spec:
       containers:
-        - name: agentguard
+        - name: vanzik
           # Published per release; or build the Dockerfile and push it to a
           # registry your cluster can pull from.
-          image: ghcr.io/caua-ferraz/agentguard:1.4.0
+          image: ghcr.io/lictorate/vanzik:2.0.0
           args:                   # replaces the image's CMD, so --policy must be repeated
             - serve
-            - --policy=/etc/agentguard/default.yaml
-            - --api-key=$(AGENTGUARD_API_KEY)
+            - --policy=/etc/vanzik/default.yaml
+            - --api-key=$(VANZIK_API_KEY)
             - --base-url=https://guard.example.com
             - --tls-terminated-upstream
             - --allowed-origin=https://app.example.com
-            - --audit-log=/var/lib/agentguard/audit.jsonl
+            - --audit-log=/var/lib/vanzik/audit.jsonl
             - --dashboard
           env:
-            - name: AGENTGUARD_API_KEY
-              valueFrom: { secretKeyRef: { name: agentguard, key: api-key } }
+            - name: VANZIK_API_KEY
+              valueFrom: { secretKeyRef: { name: vanzik, key: api-key } }
           volumeMounts:
             - name: audit
-              mountPath: /var/lib/agentguard
+              mountPath: /var/lib/vanzik
           readinessProbe:
             httpGet: { path: /health, port: 8080 }
       volumes:
         - name: audit
-          persistentVolumeClaim: { claimName: agentguard-audit }
+          persistentVolumeClaim: { claimName: vanzik-audit }
 ```
 
 > **Multi-instance:** on the default SQLite store, rate-limit buckets and session-cost accumulators are per-instance — `replicas: > 1` lets an agent burst past per-scope limits by hitting different pods. Since v1.0, point every replica at PostgreSQL (`--store-dsn postgres://…`) with a distinct `--node-id` (in Kubernetes, pass the pod name) to share approval / rate-limit / cost state; distributed limiting is bounded-overshoot, converging every `--reconcile-interval` (default 2s). See [`docs/OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments).
@@ -239,7 +239,7 @@ Permissive-localhost is safe because:
 - State-changing endpoints require a CSRF token (`X-CSRF-Token`) that a cross-origin page cannot read.
 - Origins like `http://localhost.evil.com` are **rejected** — the trailing `:` on the localhost prefix blocks DNS-rebinding-style lookalikes.
 
-For production, set the exact origin of whatever frontend calls the AgentGuard HTTP API directly. If the only consumer is agents (which speak HTTP, not browsers), you can leave `--allowed-origin` empty — agents do not send `Origin`.
+For production, set the exact origin of whatever frontend calls the Vanzik HTTP API directly. If the only consumer is agents (which speak HTTP, not browsers), you can leave `--allowed-origin` empty — agents do not send `Origin`.
 
 ---
 
@@ -271,19 +271,19 @@ Or require a header set by an authenticating proxy (e.g., Cloudflare Access, oau
 
 ## 5. Deploying the MCP Gateway and LLM API Proxy (v0.5+)
 
-These are the wire-level enforcement points. Both are stateless — they fan every gated request out to the AgentGuard server above.
+These are the wire-level enforcement points. Both are stateless — they fan every gated request out to the Vanzik server above.
 
 **Shape:** one per agent host, bound to `127.0.0.1`, with `--guard-url` pointing at the server.
 
 ```bash
-agentguard-llm-proxy   --listen 127.0.0.1:8081 --guard-url https://guard.example.com --policy /etc/agentguard/policy.yaml
-agentguard-mcp-gateway --upstream "fs:npx -y @modelcontextprotocol/server-filesystem /tmp" \
-                       --guard-url https://guard.example.com --policy /etc/agentguard/policy.yaml
+vanzik-llm-proxy   --listen 127.0.0.1:8081 --guard-url https://guard.example.com --policy /etc/vanzik/policy.yaml
+vanzik-mcp-gateway --upstream "fs:npx -y @modelcontextprotocol/server-filesystem /tmp" \
+                       --guard-url https://guard.example.com --policy /etc/vanzik/policy.yaml
 ```
 
 **Production defaults that matter:**
 
-- `--fail-mode=deny` — if the AgentGuard server is unreachable, refuse rather than passthrough.
+- `--fail-mode=deny` — if the Vanzik server is unreachable, refuse rather than passthrough.
 - `--listen 127.0.0.1:<port>` — inbound is not authenticated unless you set `--proxy-api-key`. The LLM proxy refuses any non-loopback `--listen` without that key, including `:<port>` with no host (which binds every interface).
 - 30 s graceful-shutdown window (systemd `TimeoutStopSec=30s`, Kubernetes `terminationGracePeriodSeconds: 30`). The LLM proxy buffers tool calls inside streaming responses; a hard kill truncates the client's response.
 - Keep the proxies and the server on the same release. The `/v1/check` wire protocol is frozen across 1.x ([`COMPATIBILITY.md`](COMPATIBILITY.md)), so a mixed 1.x pair interoperates, but only same-release pairs are tested together.
@@ -294,14 +294,14 @@ Examples (systemd unit, Kubernetes sidecar, MCP client configs): [`QUICKSTART_MC
 
 ## 6. Outbound connections
 
-`agentguard server` opens exactly the outbound connections you configure and nothing else:
+`vanzik server` opens exactly the outbound connections you configure and nothing else:
 
 | Connection | Configured by | Notes |
 |---|---|---|
 | Durable store | `--store-dsn` | PostgreSQL only; the default SQLite store is a local file. |
 | Notifiers (webhook, Slack) | `notifications:` in the policy YAML | Payloads pass through the notifier redactor. |
 
-There is no telemetry, no crash reporting, and no update check from `server`. The interactive `agentguard` subcommands (`check`, `status`, `migrate`, …) do query the GitHub Releases API once at startup for the update notice; set `AGENTGUARD_NO_UPDATE_CHECK=1` in scripted or air-gapped environments ([`CLI.md`](CLI.md#update-notice-on-startup-v051)). The MCP gateway connects only to `--guard-url` and the downstream MCP servers it spawns; the LLM proxy connects only to `--guard-url` and the configured upstream provider. The complete actor and boundary list is in [`THREAT_MODEL.md`](THREAT_MODEL.md).
+There is no telemetry, no crash reporting, and no update check from `server`. The interactive `vanzik` subcommands (`check`, `status`, `migrate`, …) do query the GitHub Releases API once at startup for the update notice; set `VANZIK_NO_UPDATE_CHECK=1` in scripted or air-gapped environments ([`CLI.md`](CLI.md#update-notice-on-startup-v051)). The MCP gateway connects only to `--guard-url` and the downstream MCP servers it spawns; the LLM proxy connects only to `--guard-url` and the configured upstream provider. The complete actor and boundary list is in [`THREAT_MODEL.md`](THREAT_MODEL.md).
 
 ---
 

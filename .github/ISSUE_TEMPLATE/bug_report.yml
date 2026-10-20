@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a defect in AgentGuard (server, MCP Gateway, LLM API Proxy, SDKs, or adapters).
+description: Report a defect in Vanzik (server, MCP Gateway, LLM API Proxy, SDKs, or adapters).
 title: "[bug] "
 labels: ["bug", "triage"]
 body:
@@ -17,9 +17,9 @@ body:
   - type: input
     id: version
     attributes:
-      label: AgentGuard version
-      description: Output of `agentguard version`. SDK version too if relevant.
-      placeholder: "agentguard X.Y.Z (abc1234)"
+      label: Vanzik version
+      description: Output of `vanzik version`. SDK version too if relevant.
+      placeholder: "vanzik X.Y.Z (abc1234)"
     validations:
       required: true
 
@@ -31,7 +31,7 @@ body:
         Minimal steps that reproduce the issue. Include the exact CLI
         flags, policy snippet, and request body where applicable.
       placeholder: |
-        1. `agentguard server --policy ./policy.yaml`
+        1. `vanzik server --policy ./policy.yaml`
         2. `curl -X POST http://localhost:8080/v1/check -d '...'`
         3. ...
     validations:
@@ -41,7 +41,7 @@ body:
     id: expected
     attributes:
       label: Expected behavior
-      description: What you expected AgentGuard to do.
+      description: What you expected Vanzik to do.
     validations:
       required: true
 
@@ -49,7 +49,7 @@ body:
     id: actual
     attributes:
       label: Actual behavior
-      description: What AgentGuard actually did. Paste the response body / error / stack trace.
+      description: What Vanzik actually did. Paste the response body / error / stack trace.
     validations:
       required: true
 

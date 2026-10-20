@@ -1,24 +1,24 @@
 .PHONY: build build-mcp-gateway build-llm-proxy test test-all lint run clean docker docker-run release-artifacts require-api-key validate validate-examples bench dep-audit help
 
 # Binary name
-BINARY=agentguard
-MCP_GATEWAY_BINARY=agentguard-mcp-gateway
-LLM_PROXY_BINARY=agentguard-llm-proxy
-VERSION=1.4.0
+BINARY=vanzik
+MCP_GATEWAY_BINARY=vanzik-mcp-gateway
+LLM_PROXY_BINARY=vanzik-llm-proxy
+VERSION=2.0.0
 COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
 LDFLAGS=-ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 
 ## build: Compile the binary
 build:
-	go build $(LDFLAGS) -o $(BINARY) ./cmd/agentguard
+	go build $(LDFLAGS) -o $(BINARY) ./cmd/vanzik
 
-## build-mcp-gateway: Compile the AgentGuard MCP Gateway binary
+## build-mcp-gateway: Compile the Vanzik MCP Gateway binary
 build-mcp-gateway:
-	go build $(LDFLAGS) -o $(MCP_GATEWAY_BINARY) ./cmd/agentguard-mcp-gateway
+	go build $(LDFLAGS) -o $(MCP_GATEWAY_BINARY) ./cmd/vanzik-mcp-gateway
 
-## build-llm-proxy: Compile the AgentGuard LLM API Proxy binary
+## build-llm-proxy: Compile the Vanzik LLM API Proxy binary
 build-llm-proxy:
-	go build $(LDFLAGS) -o $(LLM_PROXY_BINARY) ./cmd/agentguard-llm-proxy
+	go build $(LDFLAGS) -o $(LLM_PROXY_BINARY) ./cmd/vanzik-llm-proxy
 
 ## test: Run all tests with race detection
 test:
@@ -59,11 +59,11 @@ validate-examples: build
 docker:
 	docker build --build-arg COMMIT=$(COMMIT) -t $(BINARY):$(VERSION) -t $(BINARY):latest .
 
-## docker-run: Run in Docker (needs AGENTGUARD_API_KEY in the environment)
+## docker-run: Run in Docker (needs VANZIK_API_KEY in the environment)
 docker-run: require-api-key docker
-	docker run -d -p 8080:8080 --name agentguard \
-		-e AGENTGUARD_API_KEY \
-		-v agentguard-audit:/var/lib/agentguard \
+	docker run -d -p 8080:8080 --name vanzik \
+		-e VANZIK_API_KEY \
+		-v vanzik-audit:/var/lib/vanzik \
 		$(BINARY):latest
 
 ## release-artifacts: Build the release archives for every platform into dist/ (what the release workflow uploads)
@@ -73,7 +73,7 @@ release-artifacts:
 # Without an API key the server binds 127.0.0.1 inside the container, so
 # the published port is unreachable. Fail before building the image.
 require-api-key:
-	@test -n "$$AGENTGUARD_API_KEY" || { echo "AGENTGUARD_API_KEY is not set. Without it the server binds the container's own loopback and -p 8080:8080 is unreachable. Example: export AGENTGUARD_API_KEY=\"\$$(openssl rand -hex 32)\"" >&2; exit 1; }
+	@test -n "$$VANZIK_API_KEY" || { echo "VANZIK_API_KEY is not set. Without it the server binds the container's own loopback and -p 8080:8080 is unreachable. Example: export VANZIK_API_KEY=\"\$$(openssl rand -hex 32)\"" >&2; exit 1; }
 
 ## clean: Remove build artifacts
 clean:
@@ -105,5 +105,5 @@ bench:
 
 ## help: Show this help
 help:
-	@echo "AgentGuard — The firewall for AI agents\n"
+	@echo "Vanzik — The firewall for AI agents\n"
 	@grep -E '^## ' Makefile | sed 's/## //' | column -t -s ':'

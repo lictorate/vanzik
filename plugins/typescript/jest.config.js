@@ -1,5 +1,5 @@
 /**
- * Jest configuration for the AgentGuard TypeScript SDK.
+ * Jest configuration for the Vanzik TypeScript SDK.
  *
  * ts-jest compiles the TS sources on demand so we don't maintain a
  * separate tsc pipeline for tests. Tests live under src/__tests__/ and

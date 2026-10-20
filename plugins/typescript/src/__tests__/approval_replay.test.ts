@@ -14,10 +14,10 @@
  */
 
 import {
-  AgentGuard,
+  Vanzik,
   guarded,
-  AgentGuardDeniedError,
-  AgentGuardApprovalRequiredError,
+  VanzikDeniedError,
+  VanzikApprovalRequiredError,
 } from "../index";
 
 type FetchArgs = [string | URL, RequestInit?];
@@ -66,7 +66,7 @@ describe("check() carries approval_id on the wire", () => {
   test("sends approval_id when given", async () => {
     const m = installFetchMock();
     m.mockResolvedValueOnce(jsonResponse({ decision: "ALLOW", reason: "ok" }));
-    const guard = new AgentGuard({ agentId: "bot" });
+    const guard = new Vanzik({ agentId: "bot" });
     await guard.check("shell", { command: "ls", approvalId: "ap_xyz" });
     const body = checkBodies(m)[0];
     expect(body.approval_id).toBe("ap_xyz");
@@ -77,21 +77,21 @@ describe("check() carries approval_id on the wire", () => {
   test("omits approval_id by default", async () => {
     const m = installFetchMock();
     m.mockResolvedValueOnce(jsonResponse({ decision: "ALLOW", reason: "ok" }));
-    await new AgentGuard().check("shell", { command: "ls" });
+    await new Vanzik().check("shell", { command: "ls" });
     expect(checkBodies(m)[0]).not.toHaveProperty("approval_id");
   });
 
   test("omits an empty approval_id", async () => {
     const m = installFetchMock();
     m.mockResolvedValueOnce(jsonResponse({ decision: "ALLOW", reason: "ok" }));
-    await new AgentGuard().check("shell", { command: "ls", approvalId: "" });
+    await new Vanzik().check("shell", { command: "ls", approvalId: "" });
     expect(checkBodies(m)[0]).not.toHaveProperty("approval_id");
   });
 
   test("uses snake_case on the wire (approvalId is never sent verbatim)", async () => {
     const m = installFetchMock();
     m.mockResolvedValueOnce(jsonResponse({ decision: "ALLOW", reason: "ok" }));
-    await new AgentGuard().check("shell", { command: "ls", approvalId: "ap_1" });
+    await new Vanzik().check("shell", { command: "ls", approvalId: "ap_1" });
     expect(checkBodies(m)[0]).not.toHaveProperty("approvalId");
   });
 });
@@ -104,7 +104,7 @@ describe("guarded() replays the approval", () => {
     m.mockResolvedValueOnce(
       jsonResponse({ decision: "ALLOW", reason: "approved", matched_rule: "allow:approved" })
     );
-    const guard = new AgentGuard({ agentId: "bot" });
+    const guard = new Vanzik({ agentId: "bot" });
     const fn = jest.fn(async (...args) => `ran ${String(args[0])}`);
     const safe = guarded(guard, "shell", fn as unknown as AnyAsyncFn, {
       waitForApproval: true,
@@ -137,7 +137,7 @@ describe("guarded() replays the approval", () => {
     m.mockResolvedValueOnce(jsonResponse(REQUIRE_FIRST));
     m.mockResolvedValueOnce(jsonResponse(RESOLVED_ALLOW));
     m.mockResolvedValueOnce(jsonResponse({ decision: "ALLOW", reason: "ok" }));
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     const fn = jest.fn(async () => "spent");
     const safe = guarded(guard, "cost", fn as unknown as AnyAsyncFn, {
       getCheckOptions: () => ({ estCost: 12.5, sessionId: "sess-9" }),
@@ -162,7 +162,7 @@ describe("guarded() replays the approval", () => {
     m.mockResolvedValueOnce(
       jsonResponse({ decision: "DENY", reason: "policy changed", matched_rule: "deny:shell:sudo" })
     );
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     const fn = jest.fn(async () => "should not run");
     const safe = guarded(guard, "shell", fn as unknown as AnyAsyncFn, {
       waitForApproval: true,
@@ -176,8 +176,8 @@ describe("guarded() replays the approval", () => {
     } catch (e) {
       caught = e;
     }
-    expect(caught).toBeInstanceOf(AgentGuardDeniedError);
-    expect((caught as AgentGuardDeniedError).message).toMatch(/policy changed/);
+    expect(caught).toBeInstanceOf(VanzikDeniedError);
+    expect((caught as VanzikDeniedError).message).toMatch(/policy changed/);
     expect(fn).not.toHaveBeenCalled();
     expect(checkBodies(m)).toHaveLength(2);
   });
@@ -201,7 +201,7 @@ describe("guarded() replays the approval", () => {
     m.mockResolvedValue(
       jsonResponse({ id: "ap_second", status: "resolved", decision: "ALLOW" })
     );
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     const fn = jest.fn(async () => "should not run");
     const safe = guarded(guard, "shell", fn as unknown as AnyAsyncFn, {
       waitForApproval: true,
@@ -215,8 +215,8 @@ describe("guarded() replays the approval", () => {
     } catch (e) {
       caught = e;
     }
-    expect(caught).toBeInstanceOf(AgentGuardApprovalRequiredError);
-    const err = caught as AgentGuardApprovalRequiredError;
+    expect(caught).toBeInstanceOf(VanzikApprovalRequiredError);
+    const err = caught as VanzikApprovalRequiredError;
     expect(err.approvalId).toBe("ap_second");
     expect(err.approvalUrl).toMatch(/ap_second/);
     expect(fn).not.toHaveBeenCalled();
@@ -231,7 +231,7 @@ describe("guarded() replays the approval", () => {
     m.mockResolvedValueOnce(
       jsonResponse({ id: "ap_first", status: "resolved", decision: "DENY", reason: "human denied" })
     );
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     const fn = jest.fn(async () => "should not run");
     const safe = guarded(guard, "shell", fn as unknown as AnyAsyncFn, {
       waitForApproval: true,
@@ -239,7 +239,7 @@ describe("guarded() replays the approval", () => {
       approvalPollIntervalMs: 5,
     });
 
-    await expect(safe("sudo deploy")).rejects.toBeInstanceOf(AgentGuardDeniedError);
+    await expect(safe("sudo deploy")).rejects.toBeInstanceOf(VanzikDeniedError);
     expect(checkBodies(m)).toHaveLength(1);
     expect(fn).not.toHaveBeenCalled();
   });
@@ -247,11 +247,11 @@ describe("guarded() replays the approval", () => {
   test("without waitForApproval the HOF throws immediately and never replays", async () => {
     const m = installFetchMock();
     m.mockResolvedValueOnce(jsonResponse(REQUIRE_FIRST));
-    const guard = new AgentGuard();
+    const guard = new Vanzik();
     const fn = jest.fn(async () => "should not run");
     const safe = guarded(guard, "shell", fn as unknown as AnyAsyncFn);
 
-    await expect(safe("sudo deploy")).rejects.toBeInstanceOf(AgentGuardApprovalRequiredError);
+    await expect(safe("sudo deploy")).rejects.toBeInstanceOf(VanzikApprovalRequiredError);
     expect(checkBodies(m)).toHaveLength(1);
     expect(fn).not.toHaveBeenCalled();
   });
@@ -283,7 +283,7 @@ describe("request timeouts", () => {
   test("every request carries an AbortSignal", async () => {
     const m = installFetchMock();
     m.mockResolvedValue(jsonResponse({ decision: "ALLOW", reason: "ok" }));
-    const guard = new AgentGuard({ timeout: 500 });
+    const guard = new Vanzik({ timeout: 500 });
     await guard.check("shell", { command: "ls" });
     await guard.approve("ap_1");
     await guard.deny("ap_1");
@@ -298,7 +298,7 @@ describe("request timeouts", () => {
 
   test("check() falls through to fail-mode when the server stalls", async () => {
     installStallingFetch();
-    const guard = new AgentGuard({ timeout: 50 });
+    const guard = new Vanzik({ timeout: 50 });
     const started = Date.now();
     const r = await guard.check("shell", { command: "ls" });
     expect(r.denied).toBe(true);
@@ -324,7 +324,7 @@ describe("request timeouts", () => {
       } as unknown as Response;
     });
 
-    const guard = new AgentGuard({ timeout: 50 });
+    const guard = new Vanzik({ timeout: 50 });
     const started = Date.now();
     const r = await guard.check("shell", { command: "ls" });
     expect(r.denied).toBe(true);
@@ -333,21 +333,21 @@ describe("request timeouts", () => {
 
   test("check() stall with failMode allow still opens (fail-mode is honoured)", async () => {
     installStallingFetch();
-    const guard = new AgentGuard({ timeout: 50, failMode: "allow" });
+    const guard = new Vanzik({ timeout: 50, failMode: "allow" });
     const r = await guard.check("shell", { command: "ls" });
     expect(r.allowed).toBe(true);
   });
 
   test("approve() and deny() return false instead of hanging", async () => {
     installStallingFetch();
-    const guard = new AgentGuard({ timeout: 50 });
+    const guard = new Vanzik({ timeout: 50 });
     await expect(guard.approve("ap_1")).resolves.toBe(false);
     await expect(guard.deny("ap_1")).resolves.toBe(false);
   });
 
   test("waitForApproval() keeps polling through stalls and times out cleanly", async () => {
     const m = installStallingFetch();
-    const guard = new AgentGuard({ timeout: 20 });
+    const guard = new Vanzik({ timeout: 20 });
     const r = await guard.waitForApproval("ap_1", 150, 5);
     expect(r.denied).toBe(true);
     expect(r.reason).toMatch(/timed out/i);
@@ -364,7 +364,7 @@ describe("request timeouts", () => {
       })
     );
     m.mockResolvedValueOnce(jsonResponse(RESOLVED_ALLOW));
-    const guard = new AgentGuard({ timeout: 500 });
+    const guard = new Vanzik({ timeout: 500 });
     const r = await guard.waitForApproval("ap_first", 2000, 5);
     expect(r.allowed).toBe(true);
     expect(m.mock.calls.length).toBe(2);

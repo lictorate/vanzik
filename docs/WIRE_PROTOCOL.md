@@ -1,7 +1,7 @@
-# AgentGuard Wire Protocol — v1
+# Vanzik Wire Protocol — v1
 
 This document is the operator-facing description of the JSON wire format
-for the AgentGuard `/v1/check` endpoint. It is the public contract between
+for the Vanzik `/v1/check` endpoint. It is the public contract between
 the proxy (Go) and any client SDK (Python, TypeScript, or third-party).
 
 The machine-readable spec lives at
@@ -151,9 +151,9 @@ is a subset of the v1 schema. Specifically:
   it. This is a documented optimization — adding `schema_version: "v1"`
   to every request is a no-op for v0.5 servers and forward-compatible.
 - Both fail closed by default when the proxy is unreachable (DENY
-  decision with `reason: "AgentGuard unreachable: …"`). The TypeScript
+  decision with `reason: "Vanzik unreachable: …"`). The TypeScript
   SDK additionally honors `failMode: 'allow'` for callers whose threat
-  model treats AgentGuard as best-effort.
+  model treats Vanzik as best-effort.
 
 ## Related documentation
 

@@ -1,5 +1,16 @@
 name: Publish Python SDK to PyPI
 
+# Builds plugins/python and uploads it to PyPI as `vanzik` when a GitHub
+# release is published. Releases before 2.0 went to the `agentguardproxy`
+# project.
+#
+# Authenticates with PyPI trusted publishing (GitHub OIDC), so no PyPI token
+# is stored in this repository. On pypi.org, `vanzik`'s trusted publisher
+# names the repository lictorate/vanzik and the workflow file
+# publish-pypi.yml, with no environment; renaming this file, or moving the
+# job into a GitHub environment, stops publishing until that setting is
+# updated. `id-token: write` lets the job request the OIDC token.
+
 on:
   release:
     types: [published]
@@ -9,9 +20,15 @@ on:
         description: 'Version to publish (must match pyproject.toml)'
         required: false
 
+permissions:
+  contents: read
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # trusted publishing
     defaults:
       run:
         working-directory: plugins/python
@@ -25,13 +42,27 @@ jobs:
           python-version: '3.12'
 
       - name: Install build tools
-        run: pip install build twine
+        run: pip install build
 
       - name: Build package
         run: python -m build
 
-      - name: Publish to PyPI
+      # A release tagged v2.0.0 must upload vanzik 2.0.0, as publish-npm.yml
+      # checks for npm: catches a release cut before bump-version.sh ran, or
+      # a build that still names the old project.
+      - name: Check the package matches the release
+        if: github.event_name == 'release'
         env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: twine upload dist/*
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          want="vanzik-${TAG#v}.tar.gz"
+          if [ ! -f "dist/$want" ]; then
+            echo "::error::expected dist/$want for release $TAG; built: $(ls dist)" >&2
+            exit 1
+          fi
+
+      # The action doesn't use the job's working-directory, hence the path.
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: plugins/python/dist/

@@ -26,7 +26,7 @@
   <!-- ── HEADER ── -->
   <rect width="1280" height="60" fill="#0a0a0a"/>
   <line x1="0" y1="60" x2="1280" y2="60" stroke="#222" stroke-width="1"/>
-  <text x="32" y="37" font-size="18" font-weight="bold" class="text-white">AgentGuard</text>
+  <text x="32" y="37" font-size="18" font-weight="bold" class="text-white">Vanzik</text>
   <!-- LIVE badge -->
   <rect x="130" y="20" width="72" height="24" rx="12" fill="#1a3a1a"/>
   <circle cx="145" cy="32" r="4" class="green"/>

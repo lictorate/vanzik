@@ -144,7 +144,7 @@ const minRefreshTimeout = 5 * time.Second
 // endpoint or a periodic ticker" — and nothing ever did. The cache was built
 // once in NewMultiTenantProvider and never rebuilt, with two consequences:
 //
-//   - A non-local tenant's policy could be updated in the store (`agentguard
+//   - A non-local tenant's policy could be updated in the store (`vanzik
 //     tenant put`) and the running process would serve the boot-time copy
 //     forever. Get returns the cached entry, and Watch is a documented no-op
 //     for non-local tenants, so there was NO mechanism by which an updated

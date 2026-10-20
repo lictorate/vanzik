@@ -158,7 +158,7 @@ func runCostConsumptionRoundTrip(t *testing.T, s consumptionStore) {
 	}
 }
 
-// --- Postgres: same tables, env-gated (skips without AGENTGUARD_PG_DSN) ---
+// --- Postgres: same tables, env-gated (skips without VANZIK_PG_DSN) ---
 
 func TestPostgresStore_RateConsumptionRoundTrip(t *testing.T) {
 	s := newTestPGStore(t)

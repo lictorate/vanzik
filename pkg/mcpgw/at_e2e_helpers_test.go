@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/mcpgw"
+	"lictorate.com/vanzik/v2/pkg/mcpgw"
 )
 
 var (

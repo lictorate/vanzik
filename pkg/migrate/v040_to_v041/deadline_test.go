@@ -20,8 +20,8 @@ import (
 //  1. Upgrade docs/DEPRECATIONS.md: move the row from Active to Removed.
 //  2. Drop CHANGELOG entry for v0.4.3 (or current release).
 //  3. Delete pkg/migrate/v040_to_v041/ and the blank import in
-//     cmd/agentguard/main.go.
-//  4. Keep a standalone `agentguard-migrate` tool for users still on
+//     cmd/vanzik/main.go.
+//  4. Keep a standalone `vanzik-migrate` tool for users still on
 //     v0.4.0 files — see the DEPRECATIONS migration-path column.
 var RemovalDeadline = time.Date(2027, 7, 1, 0, 0, 0, 0, time.UTC)
 
@@ -40,7 +40,7 @@ func TestRemovalDeadline(t *testing.T) {
 Action required (see package docstring for full checklist):
   1. Update docs/DEPRECATIONS.md — move audit.migration.v040_to_v041 to Removed.
   2. Add a CHANGELOG entry naming the removal.
-  3. Delete pkg/migrate/v040_to_v041/ and the blank import in cmd/agentguard/main.go.
+  3. Delete pkg/migrate/v040_to_v041/ and the blank import in cmd/vanzik/main.go.
 
 If v0.4.3 has slipped and the migration legitimately still needs to ship,
 edit RemovalDeadline above and document the slip in docs/DEPRECATIONS.md.`,

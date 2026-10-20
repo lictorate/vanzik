@@ -202,13 +202,13 @@ func MapControls(r *Report) []Control {
 		{
 			Criterion: "CC6.1",
 			Title:     "Logical access to protected assets is restricted",
-			Shows:     fmt.Sprintf("Agent actions that reached AgentGuard were checked against a policy (%s): %s, %d denied, broken down by scope and agent.", policy, plural(a.Entries, "decision", "decisions"), deny),
+			Shows:     fmt.Sprintf("Agent actions that reached Vanzik were checked against a policy (%s): %s, %d denied, broken down by scope and agent.", policy, plural(a.Entries, "decision", "decisions"), deny),
 			Where:     []string{SectionSummary, SectionActivity, SectionRules, SectionPosture},
 		},
 		{
 			Criterion: "CC6.6",
 			Title:     "Access from outside the system boundary is controlled",
-			Shows:     fmt.Sprintf("Actions reaching outside the agent (network, browser, MCP tools, LLM tool calls) went through AgentGuard; the scope and transport breakdowns and the deny rules show what was let through and what was blocked (%s, %s).", plural(a.Scopes.Distinct, "scope", "scopes"), plural(a.Transports.Distinct, "transport", "transports")),
+			Shows:     fmt.Sprintf("Actions reaching outside the agent (network, browser, MCP tools, LLM tool calls) went through Vanzik; the scope and transport breakdowns and the deny rules show what was let through and what was blocked (%s, %s).", plural(a.Scopes.Distinct, "scope", "scopes"), plural(a.Transports.Distinct, "transport", "transports")),
 			Where:     []string{SectionActivity, SectionRules},
 		},
 		{
@@ -236,7 +236,7 @@ func MapControls(r *Report) []Control {
 // numbers against.
 func Limits(r *Report) []string {
 	l := []string{
-		"The report counts what the audit log recorded. An action that never reached AgentGuard is not in it.",
+		"The report counts what the audit log recorded. An action that never reached Vanzik is not in it.",
 		"Approval outcomes show only when the agent came back with the approval id after a person decided. The log does not record the decision itself, who made it, or a request that timed out.",
 	}
 	if r.Policy != nil {

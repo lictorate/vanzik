@@ -445,7 +445,7 @@ func TestCheck_UnmetConditionWinsOverUnknown(t *testing.T) {
 }
 
 // TestCheck_NoHistorySourceMeansNoPriorAction: with no querier wired (offline
-// `agentguard check`), there is no history, so a gated deny rule does not fire
+// `vanzik check`), there is no history, so a gated deny rule does not fire
 // and a gated allow does not either. Only a lookup error is "unknown".
 func TestCheck_NoHistorySourceMeansNoPriorAction(t *testing.T) {
 	req := ActionRequest{Scope: "shell", Command: "write b.txt", AgentID: "agent-1"}

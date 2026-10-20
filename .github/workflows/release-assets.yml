@@ -5,15 +5,18 @@ name: Release binaries, installers and image
 #     and arm64, plus checksums.txt (scripts/build-release.sh);
 #   - install.sh / install.ps1, stamped with the release's version, so
 #     .../releases/latest/download/install.sh always installs the newest one;
-#   - the multi-arch container image ghcr.io/<owner>/agentguard;
+#   - the multi-arch container image ghcr.io/<owner>/vanzik;
 # and signs build provenance for every archive, installer and the image
-# (verify with `gh attestation verify <file> --repo Caua-ferraz/AgentGuard`).
+# (verify with `gh attestation verify <file> --repo lictorate/vanzik`).
 #
 # Runs on every published release. It can also backfill an existing release:
-# Actions -> this workflow -> Run workflow, with the tag (for example v1.2.0).
+# Actions -> this workflow -> Run workflow, with the tag (for example v2.0.0).
 # The build script and Dockerfile come from the branch the workflow runs on,
 # the sources from the tag, so an older release gets the same set of assets.
 # Re-running replaces the uploaded files (--clobber) and re-pushes the tags.
+# Releases before 2.0 were built as AgentGuard (cmd/agentguard, image
+# .../agentguard): to backfill one, run the workflow from that release's
+# tag ("Use workflow from"), whose build script and Dockerfile match it.
 
 on:
   release:
@@ -79,7 +82,7 @@ jobs:
       - name: Add the installers
         run: |
           for f in install.sh install.ps1; do
-            sed "s/@AGENTGUARD_VERSION@/${TAG#v}/" "tooling/scripts/$f" > "dist/$f"
+            sed "s/@VANZIK_VERSION@/${TAG#v}/" "tooling/scripts/$f" > "dist/$f"
           done
           (cd dist && sha256sum install.sh install.ps1 >> checksums.txt)
 
@@ -144,7 +147,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/agentguard"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/vanzik"
           version="${TAG#v}"
           tags=(--tag "$image:$version")
           latest="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
@@ -152,7 +155,7 @@ jobs:
             tags+=(--tag "$image:latest")
           fi
           source="https://github.com/$GITHUB_REPOSITORY"
-          description="AgentGuard, the firewall for AI agents"
+          description="Vanzik, the firewall for AI agents"
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             --file tooling/Dockerfile \

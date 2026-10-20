@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/audit"
 )
 
 // Integrity methods: how the report learned about the audit log's seal.
@@ -75,7 +75,7 @@ func FromVerify(rep *audit.VerifyReport) Integrity {
 		if where != "" {
 			where = " at " + where
 		}
-		in.Summary = fmt.Sprintf("agentguard audit verify found the chain broken%s: %s.", where, strings.TrimSuffix(rep.Break.Reason, "."))
+		in.Summary = fmt.Sprintf("vanzik audit verify found the chain broken%s: %s.", where, strings.TrimSuffix(rep.Break.Reason, "."))
 	case rep.Entries == 0 && rep.PrunedBefore == 0 && len(rep.Seals) == 0:
 		in.Status, in.KeyBased = IntegrityNotSealed, nil
 		in.Summary = "The audit log is not sealed (the server runs without --audit-seal), so tampering with it can't be detected."
@@ -86,14 +86,14 @@ func FromVerify(rep *audit.VerifyReport) Integrity {
 		in.Summary = fmt.Sprintf("None of the %s in the log is sealed: the seal is declared only after them, so tampering with them can't be detected.", plural(int(rep.Unsealed), "entry", "entries"))
 	case !rep.OK:
 		in.Status = IntegrityBroken
-		in.Summary = "agentguard audit verify failed: an anchor does not match the log."
+		in.Summary = "vanzik audit verify failed: an anchor does not match the log."
 	case rep.HashesUnchecked:
 		// Checked WithoutKey: the structure holds, the hashes are unknown.
 		in.Status = IntegrityNotVerified
 		in.Summary = fmt.Sprintf("The log says it is sealed with an HMAC key, and its structure holds for %s (seq %d to %d): every entry after the seal is sealed, seq has no gaps, each prev_hash links to the entry before. Without --key-file the hashes were not checked, so a rewrite can't be ruled out.", plural(int(rep.Entries), "sealed entry", "sealed entries"), rep.FirstSeq, rep.LastSeq)
 	default:
 		in.Status = IntegrityIntact
-		in.Summary = fmt.Sprintf("agentguard audit verify checked %s (seq %d to %d): the chain is intact.", plural(int(rep.Entries), "sealed entry", "sealed entries"), rep.FirstSeq, rep.LastSeq)
+		in.Summary = fmt.Sprintf("vanzik audit verify checked %s (seq %d to %d): the chain is intact.", plural(int(rep.Entries), "sealed entry", "sealed entries"), rep.FirstSeq, rep.LastSeq)
 	}
 	return in
 }
@@ -111,7 +111,7 @@ func FromServerHead(head *audit.Anchor, sealingOff bool, why string) Integrity {
 			at := head.At.UTC()
 			in.Head.At = &at
 		}
-		in.Summary = "The server's audit log is sealed. The report read its head; it did not check the chain (run the report with --audit-log on the log files, or agentguard audit verify, for that)."
+		in.Summary = "The server's audit log is sealed. The report read its head; it did not check the chain (run the report with --audit-log on the log files, or vanzik audit verify, for that)."
 	case sealingOff:
 		in.Status = IntegrityNotSealed
 		in.Summary = "The server says its audit log is not sealed (no --audit-seal), so tampering with it can't be detected."

@@ -1,7 +1,7 @@
-# Zed — AgentGuard MCP Gateway
+# Zed — Vanzik MCP Gateway
 
 Drop-in config that routes Zed's Assistant tool calls through the
-AgentGuard gateway. Zed names its MCP integration *context servers*; the
+Vanzik gateway. Zed names its MCP integration *context servers*; the
 top-level config key is `context_servers`, not `mcpServers`.
 
 > Source: <https://zed.dev/docs/ai/mcp.html> (verified 2026-05-05). Zed's
@@ -32,17 +32,17 @@ verbatim only if `settings.json` is empty. Otherwise, merge the
   // ... your existing Zed settings ...
 
   "context_servers": {
-    "agentguard": {
-      "command": "agentguard-mcp-gateway",
+    "vanzik": {
+      "command": "vanzik-mcp-gateway",
       "args": [
         "--upstream", "fs:npx -y @modelcontextprotocol/server-filesystem /tmp",
         "--guard-url", "http://127.0.0.1:8080",
-        "--policy", "/etc/agentguard/policy.yaml",
+        "--policy", "/etc/vanzik/policy.yaml",
         "--tenant-id", "local",
         "--policy-mode", "strict"
       ],
       "env": {
-        "AGENTGUARD_API_KEY": "set-from-shell-or-secret-store"
+        "VANZIK_API_KEY": "set-from-shell-or-secret-store"
       }
     }
   }
@@ -52,7 +52,7 @@ verbatim only if `settings.json` is empty. Otherwise, merge the
 ## What this config does
 
 ```
-Zed (Assistant) ──stdio──► agentguard-mcp-gateway ──► fs / fetch / github upstreams
+Zed (Assistant) ──stdio──► vanzik-mcp-gateway ──► fs / fetch / github upstreams
                                   │
                                   └─HTTP──► http://127.0.0.1:8080/v1/check
                                             (policy + audit + dashboard)
@@ -81,8 +81,8 @@ into the container.
 1. **Install binaries** (Go 1.25+):
 
    ```bash
-   go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard@latest
-   go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard-mcp-gateway@latest
+   go install lictorate.com/vanzik/v2/cmd/vanzik@latest
+   go install lictorate.com/vanzik/v2/cmd/vanzik-mcp-gateway@latest
    ```
 
 2. **Pick a policy** and update `--policy`. `configs/default.yaml` ships
@@ -91,7 +91,7 @@ into the container.
 3. **Export the API key** before launching Zed:
 
    ```bash
-   export AGENTGUARD_API_KEY="$(openssl rand -hex 32)"
+   export VANZIK_API_KEY="$(openssl rand -hex 32)"
    ```
 
    On macOS, Zed launched from Finder/Spotlight does not inherit your
@@ -99,14 +99,14 @@ into the container.
    variable as a launchd / GUI environment variable, then mirror it into
    the `env` block above.
 
-4. **Start the central AgentGuard server:**
+4. **Start the central Vanzik server:**
 
    ```bash
-   agentguard server --policy /etc/agentguard/policy.yaml --dashboard --watch --api-key "$AGENTGUARD_API_KEY"
+   vanzik server --policy /etc/vanzik/policy.yaml --dashboard --watch --api-key "$VANZIK_API_KEY"
    ```
 
 5. **Save settings.json.** Zed reloads it live; the Assistant should
-   surface the merged tool list under the AgentGuard context server.
+   surface the merged tool list under the Vanzik context server.
 
 ## Verification
 
@@ -118,12 +118,12 @@ In Zed's Assistant panel:
 
 ## API key handling
 
-Do **not** pass `--api-key "$AGENTGUARD_API_KEY"` as an `args` entry.
+Do **not** pass `--api-key "$VANZIK_API_KEY"` as an `args` entry.
 Zed does **not** shell-expand `$VAR` references inside JSON `args` —
-the gateway would receive the literal string `$AGENTGUARD_API_KEY`
+the gateway would receive the literal string `$VANZIK_API_KEY`
 and authentication would fail. Instead, use the `env` block above to
 inject the key as an environment variable; the gateway picks up
-`AGENTGUARD_API_KEY` automatically when the `--api-key` flag is
+`VANZIK_API_KEY` automatically when the `--api-key` flag is
 absent.
 
 ## Tenant ID
@@ -132,7 +132,7 @@ absent.
 calls (they go to `/v1/t/<tenant>/check`). Keep `local` — the policy
 the server loads with `--policy` — unless you've registered another
 tenant on the central server with
-`agentguard tenant put <id> --policy <file.yaml>`. A tenant the server
+`vanzik tenant put <id> --policy <file.yaml>`. A tenant the server
 doesn't know answers `404`, which the gateway
 treats like an unreachable server: `--fail-mode` decides, so with `deny`
 every call is refused.
@@ -140,7 +140,7 @@ every call is refused.
 ## Notes
 
 - Zed also supports remote / HTTP context servers via a `url`+`headers`
-  shape. Zed talks to the AgentGuard gateway over stdio; to guard a
+  shape. Zed talks to the Vanzik gateway over stdio; to guard a
   remote server, give the gateway `--upstream-http "<ns>:<url>"` instead
   of pointing Zed at the URL (see
   [`MCP_GATEWAY.md` § 8.5](../docs/MCP_GATEWAY.md#85-streamable-http-upstreams)).

@@ -15,8 +15,8 @@ This stub speaks the MCP JSON-RPC stdio framing:
 
 Tools advertised:
   - ``echo`` (scope-agnostic; takes a ``message``)
-  - ``read_file`` (path-style; AgentGuard upgrades scope to filesystem)
-  - ``http_get`` (URL-style; AgentGuard upgrades scope to network)
+  - ``read_file`` (path-style; Vanzik upgrades scope to filesystem)
+  - ``http_get`` (URL-style; Vanzik upgrades scope to network)
 
 Run as: ``python -m tests.integration._mcp_stub_server`` from the SDK root.
 """

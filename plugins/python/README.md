@@ -1,6 +1,6 @@
-# AgentGuard Python SDK
+# Vanzik Python SDK
 
-Lightweight Python client for [AgentGuard](https://github.com/Caua-ferraz/AgentGuard) — the firewall for AI agents.
+Lightweight Python client for [Vanzik](https://github.com/lictorate/vanzik) — the firewall for AI agents.
 
 - **Zero runtime dependencies** for the core SDK (stdlib `urllib`).
 - **Fail-closed by default** — if the proxy is unreachable, `check()` returns `DENY`.
@@ -11,28 +11,28 @@ Lightweight Python client for [AgentGuard](https://github.com/Caua-ferraz/AgentG
 ## Install
 
 ```bash
-pip install agentguardproxy
+pip install vanzik
 
 # With framework adapters
-pip install agentguardproxy[langchain]
-pip install agentguardproxy[crewai]
-pip install agentguardproxy[browser-use]
-pip install agentguardproxy[mcp]
-pip install 'agentguardproxy[openai-agents]'
-pip install agentguardproxy[all]
+pip install vanzik[langchain]
+pip install vanzik[crewai]
+pip install vanzik[browser-use]
+pip install vanzik[mcp]
+pip install 'vanzik[openai-agents]'
+pip install vanzik[all]
 ```
 
-The package is `agentguardproxy`; the import name is `agentguard`. `agentguard-sdk` on PyPI is an unrelated project that also installs an `agentguard` module — don't install both in the same environment.
+The package and the import are both `vanzik`.
 
 ## Quick start
 
 ```python
-from agentguard import Guard
+from vanzik import Guard
 
 guard = Guard(
-    base_url="http://localhost:8080",   # or set AGENTGUARD_URL
+    base_url="http://localhost:8080",   # or set VANZIK_URL
     agent_id="my-agent",
-    api_key="…",                        # or set AGENTGUARD_API_KEY (needed for approve/deny/status)
+    api_key="…",                        # or set VANZIK_API_KEY (needed for approve/deny/status)
 )
 
 result = guard.check("shell", command="rm -rf ./old_data")
@@ -57,18 +57,18 @@ else:
 
 | Var | Default | Used by |
 |---|---|---|
-| `AGENTGUARD_URL` | `http://localhost:8080` | `Guard(base_url="")` fallback |
-| `AGENTGUARD_API_KEY` | *(empty)* | `Guard(api_key="")` fallback; sent as `Authorization: Bearer <key>` on `/v1/approve`, `/v1/deny`, `/v1/status` |
-| `AGENTGUARD_TENANT_ID` | *(empty)* | `Guard(tenant_id=None)` fallback; a value other than `local` routes calls to `/v1/t/<tenant>/…` |
+| `VANZIK_URL` | `http://localhost:8080` | `Guard(base_url="")` fallback |
+| `VANZIK_API_KEY` | *(empty)* | `Guard(api_key="")` fallback; sent as `Authorization: Bearer <key>` on `/v1/approve`, `/v1/deny`, `/v1/status` |
+| `VANZIK_TENANT_ID` | *(empty)* | `Guard(tenant_id=None)` fallback; a value other than `local` routes calls to `/v1/t/<tenant>/…` |
 
 ### Fail mode
 
 ```python
-# Default: fail closed. Proxy unreachable → CheckResult(decision="DENY", reason="AgentGuard unreachable (deny): …")
+# Default: fail closed. Proxy unreachable → CheckResult(decision="DENY", reason="Vanzik unreachable (deny): …")
 guard = Guard("http://localhost:8080")
 
-# Opt in to fail open. Proxy unreachable → CheckResult(decision="ALLOW", reason="AgentGuard unreachable (allow): …")
-# Use only when your threat model treats AgentGuard as advisory.
+# Opt in to fail open. Proxy unreachable → CheckResult(decision="ALLOW", reason="Vanzik unreachable (allow): …")
+# Use only when your threat model treats Vanzik as advisory.
 guard = Guard("http://localhost:8080", fail_mode="allow")
 ```
 
@@ -77,7 +77,7 @@ Fail mode applies to transport failures — `urllib.error.URLError` (connection 
 ## The `@guarded` decorator
 
 ```python
-from agentguard import Guard, guarded, AgentGuardDenied, AgentGuardApprovalRequired
+from vanzik import Guard, guarded, VanzikDenied, VanzikApprovalRequired
 
 guard = Guard("http://localhost:8080", agent_id="my-agent")
 
@@ -87,26 +87,26 @@ def run_command(cmd: str):
 
 try:
     run_command("ls")
-    run_command("rm -rf /")        # raises AgentGuardDenied
-except AgentGuardDenied as e:
+    run_command("rm -rf /")        # raises VanzikDenied
+except VanzikDenied as e:
     log(f"blocked: {e.result.reason}")
 ```
 
-On `REQUIRE_APPROVAL` the decorator raises `AgentGuardApprovalRequired` immediately. To block until a human resolves it, opt in:
+On `REQUIRE_APPROVAL` the decorator raises `VanzikApprovalRequired` immediately. To block until a human resolves it, opt in:
 
 ```python
 @guarded("cost", guard=guard, wait_for_approval=True, approval_timeout=300)
 def expensive_call(prompt: str): ...
 ```
 
-All AgentGuard exceptions (`AgentGuardDenied`, `AgentGuardApprovalRequired`, `AgentGuardApprovalTimeout`, `AgentGuardAuthError`) extend `PermissionError`, so existing `except PermissionError:` handlers keep working unchanged.
+All Vanzik exceptions (`VanzikDenied`, `VanzikApprovalRequired`, `VanzikApprovalTimeout`, `VanzikAuthError`) extend `PermissionError`, so existing `except PermissionError:` handlers keep working unchanged.
 
 ## Framework adapters
 
 ### LangChain
 
 ```python
-from agentguard.adapters.langchain import GuardedToolkit
+from vanzik.adapters.langchain import GuardedToolkit
 
 toolkit = GuardedToolkit(
     tools=my_tools,
@@ -121,7 +121,7 @@ Scope is inferred from each tool's name/description (`http/api`→network, `file
 ### CrewAI
 
 ```python
-from agentguard.adapters.crewai import guard_crew_tools
+from vanzik.adapters.crewai import guard_crew_tools
 
 guarded_tools = guard_crew_tools(
     tools=my_crew_tools,
@@ -135,7 +135,7 @@ Hooks both `run` and `_run` (CrewAI calls `_run` internally).
 ### browser-use
 
 ```python
-from agentguard.adapters.browseruse import GuardedBrowser
+from vanzik.adapters.browseruse import GuardedBrowser
 
 browser = GuardedBrowser(guard_url="http://localhost:8080")
 
@@ -150,7 +150,7 @@ await guarded_page.goto("https://example.com")   # raises PermissionError on den
 ### MCP
 
 ```python
-from agentguard.adapters.mcp import GuardedMCPServer
+from vanzik.adapters.mcp import GuardedMCPServer
 
 server = GuardedMCPServer(guard_url="http://localhost:8080")
 server.add_tool("my_tool", "Description", handler=my_handler)
@@ -160,15 +160,15 @@ server.run()   # stdio JSON-RPC MCP server; pins MCP_PROTOCOL_VERSION
 Or as a drop-in stdio server:
 
 ```bash
-python -m agentguard.adapters.mcp --guard-url http://localhost:8080
+python -m vanzik.adapters.mcp --guard-url http://localhost:8080
 ```
 
 ### OpenAI Agents SDK
 
 ```python
 from agents import Agent, Runner, function_tool
-from agentguard import AgentGuardDenied, Guard
-from agentguard.adapters.openai_agents import guard_tools
+from vanzik import VanzikDenied, Guard
+from vanzik.adapters.openai_agents import guard_tools
 
 @function_tool
 def run_shell(command: str) -> str:
@@ -179,11 +179,11 @@ agent = Agent(name="ops", tools=guard_tools([run_shell], guard))
 
 try:
     result = await Runner.run(agent, "clean up the build directory")
-except AgentGuardDenied as e:
+except VanzikDenied as e:
     print("blocked:", e.result.reason)
 ```
 
-`guard_tools` returns gated copies of the `FunctionTool`s; DENY and REQUIRE_APPROVAL raise out of `Runner.run` before the tool runs. To let the model see the reason and continue instead, attach `agentguard_tool_guardrail(guard)` as a tool input guardrail. Hosted tools (`WebSearchTool`, ...) cannot be gated. Runnable example: [`examples/openai-agents-config.py`](../../examples/openai-agents-config.py).
+`guard_tools` returns gated copies of the `FunctionTool`s; DENY and REQUIRE_APPROVAL raise out of `Runner.run` before the tool runs. To let the model see the reason and continue instead, attach `vanzik_tool_guardrail(guard)` as a tool input guardrail. Hosted tools (`WebSearchTool`, ...) cannot be gated. Runnable example: [`examples/openai-agents-config.py`](../../examples/openai-agents-config.py).
 
 ## API reference (summary)
 
@@ -201,11 +201,11 @@ Fields: `decision`, `reason`, `matched_rule`, `approval_id`, `approval_url`. Pro
 
 ### Exception hierarchy (all extend `PermissionError`)
 
-- `AgentGuardError` — base; carries `.result: CheckResult`.
-- `AgentGuardDenied` — policy said DENY.
-- `AgentGuardApprovalRequired` — policy said REQUIRE_APPROVAL and the decorator was not configured to wait. Carries `.approval_id`, `.approval_url`.
-- `AgentGuardApprovalTimeout` — `wait_for_approval` deadline elapsed. Carries `.approval_id`.
-- `AgentGuardAuthError` — a `wait_for_approval` status poll got `401`/`403` (API key missing or wrong). Carries `.status`.
+- `VanzikError` — base; carries `.result: CheckResult`.
+- `VanzikDenied` — policy said DENY.
+- `VanzikApprovalRequired` — policy said REQUIRE_APPROVAL and the decorator was not configured to wait. Carries `.approval_id`, `.approval_url`.
+- `VanzikApprovalTimeout` — `wait_for_approval` deadline elapsed. Carries `.approval_id`.
+- `VanzikAuthError` — a `wait_for_approval` status poll got `401`/`403` (API key missing or wrong). Carries `.status`.
 
 ## License
 

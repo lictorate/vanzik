@@ -10,10 +10,10 @@ import json
 
 import pytest
 
-from agentguard import Guard
-from agentguard import core
-from agentguard.adapters._common import ConflictingToolInput, extract_check_params
-from agentguard.decorators import guarded
+from vanzik import Guard
+from vanzik import core
+from vanzik.adapters._common import ConflictingToolInput, extract_check_params
+from vanzik.decorators import guarded
 
 
 class _FakeResponse(io.BytesIO):
@@ -79,10 +79,10 @@ def test_langchain_single_parent_session_key_is_gated_as_a_command(mock_server):
     pytest.importorskip("langchain_core")
     from langchain_core.tools import Tool
 
-    from agentguard.adapters.langchain import GuardedTool
-    from tests.conftest import MockAgentGuardHandler
+    from vanzik.adapters.langchain import GuardedTool
+    from tests.conftest import MockVanzikHandler
 
-    MockAgentGuardHandler.check_response = {"decision": "DENY", "reason": "blocked"}
+    MockVanzikHandler.check_response = {"decision": "DENY", "reason": "blocked"}
     guard = Guard(mock_server, parent_session_id="orch")
     ran = []
     tool = Tool.from_function(name="run", description="runs", func=lambda text: ran.append(text))
@@ -91,7 +91,7 @@ def test_langchain_single_parent_session_key_is_gated_as_a_command(mock_server):
     with pytest.raises(PermissionError):
         gt.invoke({"parent_session_id": "rm -rf /"})
 
-    body = json.loads(MockAgentGuardHandler.last_request_body)
+    body = json.loads(MockVanzikHandler.last_request_body)
     assert body["command"] == "rm -rf /"
     assert body["parent_session_id"] == "orch"  # the Guard's, not the model's
     assert ran == []

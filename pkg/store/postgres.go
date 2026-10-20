@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib" // pure-Go Postgres driver, registered under the name "pgx"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/audit"
 )
 
 // PostgresStore is the multi-node Store backend. It mirrors SQLiteStore

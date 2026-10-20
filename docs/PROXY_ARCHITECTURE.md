@@ -1,11 +1,11 @@
 # Proxy Architecture
 
 This doc covers the cross-cutting decisions that apply to **both**
-AgentGuard proxies. The two follow-up docs cover the proxy-specific wire
+Vanzik proxies. The two follow-up docs cover the proxy-specific wire
 format and data plane:
 
-- [`docs/MCP_GATEWAY.md`](./MCP_GATEWAY.md) — `agentguard-mcp-gateway`
-- [`docs/LLM_API_PROXY.md`](./LLM_API_PROXY.md) — `agentguard-llm-proxy`
+- [`docs/MCP_GATEWAY.md`](./MCP_GATEWAY.md) — `vanzik-mcp-gateway`
+- [`docs/LLM_API_PROXY.md`](./LLM_API_PROXY.md) — `vanzik-llm-proxy`
 
 Read this one first.
 
@@ -13,7 +13,7 @@ Read this one first.
 
 ## 1. The hero claim, restated honestly
 
-AgentGuard exposes its firewall as a **wire-level enforcement boundary**
+Vanzik exposes its firewall as a **wire-level enforcement boundary**
 via two integration paths:
 
 1. **MCP Gateway** — a JSON-RPC bridge that sits between an MCP client
@@ -27,7 +27,7 @@ via two integration paths:
    stream.
 
 The Python and TypeScript SDKs are the **compatibility tier** for
-direct callers: code paths that talk to AgentGuard via `Guard.check`
+direct callers: code paths that talk to Vanzik via `Guard.check`
 remain a first-class integration, but they are not the only way to
 get coverage.
 
@@ -41,11 +41,11 @@ gateway subprocess**. An agent can still bypass either path by:
 
 - ignoring `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` and dialing the real
   upstream directly,
-- launching an MCP server with no AgentGuard gateway in front of it,
+- launching an MCP server with no Vanzik gateway in front of it,
 - using a tool the SDK doesn't know about.
 
 The README's "Limitations & Threat Model" section already documents the
-fundamental opt-in property; this doc inherits that caveat. AgentGuard
+fundamental opt-in property; this doc inherits that caveat. Vanzik
 is a **defensive guardrail for cooperating agents**, not a mandatory
 syscall interceptor.
 
@@ -60,7 +60,7 @@ the central server packages.
 ### 2.1 Policy via `pkg/policy.PolicyProvider`
 
 Both proxies hold a `*policy.Engine` constructed from a
-`policy.PolicyProvider`. AgentGuard wires `FilePolicyProvider`; since
+`policy.PolicyProvider`. Vanzik wires `FilePolicyProvider`; since
 v0.6 the store-backed multi-tenant provider drops in via the same
 interface (`Get` / `Watch` / `Validate` / `Close`, see
 `pkg/policy/provider.go`).
@@ -81,7 +81,7 @@ The `audit.Entry` includes `Scope`, `Decision`, `Rule`, `Reason`,
 
 ### 2.3 Approval queue and SSE bus via `pkg/proxy.ApprovalQueue`
 
-The existing AgentGuard HTTP server (`agentguard server`) owns the
+The existing Vanzik HTTP server (`vanzik server`) owns the
 approval queue and the SSE bus. The two proxies do **not** maintain
 their own approval state. When a check returns `REQUIRE_APPROVAL` the
 proxy:
@@ -89,7 +89,7 @@ proxy:
 - receives `ApprovalID` and `ApprovalURL` in the `CheckResult`,
 - surfaces them to the agent (synthetic refusal for the LLM proxy;
   `isError: true` content block for the MCP gateway),
-- the operator approves on the dashboard (or via `agentguard approve`
+- the operator approves on the dashboard (or via `vanzik approve`
   CLI) — the resolution lands on the **central guard server's**
   `ApprovalQueue` and is broadcast on its SSE bus.
 
@@ -109,7 +109,7 @@ sees the response.
 
 ```
                         ┌─────────────────────────────────┐
-                        │      agentguard server           │
+                        │      vanzik server           │
                         │  (central host: 127.0.0.1:8080) │
    /v1/check ─────►     │  • Engine.Check                 │
    /v1/approve ─────►   │  • ApprovalQueue + SSE bus      │
@@ -123,7 +123,7 @@ sees the response.
         /v1/check                   /v1/check                   /v1/check
               │                           │                           │
    ┌──────────┴──────────┐    ┌───────────┴────────────┐    ┌─────────┴─────────┐
-   │ agentguard-         │    │ agentguard-llm-proxy   │    │ Python/TS SDKs    │
+   │ vanzik-         │    │ vanzik-llm-proxy   │    │ Python/TS SDKs    │
    │ mcp-gateway         │    │ (127.0.0.1:8081)       │    │ (Guard.check)     │
    │ (stdio child of     │    │ • /v1/chat/completions │    │                   │
    │  Claude Desktop)    │    │ • /v1/messages         │    │                   │
@@ -148,8 +148,8 @@ shape (tenant-scoped URL, schema_version stamping, bearer auth, 64 KiB
 response cap), the fail-mode translation, the shared `Decision` type
 (re-exported by each proxy via type alias), and the shared CLI flag
 set + validation (`--guard-url`, `--api-key`, `--tenant-id`,
-`--fail-mode`, `--log-level`, `--policy`, with the AGENTGUARD_API_KEY
-and AGENTGUARD_URL env fallbacks, and the check that rejects stray
+`--fail-mode`, `--log-level`, `--policy`, with the VANZIK_API_KEY
+and VANZIK_URL env fallbacks, and the check that rejects stray
 positional arguments). Each proxy keeps only its own scope-mapping and
 argument-projection logic. The package is internal — it is substrate,
 not public API; the per-binary synthetic Rule strings remain each
@@ -163,13 +163,13 @@ coding-agent hook ([`CODING_AGENTS.md`](CODING_AGENTS.md)):
 
 | transport         | source                                         |
 |-------------------|------------------------------------------------|
-| `mcp_gateway`     | `agentguard-mcp-gateway`                       |
-| `llm_api_proxy`   | `agentguard-llm-proxy`                         |
+| `mcp_gateway`     | `vanzik-mcp-gateway`                       |
+| `llm_api_proxy`   | `vanzik-llm-proxy`                         |
 | `sdk`             | direct `/v1/check` callers (Python/TS SDKs, hand-rolled HTTP clients, framework adapters) |
-| `claude_code`     | `agentguard hook claude-code`                  |
-| `cursor`          | `agentguard hook cursor`                       |
-| `gemini_cli`      | `agentguard hook gemini-cli`                   |
-| `codex_cli`       | `agentguard hook codex`                        |
+| `claude_code`     | `vanzik hook claude-code`                  |
+| `cursor`          | `vanzik hook cursor`                       |
+| `gemini_cli`      | `vanzik hook gemini-cli`                   |
+| `codex_cli`       | `vanzik hook codex`                        |
 
 ### 3.1 Where the field lives
 
@@ -213,29 +213,29 @@ The `CheckResult` schema stays at `schema_version: "v1"`. No bump.
 
 ### 4.1 Decision: two binaries
 
-The proxies ship as two binaries alongside the central `agentguard`
+The proxies ship as two binaries alongside the central `vanzik`
 binary:
 
 | binary                       | role                                                  |
 |------------------------------|-------------------------------------------------------|
-| `agentguard`                 | central server (`server`, `validate`, `audit`, etc.)  |
-| `agentguard-mcp-gateway`     | stdio bridge, child of an MCP host (Claude Desktop)   |
-| `agentguard-llm-proxy`       | HTTP server, sidecar for OpenAI/Anthropic-compatible callers |
+| `vanzik`                 | central server (`server`, `validate`, `audit`, etc.)  |
+| `vanzik-mcp-gateway`     | stdio bridge, child of an MCP host (Claude Desktop)   |
+| `vanzik-llm-proxy`       | HTTP server, sidecar for OpenAI/Anthropic-compatible callers |
 
 All three live under `cmd/`:
 
 ```
-cmd/agentguard/main.go
-cmd/agentguard-mcp-gateway/main.go
-cmd/agentguard-llm-proxy/main.go
+cmd/vanzik/main.go
+cmd/vanzik-mcp-gateway/main.go
+cmd/vanzik-llm-proxy/main.go
 ```
 
-Each `cmd/agentguard-*/main.go` is a **thin entry point**. Real logic
+Each `cmd/vanzik-*/main.go` is a **thin entry point**. Real logic
 lives in `pkg/mcpgw/` and `pkg/llmproxy/`, consuming the existing
 `pkg/policy`, `pkg/audit`, `pkg/proxy`, `pkg/notify`, and `pkg/metrics`
 packages.
 
-### 4.2 Why not subcommands of `agentguard`?
+### 4.2 Why not subcommands of `vanzik`?
 
 Settled decision: three separate binaries. The MCP gateway **must** be
 one — MCP clients spawn it via `claude_desktop_config.json`'s `command`
@@ -248,12 +248,12 @@ fixes without redeploying the central server. Versions stay synced via
 ### 4.3 Versioning
 
 All three binaries share a single release version. `bump-version.sh`
-sed-replaces the version string across `cmd/agentguard/main.go`,
-`cmd/agentguard-mcp-gateway/main.go`, `cmd/agentguard-llm-proxy/main.go`,
+sed-replaces the version string across `cmd/vanzik/main.go`,
+`cmd/vanzik-mcp-gateway/main.go`, `cmd/vanzik-llm-proxy/main.go`,
 and the SDK manifests.
 
-`agentguard-mcp-gateway version` and `agentguard-llm-proxy version`
-emit the same `version` / `commit` triplet as `agentguard version`.
+`vanzik-mcp-gateway version` and `vanzik-llm-proxy version`
+emit the same `version` / `commit` triplet as `vanzik version`.
 
 ### 4.4 Same `pkg/` codebase
 
@@ -271,9 +271,9 @@ fails CI because the `pkg/` tests run for all callers.
 All three binaries on `127.0.0.1`. Everything chats over loopback.
 
 ```
-agentguard server --port 8080 --dashboard --policy configs/default.yaml
-agentguard-mcp-gateway --guard-url http://127.0.0.1:8080 --upstream "fs:npx -y @modelcontextprotocol/server-filesystem /tmp"
-agentguard-llm-proxy --listen 127.0.0.1:8081 --guard-url http://127.0.0.1:8080
+vanzik server --port 8080 --dashboard --policy configs/default.yaml
+vanzik-mcp-gateway --guard-url http://127.0.0.1:8080 --upstream "fs:npx -y @modelcontextprotocol/server-filesystem /tmp"
+vanzik-llm-proxy --listen 127.0.0.1:8081 --guard-url http://127.0.0.1:8080
 ```
 
 The agent's environment:
@@ -294,7 +294,7 @@ binary.
 
 ### 5.2 Single-host server
 
-One host runs `agentguard server`. Gateways and proxies run as sidecars
+One host runs `vanzik server`. Gateways and proxies run as sidecars
 on the same host or on agent-facing hosts pointing at the central
 server's `/v1/check` over the network. Set `--api-key` on the central
 server and pass it to every gateway/proxy via `--api-key`.
@@ -304,7 +304,7 @@ server and pass it to every gateway/proxy via `--api-key`.
 Multi-tenancy is supported on a single central server since v0.6:
 
 - per-tenant policies live in the durable store, managed via
-  `agentguard tenant put/list/rm` (see [`CLI.md`](CLI.md#agentguard-tenant-v06)),
+  `vanzik tenant put/list/rm` (see [`CLI.md`](CLI.md#vanzik-tenant-v06)),
 - tenant URL routing (`/v1/t/{tenant}/…`) is live in `pkg/proxy/tenant.go`,
 - the approval queue, rate limiter, cost accounting, and audit query are
   all sharded by tenant ID,
@@ -328,7 +328,7 @@ cross-node approval visibility lags by at most one interval. See
 
 ## 6. Failure modes
 
-### 6.1 Central guard server (`agentguard server`) is unreachable
+### 6.1 Central guard server (`vanzik server`) is unreachable
 
 This is the case the SDK already handles (`fail-mode: deny|allow`).
 Both proxies adopt the **same** flag for parity:
@@ -341,7 +341,7 @@ Both proxies adopt the **same** flag for parity:
 |-----------------------------|-----------------------------------------------------------|
 | `deny`                      | synthesise `DENY` with `Rule="deny:<gateway>:fail_closed"` (LLM proxy emits `deny:llm_api_proxy:fail_closed`; MCP gateway emits `deny:gateway:fail_closed`). The agent sees a deny. **Default.** |
 | `allow`                     | synthesise `ALLOW` with `Rule="allow:<gateway>:fail_open"`. **Use only in trusted dev environments.** Logged as WARN at startup. |
-| `fail-closed-with-audit`    | synthesise `DENY` with a **distinct** `Rule="deny:<gateway>:fail_closed_audit"` so dashboards can break out central-server-outage events from plain fail-closed denials, **and append the denial to a local fallback audit file** (`--fail-audit-log`, default `agentguard-fail-audit.jsonl`, canonical `audit.Entry` JSONL) so the outage window stays reconstructable without the central server. |
+| `fail-closed-with-audit`    | synthesise `DENY` with a **distinct** `Rule="deny:<gateway>:fail_closed_audit"` so dashboards can break out central-server-outage events from plain fail-closed denials, **and append the denial to a local fallback audit file** (`--fail-audit-log`, default `vanzik-fail-audit.jsonl`, canonical `audit.Entry` JSONL) so the outage window stays reconstructable without the central server. |
 
 Independent of `--fail-mode`: when `/v1/check` answers 2xx but with an
 **unrecognised decision string**, both proxies deny with the stable
@@ -353,7 +353,7 @@ silently passing through.
 The Python SDK (fail-closed **by default**, overridable with the `fail_mode`
 constructor argument — `"deny"` or `"allow"`) and the TypeScript SDK
 (configurable `failMode`) keep their existing behaviour — the new flag just
-brings the proxies into line. Both SDKs default to denying when AgentGuard is
+brings the proxies into line. Both SDKs default to denying when Vanzik is
 unreachable; `"allow"` is an explicit opt-out for callers whose threat model
 treats the firewall as best-effort.
 
@@ -369,7 +369,7 @@ Detail in `MCP_GATEWAY.md` § 7.
 Pass-through: forward the upstream's status code and body verbatim.
 Write one audit entry tagged `transport: "llm_api_proxy"` with the
 upstream status in `Meta["upstream_status"]`. Do not transform errors
-into AgentGuard-shaped JSON — the agent's own retry/error-handling path
+into Vanzik-shaped JSON — the agent's own retry/error-handling path
 gets to see the real upstream response.
 
 ### 6.4 Proxy itself crashes
@@ -391,8 +391,8 @@ Both binaries share these flags:
 
 | flag                  | meaning                                            | default                |
 |-----------------------|----------------------------------------------------|------------------------|
-| `--guard-url`         | central server `/v1/check` base URL (from `AGENTGUARD_URL` env if unset) | `http://127.0.0.1:8080`|
-| `--api-key`           | bearer token for `/v1/check` (from `AGENTGUARD_API_KEY` env if unset, then the key `agentguard setup` saved) | unset (warn) |
+| `--guard-url`         | central server `/v1/check` base URL (from `VANZIK_URL` env if unset) | `http://127.0.0.1:8080`|
+| `--api-key`           | bearer token for `/v1/check` (from `VANZIK_API_KEY` env if unset, then the key `vanzik setup` saved) | unset (warn) |
 | `--tenant-id`         | tenant header value                                | `local`                |
 | `--fail-mode`         | `deny` / `allow` / `fail-closed-with-audit`        | `deny`                 |
 | `--log-level`         | `info` / `debug`                                   | `info`                 |
@@ -413,7 +413,7 @@ The two proxies have very different surfaces here:
   ```json
   {
     "status": "ok",
-    "version": "1.4.0",
+    "version": "2.0.0",
     "transport": "llm_api_proxy",
     "uptime_s": 412
   }
@@ -434,12 +434,12 @@ Per-request gating metrics are emitted on the **central server's**
 
 | metric                                                       | source                            |
 |--------------------------------------------------------------|-----------------------------------|
-| `agentguard_checks_total`                                    | central server                    |
-| `agentguard_request_duration_ms`                             | central server                    |
-| `agentguard_llmproxy_buffer_overflow_total`                  | LLM API Proxy (process-local)     |
-| `agentguard_llmproxy_streams_active`                         | LLM API Proxy (process-local)     |
+| `vanzik_checks_total`                                    | central server                    |
+| `vanzik_request_duration_ms`                             | central server                    |
+| `vanzik_llmproxy_buffer_overflow_total`                  | LLM API Proxy (process-local)     |
+| `vanzik_llmproxy_streams_active`                         | LLM API Proxy (process-local)     |
 
-Process-local LLM-proxy series (`agentguard_llmproxy_*`) are recorded in
+Process-local LLM-proxy series (`vanzik_llmproxy_*`) are recorded in
 the proxy's in-process registry but are **not exported anywhere yet** —
 no `/metrics` endpoint, no periodic log dump. Until an export path
 ships, treat them as internal counters; observable proxy behaviour
@@ -467,10 +467,10 @@ the proxy-specific docs cover the full detail.
 
 3. **Approval re-submission for the MCP gateway.** When a tool call
    returns `REQUIRE_APPROVAL` and the operator approves, the client
-   retries with `_meta.dev.agentguard/approval_id` echoed in the call
+   retries with `_meta.dev.vanzik/approval_id` echoed in the call
    params; the gateway looks up the resolution and either forwards
    (ALLOW) or refuses (DENY). The `_meta` namespace prefix
-   `dev.agentguard/` is reserved per the MCP spec's `_meta` rules.
+   `dev.vanzik/` is reserved per the MCP spec's `_meta` rules.
    Detail in `MCP_GATEWAY.md` § 6.
 
 ---

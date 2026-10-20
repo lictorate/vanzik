@@ -1,5 +1,5 @@
 """
-AgentGuard LLM API Proxy — Anthropic Python SDK example.
+Vanzik LLM API Proxy — Anthropic Python SDK example.
 
 Same shape as openai-sdk-config.py but for the official `anthropic`
 package. Note Anthropic's URL convention differs from OpenAI's: there
@@ -10,7 +10,7 @@ Verified against:
     src/anthropic/_client.py, 2026-05-05). Constructor parameter
     `base_url=` and env var `ANTHROPIC_BASE_URL`. The default value is
     `https://api.anthropic.com` (no path).
-  - AgentGuard LLM API Proxy v0.4.1+ (`agentguard-llm-proxy --listen
+  - Vanzik LLM API Proxy v0.4.1+ (`vanzik-llm-proxy --listen
     127.0.0.1:8081`).
 
 Setup:
@@ -18,22 +18,22 @@ Setup:
   export ANTHROPIC_API_KEY=sk-ant-...           # your real Anthropic key
   export ANTHROPIC_BASE_URL=http://127.0.0.1:8081  # the proxy — NO /v1
 
-Run AgentGuard side (two terminals):
+Run Vanzik side (two terminals):
 
   # Terminal 1
-  agentguard server \\
+  vanzik server \\
       --policy configs/default.yaml \\
       --dashboard \\
       --watch \\
-      --api-key "$AGENTGUARD_API_KEY"
+      --api-key "$VANZIK_API_KEY"
 
   # Terminal 2 — same proxy as the OpenAI example: it speaks both
   # /v1/chat/completions (OpenAI) AND /v1/messages (Anthropic).
-  agentguard-llm-proxy \\
+  vanzik-llm-proxy \\
       --listen 127.0.0.1:8081 \\
       --policy configs/default.yaml \\
       --guard-url http://127.0.0.1:8080 \\
-      --api-key "$AGENTGUARD_API_KEY"
+      --api-key "$VANZIK_API_KEY"
 
 Then run this script:
   python examples/anthropic-sdk-config.py
@@ -118,7 +118,7 @@ def main() -> None:
         for event in stream:
             etype = getattr(event, "type", "")
             # Streaming text deltas (the `text` content block path —
-            # also where AgentGuard's synthetic refusal lands when a
+            # also where Vanzik's synthetic refusal lands when a
             # tool_use block was DENIED).
             if etype == "content_block_delta":
                 delta = getattr(event, "delta", None)

@@ -1,4 +1,4 @@
-// Package persist wires AgentGuard's in-memory fast-path state to a durable
+// Package persist wires Vanzik's in-memory fast-path state to a durable
 // store.Store using a write-behind dual-tier model: memory is
 // authoritative, the store is caught up asynchronously.
 //
@@ -23,10 +23,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
-	"github.com/Caua-ferraz/AgentGuard/pkg/proxy"
-	"github.com/Caua-ferraz/AgentGuard/pkg/ratelimit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/store"
+	"lictorate.com/vanzik/v2/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/proxy"
+	"lictorate.com/vanzik/v2/pkg/ratelimit"
+	"lictorate.com/vanzik/v2/pkg/store"
 )
 
 // MinFlushInterval is the hard floor on the flush cadence (plan §2.4): the
@@ -79,7 +79,7 @@ type Config struct {
 // the concrete *store.SQLiteStore and *store.PostgresStore (which carry the six
 // consumption methods), NOT by store.Store itself — the v1.0 lock (CLAUDE.md §4)
 // freezes store.Store, so new store operations live on the concrete types and
-// are reached here via a type assertion, mirroring cmd/agentguard's
+// are reached here via a type assertion, mirroring cmd/vanzik's
 // persistentStore pattern. A Store that does not satisfy this interface simply
 // disables reconciliation.
 type reconcileStore interface {

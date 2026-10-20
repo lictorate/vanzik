@@ -585,7 +585,7 @@ func TestBridge_MalformedFrameDoesNotKillBridge(t *testing.T) {
 
 // TestBridge_PolicyApprovalRoundTrip simulates the approval retry
 // flow: first call returns REQUIRE_APPROVAL with an approval_id;
-// client retries with `_meta.dev.agentguard/approval_id` populated;
+// client retries with `_meta.dev.vanzik/approval_id` populated;
 // PolicyCheck sees the approval id on the second call and returns
 // ALLOW; bridge forwards to upstream.
 func TestBridge_PolicyApprovalRoundTrip(t *testing.T) {
@@ -594,13 +594,13 @@ func TestBridge_PolicyApprovalRoundTrip(t *testing.T) {
 	up.handleSend = func(req *Request) *Response {
 		if req.Method == MethodToolsCall {
 			upCalls.Add(1)
-			// Verify the dev.agentguard/* keys were stripped before
+			// Verify the dev.vanzik/* keys were stripped before
 			// forwarding upstream.
 			var p ToolsCallParams
 			_ = json.Unmarshal(req.Params, &p)
 			for k := range p.Meta {
-				if strings.HasPrefix(k, MetaPrefixAgentGuard) {
-					t.Errorf("upstream saw dev.agentguard key %q (should be stripped)", k)
+				if strings.HasPrefix(k, MetaPrefixVanzik) {
+					t.Errorf("upstream saw dev.vanzik key %q (should be stripped)", k)
 				}
 			}
 		}
@@ -693,7 +693,7 @@ func TestBridge_DegradedNamespaceReturnsUnavailable(t *testing.T) {
 	}
 }
 
-func TestBridge_StripAgentGuardMeta(t *testing.T) {
+func TestBridge_StripVanzikMeta(t *testing.T) {
 	cases := []struct {
 		name string
 		in   map[string]interface{}
@@ -705,12 +705,12 @@ func TestBridge_StripAgentGuardMeta(t *testing.T) {
 			want: nil,
 		},
 		{
-			name: "only agentguard keys -> nil",
+			name: "only vanzik keys -> nil",
 			in:   map[string]interface{}{MetaApprovalIDKey: "ap_x"},
 			want: nil,
 		},
 		{
-			name: "mixed -> only non-agentguard",
+			name: "mixed -> only non-vanzik",
 			in: map[string]interface{}{
 				MetaApprovalIDKey: "ap_x",
 				"trace-id":        "t-123",
@@ -722,7 +722,7 @@ func TestBridge_StripAgentGuardMeta(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := stripAgentGuardMeta(tc.in)
+			got := stripVanzikMeta(tc.in)
 			if len(got) != len(tc.want) {
 				t.Fatalf("len: got %d, want %d (%v vs %v)", len(got), len(tc.want), got, tc.want)
 			}

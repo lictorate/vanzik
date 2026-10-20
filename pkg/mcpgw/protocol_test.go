@@ -307,7 +307,7 @@ func TestMergeCapabilities_MasksResourcesAndPrompts(t *testing.T) {
 
 // TestParseConfig exercises ParseConfig's flag-parsing + validation.
 func TestParseConfig(t *testing.T) {
-	t.Setenv("AGENTGUARD_URL", "")
+	t.Setenv("VANZIK_URL", "")
 	cases := []struct {
 		name    string
 		args    []string

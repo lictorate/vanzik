@@ -1,7 +1,7 @@
 // Package v1 documents and re-exports the v1 wire-protocol types for the
-// AgentGuard /v1/check endpoint.
+// Vanzik /v1/check endpoint.
 //
-// Canonical types live in github.com/Caua-ferraz/AgentGuard/pkg/policy
+// Canonical types live in lictorate.com/vanzik/v2/pkg/policy
 // (ActionRequest, CheckResult). This package exists for two reasons:
 //
 //  1. Versioning — when v2 of the wire protocol is introduced, a new
@@ -31,7 +31,7 @@
 // See docs/WIRE_PROTOCOL.md for the operator-facing description.
 package v1
 
-import "github.com/Caua-ferraz/AgentGuard/pkg/policy"
+import "lictorate.com/vanzik/v2/pkg/policy"
 
 // Version is the wire-protocol version emitted by this package.
 // Requests with an empty schema_version default to this value;

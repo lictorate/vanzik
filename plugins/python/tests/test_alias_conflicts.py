@@ -16,20 +16,20 @@ from typing import Any, List
 
 import pytest
 
-from agentguard import AgentGuardDenied, Guard
-from agentguard.adapters._common import (
+from vanzik import VanzikDenied, Guard
+from vanzik.adapters._common import (
     ConflictingToolInput,
     conflict_denial,
     extract_check_params,
 )
-from tests.conftest import MockAgentGuardHandler
+from tests.conftest import MockVanzikHandler
 
 
 SMUGGLE = {"command": "ls", "cmd": "rm -rf /"}
 
 
 def _check_requests() -> List[dict]:
-    return [r for r in MockAgentGuardHandler.request_log if r["path"] == "/v1/check"]
+    return [r for r in MockVanzikHandler.request_log if r["path"] == "/v1/check"]
 
 
 # ---------------------------------------------------------------------------
@@ -102,14 +102,14 @@ class _FakeCrewAITool:
 class TestCrewAI:
     def test_smuggled_alias_is_denied_without_a_server_call(self, mock_server):
         pytest.importorskip("crewai")
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
         tool = _FakeCrewAITool()
         gct = GuardedCrewTool(tool, guard=Guard(mock_server), scope="shell")
 
-        with pytest.raises(AgentGuardDenied, match="conflicting values for 'command'"):
+        with pytest.raises(VanzikDenied, match="conflicting values for 'command'"):
             gct.invoke(dict(SMUGGLE))
-        with pytest.raises(AgentGuardDenied):
+        with pytest.raises(VanzikDenied):
             gct._run(**SMUGGLE)
 
         assert tool.calls == []
@@ -126,7 +126,7 @@ class TestLangChain:
         pytest.importorskip("langchain_core", minversion="0.1")
         from langchain_core.tools import StructuredTool
 
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
         calls: list = []
 
@@ -155,7 +155,7 @@ class TestLangChain:
 
 class TestMCP:
     def test_server_denies_a_smuggled_alias(self, mock_server):
-        from agentguard.adapters.mcp import GuardedMCPServer
+        from vanzik.adapters.mcp import GuardedMCPServer
 
         s = GuardedMCPServer(guard_url=mock_server)
         calls: list = []
@@ -178,7 +178,7 @@ class TestMCP:
         assert _check_requests() == []
 
     def test_gateway_denies_a_smuggled_alias(self, mock_server):
-        from agentguard.adapters.mcp import GuardedMCPGateway
+        from vanzik.adapters.mcp import GuardedMCPGateway
 
         forwarded: list = []
 
@@ -248,12 +248,12 @@ def _invoke(tool: Any, input_json: str) -> Any:
 
 class TestOpenAIAgents:
     def test_smuggled_alias_is_denied_without_a_server_call(self, mock_server):
-        from agentguard.adapters.openai_agents import guard_tool
+        from vanzik.adapters.openai_agents import guard_tool
 
         tool = _FakeFunctionTool()
         guarded = guard_tool(tool, Guard(mock_server))
 
-        with pytest.raises(AgentGuardDenied, match="conflicting values for 'command'"):
+        with pytest.raises(VanzikDenied, match="conflicting values for 'command'"):
             _invoke(guarded, json.dumps(SMUGGLE))
 
         assert tool.ran == []
@@ -263,7 +263,7 @@ class TestOpenAIAgents:
         # An undeclared key the SDK would drop must not steer the check:
         # here a stray "path" would otherwise move the call to the
         # filesystem scope and check /tmp instead of the command.
-        from agentguard.adapters.openai_agents import guard_tool
+        from vanzik.adapters.openai_agents import guard_tool
 
         tool = _FakeFunctionTool()
         guarded = guard_tool(tool, Guard(mock_server, agent_id="oa"))
@@ -277,19 +277,19 @@ class TestOpenAIAgents:
     def test_undeclared_alias_is_dropped_before_the_check(self, mock_server):
         # The tool reads "command"; a stray "cmd" never reaches it, but it
         # still conflicts and denies: the raw input is ambiguous.
-        from agentguard.adapters.openai_agents import guard_tool
+        from vanzik.adapters.openai_agents import guard_tool
 
         tool = _FakeFunctionTool(params_json_schema={
             "type": "object", "properties": {"command": {"type": "string"}},
         })
         guarded = guard_tool(tool, Guard(mock_server))
 
-        with pytest.raises(AgentGuardDenied):
+        with pytest.raises(VanzikDenied):
             _invoke(guarded, json.dumps({"command": "ls", "cmd": "rm -rf /"}))
         assert tool.ran == []
 
     def test_schema_allowing_extra_keys_is_not_projected(self, mock_server):
-        from agentguard.adapters.openai_agents import guard_tool
+        from vanzik.adapters.openai_agents import guard_tool
 
         tool = _FakeFunctionTool(params_json_schema={
             "type": "object",
@@ -308,9 +308,9 @@ class TestOpenAIAgents:
         pytest.importorskip("agents")
         from types import SimpleNamespace
 
-        from agentguard.adapters.openai_agents import agentguard_tool_guardrail
+        from vanzik.adapters.openai_agents import vanzik_tool_guardrail
 
-        guardrail = agentguard_tool_guardrail(Guard(mock_server))
+        guardrail = vanzik_tool_guardrail(Guard(mock_server))
         data = SimpleNamespace(
             context=SimpleNamespace(
                 tool_name="run_shell", tool_arguments=json.dumps(SMUGGLE)

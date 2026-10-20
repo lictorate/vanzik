@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // A rotated, compressed log reads back whole and in write order, and a

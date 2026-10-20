@@ -9,8 +9,8 @@ import json
 
 import pytest
 
-from agentguard import Guard, CheckResult, DECISION_ALLOW, DECISION_DENY
-from tests.conftest import MockAgentGuardHandler
+from vanzik import Guard, CheckResult, DECISION_ALLOW, DECISION_DENY
+from tests.conftest import MockVanzikHandler
 
 
 # ---------------------------------------------------------------------------
@@ -21,7 +21,7 @@ class TestCheckPayloadSessionAndCost:
     def test_session_id_forwarded(self, mock_server):
         g = Guard(mock_server)
         g.check("cost", session_id="sess-42", est_cost=0.12)
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body["session_id"] == "sess-42"
         assert body["est_cost"] == 0.12
 
@@ -30,14 +30,14 @@ class TestCheckPayloadSessionAndCost:
         spuriously triggering cost-scope rules."""
         g = Guard(mock_server)
         g.check("shell", command="ls")
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert "est_cost" not in body
         assert "session_id" not in body
 
     def test_empty_session_id_not_sent(self, mock_server):
         g = Guard(mock_server)
         g.check("shell", command="ls", session_id="")
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert "session_id" not in body
 
     def test_all_fields_together(self, mock_server):
@@ -49,7 +49,7 @@ class TestCheckPayloadSessionAndCost:
             est_cost=1.75,
             meta={"model": "opus"},
         )
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body["scope"] == "cost"
         assert body["agent_id"] == "bot-7"
         assert body["command"] == "llm-call"
@@ -62,7 +62,7 @@ class TestCheckPayloadSessionAndCost:
 # wait_for_approval auth header
 # ---------------------------------------------------------------------------
 
-class StatusCapturingHandler(MockAgentGuardHandler):
+class StatusCapturingHandler(MockVanzikHandler):
     """Variant that records the Authorization header on each status poll and
     returns 'resolved' so wait_for_approval exits after one iteration."""
 
@@ -112,7 +112,7 @@ class TestWaitForApprovalAuth:
         assert all(h is None for h in StatusCapturingHandler.status_auth_headers)
 
     def test_env_var_api_key_propagates(self, mock_status_server, monkeypatch):
-        monkeypatch.setenv("AGENTGUARD_API_KEY", "env-key")
+        monkeypatch.setenv("VANZIK_API_KEY", "env-key")
         g = Guard(mock_status_server, timeout=1)
         g.wait_for_approval("ap_x", timeout=1, poll_interval=1)
         assert all(h == "Bearer env-key" for h in StatusCapturingHandler.status_auth_headers)
@@ -125,9 +125,9 @@ class TestWaitForApprovalAuth:
 class TestAdaptersForwardCostHints:
     def test_langchain_forwards(self, mock_server):
         from unittest.mock import MagicMock
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         guard = Guard(mock_server)
         tool = MagicMock()
         tool.name = "t"
@@ -135,15 +135,15 @@ class TestAdaptersForwardCostHints:
         gt = GuardedTool(tool, guard, scope="cost")
 
         gt.run({"command": "llm", "session_id": "s1", "est_cost": 0.42})
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body.get("session_id") == "s1"
         assert body.get("est_cost") == 0.42
 
     def test_crewai_forwards(self, mock_server):
         from unittest.mock import MagicMock
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         guard = Guard(mock_server)
         inner = MagicMock()
         inner.name = "t"
@@ -152,14 +152,14 @@ class TestAdaptersForwardCostHints:
         gt = GuardedCrewTool(inner, guard=guard, scope="cost")
 
         gt.run({"command": "llm", "session_id": "s2", "est_cost": 0.77})
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body.get("session_id") == "s2"
         assert body.get("est_cost") == 0.77
 
     def test_mcp_forwards(self, mock_server):
-        from agentguard.adapters.mcp import GuardedMCPServer
+        from vanzik.adapters.mcp import GuardedMCPServer
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         s = GuardedMCPServer(guard_url=mock_server)
         s.add_tool("llm_call", "", handler=lambda **_: "", scope="cost")
 
@@ -170,7 +170,7 @@ class TestAdaptersForwardCostHints:
                 "arguments": {"command": "gpt-4", "session_id": "s3", "est_cost": 1.50},
             },
         })
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body.get("session_id") == "s3"
         assert body.get("est_cost") == 1.50
 
@@ -185,7 +185,7 @@ class TestAdaptersForwardCostHints:
 class TestSessionCostEndToEnd:
     def test_cost_response_surfaces(self, mock_server):
         g = Guard(mock_server, agent_id="bot")
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "DENY",
             "reason": "Session cost $8.00 + $3.00 would exceed limit of $10.00",
             "matched_rule": "deny:cost:max_per_session",

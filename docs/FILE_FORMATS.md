@@ -1,14 +1,14 @@
 # On-Disk File Formats
 
-AgentGuard persists state to disk in a handful of places. Every file it writes carries a schema version so that a reader of version `N` knows whether it is looking at data it understands, data from an older version it can still handle, or data from a newer version that it must refuse.
+Vanzik persists state to disk in a handful of places. Every file it writes carries a schema version so that a reader of version `N` knows whether it is looking at data it understands, data from an older version it can still handle, or data from a newer version that it must refuse.
 
 This document is the contract for those formats. If you add a new on-disk artifact, add it here in the same commit.
 
 ## Versioning rules
 
-1. **Every file AgentGuard writes carries a `schema_version` field or header record.** There are no unversioned writes.
+1. **Every file Vanzik writes carries a `schema_version` field or header record.** There are no unversioned writes.
 2. **Readers tolerate `N-1`.** A server at schema `N` must be able to read the previous major on-disk format. If it can, the upgrade is transparent; if the older format needs to be rewritten, the server runs the registered migration from `pkg/migrate/` before starting the rest of the boot sequence.
-3. **Readers refuse `N+1` with a clear message.** If a newer server wrote the file, the older server exits with: `file <path> is schema_version <N+1>; this AgentGuard build supports up to <N>. Upgrade the binary before starting.` — no silent downgrade, no best-effort parse.
+3. **Readers refuse `N+1` with a clear message.** If a newer server wrote the file, the older server exits with: `file <path> is schema_version <N+1>; this Vanzik build supports up to <N>. Upgrade the binary before starting.` — no silent downgrade, no best-effort parse.
 4. **Schema versions are monotonic integers.** They are not semver; `schema_version: 2` means "the second iteration of the on-disk format", independent of the release version that introduced it.
 5. **Bumping a schema version is a deliberate act.** It requires: (a) a new migration under `pkg/migrate/vNNN_to_vMMM/`, (b) an entry in `docs/DEPRECATIONS.md` for the old format with a removal target, (c) a CHANGELOG note.
 
@@ -37,19 +37,19 @@ Default path: `audit.jsonl` (CLI `--audit-log`). JSON-Lines, one record per line
 | value | source |
 |---|---|
 | `"sdk"` | direct `/v1/check` callers — Python SDK, TypeScript SDK, framework adapters, hand-rolled HTTP clients |
-| `"mcp_gateway"` | `agentguard-mcp-gateway` binary |
-| `"llm_api_proxy"` | `agentguard-llm-proxy` binary |
-| `"claude_code"` | `agentguard hook claude-code`, Claude Code's hook (v1.3+) |
-| `"cursor"` | `agentguard hook cursor`, Cursor's hooks |
-| `"gemini_cli"` | `agentguard hook gemini-cli`, Gemini CLI's hook |
-| `"codex_cli"` | `agentguard hook codex`, Codex CLI's hook |
+| `"mcp_gateway"` | `vanzik-mcp-gateway` binary |
+| `"llm_api_proxy"` | `vanzik-llm-proxy` binary |
+| `"claude_code"` | `vanzik hook claude-code`, Claude Code's hook (v1.3+) |
+| `"cursor"` | `vanzik hook cursor`, Cursor's hooks |
+| `"gemini_cli"` | `vanzik hook gemini-cli`, Gemini CLI's hook |
+| `"codex_cli"` | `vanzik hook codex`, Codex CLI's hook |
 | (omitted / empty string) | pre-v0.5 entries, or v0.5+ entries written before the writer was upgraded — readers should treat as `"sdk"` for filtering purposes |
 
 The field is purely additive: schema_version remains `2`. Pre-v0.5 readers ignore unknown top-level keys without error. v0.5+ writers MUST set `Transport` on every new entry; the central server's `/v1/check` handler stamps it from `meta["transport"]` on the inbound request, defaulting to `"sdk"` when the field is absent. External audit consumers implementing against this format MUST tolerate the field's absence on legacy data and SHOULD preserve it round-trip when re-serialising entries.
 
 **`request.parent_session_id` (v1.4+, additive — schema_version stays at 2).** An entry's `request` is the `/v1/check` request as received, so it carries the optional `parent_session_id` ([WIRE_PROTOCOL](WIRE_PROTOCOL.md)) when the caller sent one: the session that started this entry's `session_id`. It is omitted when empty, so entries without it are byte-identical to earlier releases, and sealed logs verify as before. `GET /v1/sessions` reads it, together with `request.meta.subagent`, to group sessions.
 
-**Sealed logs (v1.4+, additive — schema_version stays at 2).** With `agentguard server --audit-seal`, the log is a hash chain that `agentguard audit verify` can check. Sealing is not encryption: entries stay readable. With sealing off none of the fields below are written, and the files are byte-identical to those of earlier releases.
+**Sealed logs (v1.4+, additive — schema_version stays at 2).** With `vanzik server --audit-seal`, the log is a hash chain that `vanzik audit verify` can check. Sealing is not encryption: entries stay readable. With sealing off none of the fields below are written, and the files are byte-identical to those of earlier releases.
 
 Each sealed entry ends with three fields, always last and in this order:
 
@@ -90,7 +90,7 @@ and `printf '%s' "$body" | sha256sum` prints `278a4467f2999e6ef5146da29743b304f7
 
 ### `<audit-log>.replay-checkpoint` — audit replay checkpoint
 
-Default path: `<audit-log>.replay-checkpoint` — `audit.CheckpointSuffix` appended to the audit log path, e.g. `audit.jsonl.replay-checkpoint`. Single JSON record, written atomically (temp file + rename): by the server after the startup replay finishes, and — since v1.2.0, file audit backend — by the audit logger after every rotation (before old archives are pruned) and when it closes on shutdown. `agentguard migrate --reset-checkpoint` and the v0.4.0 → v0.4.1 migration delete this exact file; there is no schema-version envelope.
+Default path: `<audit-log>.replay-checkpoint` — `audit.CheckpointSuffix` appended to the audit log path, e.g. `audit.jsonl.replay-checkpoint`. Single JSON record, written atomically (temp file + rename): by the server after the startup replay finishes, and — since v1.2.0, file audit backend — by the audit logger after every rotation (before old archives are pruned) and when it closes on shutdown. `vanzik migrate --reset-checkpoint` and the v0.4.0 → v0.4.1 migration delete this exact file; there is no schema-version envelope.
 
 | release | shape |
 |---|---|
@@ -98,17 +98,17 @@ Default path: `<audit-log>.replay-checkpoint` — `audit.CheckpointSuffix` appen
 | v1.1.0+ | `{"offset": <bytes>, "audit_size": <bytes>, "file_id": "<live file's identity>", "counts": {"total": N, "allow": N, "deny": N, "require_approval": N}}` |
 | v1.4.0+, sealed logs | the v1.1.0 shape plus `"last_seq": N, "last_hash": "<hex>"` |
 
-`last_seq` and `last_hash` (sealed logs only, omitted otherwise) are the head of the seal chain when the checkpoint was written. At startup the logger compares them with the end of the live file. A file that ends before them logs a `WARNING` (possible truncation) and increments `agentguard_audit_seal_tail_mismatch_total`; the server still starts.
+`last_seq` and `last_hash` (sealed logs only, omitted otherwise) are the head of the seal chain when the checkpoint was written. At startup the logger compares them with the end of the live file. A file that ends before them logs a `WARNING` (possible truncation) and increments `vanzik_audit_seal_tail_mismatch_total`; the server still starts.
 
-`file_id` says which live file `offset` refers to; it is absent for headerless legacy files. Since v1.4 it is the file's `_meta.segment_id`. For a file written before v1.4, which has no `segment_id`, it is the file's `_meta.created_at`, as in v1.1–v1.3, so checkpoints written before an upgrade keep matching. (`created_at` alone could repeat: on a coarse clock, two files created in quick succession could share it, and replay then resumed inside the wrong file. A v1.3 binary reading a v1.4 checkpoint finds no matching file and replays everything still reachable, carrying `counts` forward.) `counts` is the lifetime decision tally as of `offset`: the next boot seeds `agentguard_checks_total` and its siblings from it and replays only the entries written afterwards, which is how the counters survive restarts. A v1.0.0 checkpoint (no `counts`) is still accepted and triggers one full replay of the live file to establish the tally. The tally starts at the first boot that wrote a checkpoint; archives that already existed before that boot are not scanned.
+`file_id` says which live file `offset` refers to; it is absent for headerless legacy files. Since v1.4 it is the file's `_meta.segment_id`. For a file written before v1.4, which has no `segment_id`, it is the file's `_meta.created_at`, as in v1.1–v1.3, so checkpoints written before an upgrade keep matching. (`created_at` alone could repeat: on a coarse clock, two files created in quick succession could share it, and replay then resumed inside the wrong file. A v1.3 binary reading a v1.4 checkpoint finds no matching file and replays everything still reachable, carrying `counts` forward.) `counts` is the lifetime decision tally as of `offset`: the next boot seeds `vanzik_checks_total` and its siblings from it and replays only the entries written afterwards, which is how the counters survive restarts. A v1.0.0 checkpoint (no `counts`) is still accepted and triggers one full replay of the live file to establish the tally. The tally starts at the first boot that wrote a checkpoint; archives that already existed before that boot are not scanned.
 
-On boot: a matching `file_id` resumes at `offset`. A different one means the log rotated in between, and the seeder walks `_meta.rotated_from` back through the archives (gzip or plain) to the checkpointed segment, replaying it from `offset` and every newer segment from the start; if that segment was already pruned, everything still reachable is replayed and `counts` is carried forward. Because the logger rewrites the checkpoint at every rotation since v1.2.0, the checkpointed segment is always the current live file after a graceful shutdown, and at most one rotation old after a crash — pruning can no longer strand it. A missing, corrupt, or truncation-stale checkpoint never blocks startup — it triggers a full replay of the live file. Force that explicitly with `agentguard migrate --reset-checkpoint --audit-log <path>` or by deleting the file.
+On boot: a matching `file_id` resumes at `offset`. A different one means the log rotated in between, and the seeder walks `_meta.rotated_from` back through the archives (gzip or plain) to the checkpointed segment, replaying it from `offset` and every newer segment from the start; if that segment was already pruned, everything still reachable is replayed and `counts` is carried forward. Because the logger rewrites the checkpoint at every rotation since v1.2.0, the checkpointed segment is always the current live file after a graceful shutdown, and at most one rotation old after a crash — pruning can no longer strand it. A missing, corrupt, or truncation-stale checkpoint never blocks startup — it triggers a full replay of the live file. Force that explicitly with `vanzik migrate --reset-checkpoint --audit-log <path>` or by deleting the file.
 
 ### `<audit-log>.<timestamp>[.gz]` — rotated audit files
 
 #### Rotated file headers
 
-Size-triggered rotation via the logger. Archives are named `<audit-log>.<timestamp>` using `20060102T150405Z`, so lexicographic order is chronological and pruning sorts names without parsing them. That format has one-second resolution, so a burst rotating more than once inside a second would compute the same name twice. Since v1.4 the rotator picks a name one second after the newest archive on disk whenever the clock reads that or earlier, so a name can read a little later than the instant it rotated, never lands on an existing archive, and never reuses a name pruning freed: name order is always write order, which `audit verify` relies on. (Before v1.4 a burst after pruning could reuse a freed, older name, and the next prune then deleted that newest archive.) Every file carries a schema-2 header. When the logger rotates, it renames the live file to the archive name and starts a new live file whose `_meta.rotated_from` holds that archive's base name, so each file points back at the one before it. Compression is applied to rotated files only; the live file stays uncompressed to keep appends cheap. Startup replay walks the chain backwards via `_meta.rotated_from` until it reaches the segment identified by the replay checkpoint's `file_id`. On a sealed log, the new header's `chain_prev` and `chain_seq` name the archive's last entry; `agentguard audit verify` follows `rotated_from` the same way and checks that each link holds. When pruning has removed the oldest files, the oldest file left still names the last pruned entry, and `verify` reports that the chain starts after it.
+Size-triggered rotation via the logger. Archives are named `<audit-log>.<timestamp>` using `20060102T150405Z`, so lexicographic order is chronological and pruning sorts names without parsing them. That format has one-second resolution, so a burst rotating more than once inside a second would compute the same name twice. Since v1.4 the rotator picks a name one second after the newest archive on disk whenever the clock reads that or earlier, so a name can read a little later than the instant it rotated, never lands on an existing archive, and never reuses a name pruning freed: name order is always write order, which `audit verify` relies on. (Before v1.4 a burst after pruning could reuse a freed, older name, and the next prune then deleted that newest archive.) Every file carries a schema-2 header. When the logger rotates, it renames the live file to the archive name and starts a new live file whose `_meta.rotated_from` holds that archive's base name, so each file points back at the one before it. Compression is applied to rotated files only; the live file stays uncompressed to keep appends cheap. Startup replay walks the chain backwards via `_meta.rotated_from` until it reaches the segment identified by the replay checkpoint's `file_id`. On a sealed log, the new header's `chain_prev` and `chain_seq` name the archive's last entry; `vanzik audit verify` follows `rotated_from` the same way and checks that each link holds. When pruning has removed the oldest files, the oldest file left still names the last pruned entry, and `verify` reports that the chain starts after it.
 
 ### `.v040-backup` — one-time rollback artifact
 
@@ -116,13 +116,13 @@ Default path: `<audit-log-path>.v040-backup`. Created by the v0.4.0 → v0.4.1 m
 
 Lifecycle: written on migration and left untouched afterwards. The removal originally scheduled for v0.4.3 never shipped — the migration (and this backup convention) is still in the binary as of v1.0. Tracked in `docs/DEPRECATIONS.md` as `audit.backup.v040`. Operators who want to keep the backup long-term should still copy it off the server.
 
-### `agentguard.db` (+ `-wal` / `-shm` sidecars) — durable runtime store (v0.6+)
+### `vanzik.db` (+ `-wal` / `-shm` sidecars) — durable runtime store (v0.6+)
 
-Default path: `<data-dir>/agentguard.db` (CLI `--data-dir`, default `.`; or an explicit `--store-dsn`). SQLite in WAL mode, created automatically on first run unless `--persist=false`. Mode `0600` — the file and its sidecars are created owner-only, and files created looser by pre-fix versions are tightened on every open (audit 2026-06, M2).
+Default path: `<data-dir>/vanzik.db` (CLI `--data-dir`, default `.`; or an explicit `--store-dsn`). SQLite in WAL mode, created automatically on first run unless `--persist=false`. Mode `0600` — the file and its sidecars are created owner-only, and files created looser by pre-fix versions are tightened on every open (audit 2026-06, M2).
 
 Tables (`pkg/store/sqlite.go`): `approvals` (since v1.0 including the one-shot consumption stamp `consumed_at` and the resolution-actor columns `resolved_via` / `resolved_from`), `rate_buckets`, `session_costs`, `policies` — all tenant-keyed — plus `audit_entries` when running `--audit-backend=store` (since v1.4 with `parent_session_id` and `subagent` columns, added in place on the first start of a v1.4 binary; rows written before then read back empty. The two indexes on them are built once, over the rows already there: SQLite builds them during that start, which logs `building index … on audit_entries (about N rows)` and can take seconds on millions of rows; PostgreSQL builds them in the background with `CREATE INDEX CONCURRENTLY`, one replica at a time, while the server runs. Audit and session queries work without them, only slower), and the v1.0 multi-node reconciliation tables `rate_consumption` / `cost_consumption` (per-node consumption rows; only populated on the PostgreSQL backend). A background syncer flushes in-memory state on a ≥1 s tick and rehydrates it on boot; the store is never on the `/v1/check` hot path.
 
-Schema management differs from the JSONL artifacts above: there is no `_meta`/`schema_version` record — `SQLiteStore.Migrate` applies idempotent `CREATE TABLE IF NOT EXISTS` DDL at open, plus guarded additive `ALTER TABLE`s for columns introduced after a table first shipped (the v1.0 approval columns). Back up the file with the process stopped or via `sqlite3 .backup`; copying `agentguard.db` alone mid-write (without its `-wal` sidecar) can produce a torn snapshot.
+Schema management differs from the JSONL artifacts above: there is no `_meta`/`schema_version` record — `SQLiteStore.Migrate` applies idempotent `CREATE TABLE IF NOT EXISTS` DDL at open, plus guarded additive `ALTER TABLE`s for columns introduced after a table first shipped (the v1.0 approval columns). Back up the file with the process stopped or via `sqlite3 .backup`; copying `vanzik.db` alone mid-write (without its `-wal` sidecar) can produce a torn snapshot.
 
 **PostgreSQL variant (v1.0):** with `--store-dsn postgres://…` the same schema lives in PostgreSQL (`pkg/store/postgres.go`, dialect deltas only) and there is no local database file — back up with your normal PostgreSQL tooling. Multiple replicas share it; each writes its own rows into the consumption tables keyed by `--node-id`.
 
@@ -130,13 +130,13 @@ Schema management differs from the JSONL artifacts above: there is no `_meta`/`s
 
 - **Session tokens.** Stored in memory only (`pkg/proxy/auth.go`). Server restart invalidates all dashboard sessions.
 
-The approval queue, rate-limit buckets, and session-cost accounting were on this list before v0.6; they now live in `agentguard.db` (above) whenever `--persist` is on (the default). With `--persist=false` they revert to in-memory, per-process, lost on restart.
+The approval queue, rate-limit buckets, and session-cost accounting were on this list before v0.6; they now live in `vanzik.db` (above) whenever `--persist` is on (the default). With `--persist=false` they revert to in-memory, per-process, lost on restart.
 
 ## Non-version identifiers that look like version strings
 
 Not everything that looks like a version tracks the release version. Listed here so nobody bumps them by accident:
 
-- **`pkg/notify/notify.go:174` — `User-Agent: AgentGuard/1.0`.** This is the HTTP client protocol identifier sent by the webhook notifier. It is pinned at `1.0` and represents the webhook payload contract, not the server release. It changes only when the outbound webhook payload shape changes in a way downstream consumers must distinguish — independent of AgentGuard's release cadence. Do not add this to `scripts/bump-version.sh`.
-- **`plugins/python/agentguard/adapters/mcp.py:41` — `MCP_PROTOCOL_VERSION`.** Pinned at the MCP protocol version negotiated with clients (e.g. `"2024-11-05"`), not the AgentGuard release version. This is the Model Context Protocol spec version, and moves only when the MCP spec does. Do not add to `scripts/bump-version.sh`.
+- **`pkg/notify/notify.go:174` — `User-Agent: Vanzik/2.0`.** This is the HTTP client protocol identifier sent by the webhook notifier. It is pinned at `2.0` (it moved from `AgentGuard/1.0` with the rename) and represents the webhook payload contract, not the server release. Otherwise it changes only when the outbound webhook payload shape changes in a way downstream consumers must distinguish — independent of Vanzik's release cadence. Do not add this to `scripts/bump-version.sh`.
+- **`plugins/python/vanzik/adapters/mcp.py:41` — `MCP_PROTOCOL_VERSION`.** Pinned at the MCP protocol version negotiated with clients (e.g. `"2024-11-05"`), not the Vanzik release version. This is the Model Context Protocol spec version, and moves only when the MCP spec does. Do not add to `scripts/bump-version.sh`.
 
 If you add another such identifier, list it here explicitly — future releases will grep for stray `X.Y.Z` strings and an undocumented one will look like a bug.

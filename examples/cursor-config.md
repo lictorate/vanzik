@@ -1,7 +1,7 @@
-# Cursor — AgentGuard MCP Gateway
+# Cursor — Vanzik MCP Gateway
 
 Drop-in `mcp.json` that routes Cursor's MCP tool calls through the
-AgentGuard gateway, gating every call against your policy before forwarding
+Vanzik gateway, gating every call against your policy before forwarding
 to the real downstream MCP server.
 
 > Source: <https://cursor.com/docs/context/mcp> (verified 2026-05-05).
@@ -19,7 +19,7 @@ Cursor supports two scopes:
 | Project-specific | `<workspace>/.cursor/mcp.json` |
 
 A project-level file overrides the global file for that workspace, so a
-single `agentguard` server entry in `~/.cursor/mcp.json` is enough to gate
+single `vanzik` server entry in `~/.cursor/mcp.json` is enough to gate
 every Cursor session.
 
 ## What this config does
@@ -28,14 +28,14 @@ every Cursor session.
 Cursor (Composer / agent mode)
     │ stdio (MCP)
     ▼
-agentguard-mcp-gateway
+vanzik-mcp-gateway
     │
     ├─stdio──► server-filesystem via npx (scoped to ${workspaceFolder})
     ├─stdio──► mcp-server-fetch (uvx)
     ├─stdio──► github-mcp-server (docker)
     │
     └─HTTP──► http://127.0.0.1:8080/v1/check
-              (central AgentGuard: policy + audit + dashboard)
+              (central Vanzik: policy + audit + dashboard)
 ```
 
 `${workspaceFolder}` is a Cursor variable that expands to the open
@@ -66,15 +66,15 @@ into the container.
 1. **Install binaries** (Go 1.25+):
 
    ```bash
-   go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard@latest
-   go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard-mcp-gateway@latest
+   go install lictorate.com/vanzik/v2/cmd/vanzik@latest
+   go install lictorate.com/vanzik/v2/cmd/vanzik-mcp-gateway@latest
    ```
 
 2. **Drop a policy file in the project root:**
 
    ```bash
-   mkdir -p .agentguard
-   cp /path/to/AgentGuard/configs/default.yaml .agentguard/policy.yaml
+   mkdir -p .vanzik
+   cp /path/to/Vanzik/configs/default.yaml .vanzik/policy.yaml
    ```
 
    Adjust `--policy` in the JSON if you put the file elsewhere.
@@ -82,7 +82,7 @@ into the container.
 3. **Export the API key** in the shell that starts Cursor:
 
    ```bash
-   export AGENTGUARD_API_KEY="$(openssl rand -hex 32)"
+   export VANZIK_API_KEY="$(openssl rand -hex 32)"
    ```
 
    On macOS, set this in `~/.zshrc` so Cursor (launched from Spotlight or
@@ -91,15 +91,15 @@ into the container.
 4. **Run the central server** in a terminal:
 
    ```bash
-   agentguard server \
-     --policy .agentguard/policy.yaml \
+   vanzik server \
+     --policy .vanzik/policy.yaml \
      --dashboard \
      --watch \
-     --api-key "$AGENTGUARD_API_KEY"
+     --api-key "$VANZIK_API_KEY"
    ```
 
 5. **Save the config**, then **reload Cursor** (Cmd/Ctrl-Shift-P → "Reload
-   Window"). The MCP server panel should show `agentguard` and its merged
+   Window"). The MCP server panel should show `vanzik` and its merged
    tools list.
 
 ## Verification
@@ -113,10 +113,10 @@ In Cursor's chat (Composer):
 
 ## API key handling
 
-Do **not** pass `--api-key "$AGENTGUARD_API_KEY"` as an `args` entry.
+Do **not** pass `--api-key "$VANZIK_API_KEY"` as an `args` entry.
 Cursor's `${env:VAR}` interpolation has been unreliable across
 versions, and JSON-level `$VAR` shell-expansion never happens. The
-safe path is to set `AGENTGUARD_API_KEY` in the `env` block (or
+safe path is to set `VANZIK_API_KEY` in the `env` block (or
 inherited from Cursor's parent shell) and **omit** the `--api-key`
 flag entirely — the gateway picks up the env var automatically when
 the flag is absent.
@@ -127,7 +127,7 @@ the flag is absent.
 calls (they go to `/v1/t/<tenant>/check`). Keep `local` — the policy
 the server loads with `--policy` — unless you've registered another
 tenant on the central server with
-`agentguard tenant put <id> --policy <file.yaml>`. A tenant the server
+`vanzik tenant put <id> --policy <file.yaml>`. A tenant the server
 doesn't know (including a templated value such as
 `cursor-${env:USER}` that you haven't registered) answers `404`, which the gateway
 treats like an unreachable server: `--fail-mode` decides, so with `deny`
@@ -139,7 +139,7 @@ every call is refused.
   written against `fs:read_text_file` (or any other namespace) work without
   changes.
 - If you have an existing top-level `mcpServers` block, add the
-  `agentguard` entry inside it; Cursor merges entries by name.
+  `vanzik` entry inside it; Cursor merges entries by name.
 - The `env` field on a server entry is forwarded to the gateway's parent
   process, which then forwards it to each spawned upstream — but
   `${env:VAR}` interpolation happens at Cursor's level, before the gateway

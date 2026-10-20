@@ -1,4 +1,4 @@
-// Package migrate coordinates on-disk schema migrations for AgentGuard.
+// Package migrate coordinates on-disk schema migrations for Vanzik.
 //
 // Migrations are versioned transitions of persistent state (audit log,
 // checkpoint files, rotated archives). Each migration lives under its own
@@ -12,7 +12,7 @@
 //     order. Any error aborts startup — we never proceed past a failed
 //     migration, because half-migrated state is worse than not upgrading.
 //
-//   - RunCLI(ctx, env, args): backs the `agentguard migrate` subcommand.
+//   - RunCLI(ctx, env, args): backs the `vanzik migrate` subcommand.
 //     Supports --dry-run (log intended actions without touching disk),
 //     --id=<migration-id> (run a specific migration out of startup order, for
 //     operators who need to re-run one explicitly), and a few convenience
@@ -29,8 +29,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
 	"io"
+	"lictorate.com/vanzik/v2/pkg/metrics"
 	"log"
 	"sort"
 	"strings"
@@ -210,7 +210,7 @@ func RunStartup(ctx context.Context, env Env) error {
 	return nil
 }
 
-// CLIOptions is the parsed form of the `agentguard migrate` subcommand flags.
+// CLIOptions is the parsed form of the `vanzik migrate` subcommand flags.
 type CLIOptions struct {
 	DryRun          bool
 	ID              string // run only this migration, skip others
@@ -225,7 +225,7 @@ type CLIOptions struct {
 // is not in the registry.
 var ErrMigrationNotFound = errors.New("migration not found in registry")
 
-// RunCLI executes the `agentguard migrate` subcommand semantics:
+// RunCLI executes the `vanzik migrate` subcommand semantics:
 //   - --list: print the registry and return.
 //   - --id=X: run only migration X (even if Detect=false — operator override).
 //   - default: run every migration whose Detect() is true, like RunStartup

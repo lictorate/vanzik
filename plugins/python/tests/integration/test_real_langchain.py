@@ -2,7 +2,7 @@
 
 These tests exercise full Runnable pipelines against the actual
 ``langchain_core`` and ``langchain`` packages — never a mock of the
-framework. Only the AgentGuard HTTP server is mocked (``integration_mock``
+framework. Only the Vanzik HTTP server is mocked (``integration_mock``
 fixture).
 
 Closes audit findings R5 P1 (real-framework canary), R5 P2/P3/P4
@@ -34,8 +34,8 @@ langchain = pytest.importorskip("langchain")
 
 from langchain_core.tools import Tool  # noqa: E402
 
-from agentguard import Guard  # noqa: E402
-from agentguard.adapters.langchain import GuardedTool, GuardedToolkit  # noqa: E402
+from vanzik import Guard  # noqa: E402
+from vanzik.adapters.langchain import GuardedTool, GuardedToolkit  # noqa: E402
 
 from .conftest import allow, deny, require_approval  # noqa: E402
 

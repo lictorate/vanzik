@@ -29,14 +29,14 @@ from unittest import mock
 
 import pytest
 
-from agentguard import Guard, CheckResult
+from vanzik import Guard, CheckResult
 
 
 # ---------------------------------------------------------------------------
 # Fixture loading
 # ---------------------------------------------------------------------------
 
-# tests/test_wire_format.py -> plugins/python -> plugins -> AgentGuard root
+# tests/test_wire_format.py -> plugins/python -> plugins -> Vanzik root
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _FIXTURES = _REPO_ROOT / "pkg" / "proxy" / "schema" / "v1" / "testdata"
 
@@ -170,7 +170,7 @@ def _capture_check_body(**check_kwargs: Any) -> dict[str, Any]:
         return _FakeResponse(_load_fixture("sample_result.json"))
 
     guard = Guard(base_url="http://example.invalid", agent_id="test-agent-001")
-    with mock.patch("agentguard.request.urlopen", side_effect=fake_urlopen):
+    with mock.patch("vanzik.request.urlopen", side_effect=fake_urlopen):
         result = guard.check(**check_kwargs)
     captured["result"] = result
     return captured
@@ -275,7 +275,7 @@ def test_sdk_response_tolerates_unknown_field() -> None:
         return _FakeResponse(future_body)
 
     guard = Guard(base_url="http://example.invalid", agent_id="x")
-    with mock.patch("agentguard.request.urlopen", side_effect=fake_urlopen):
+    with mock.patch("vanzik.request.urlopen", side_effect=fake_urlopen):
         result = guard.check(scope="shell", command="ls")
     assert result.allowed
     assert result.matched_rule == "allow:shell:ls"
@@ -316,6 +316,6 @@ def test_sdk_decodes_every_v1_decision(decision: str) -> None:
         })
 
     guard = Guard(base_url="http://example.invalid", agent_id="x")
-    with mock.patch("agentguard.request.urlopen", side_effect=fake_urlopen):
+    with mock.patch("vanzik.request.urlopen", side_effect=fake_urlopen):
         result = guard.check(scope="shell", command="ls")
     assert result.decision == decision

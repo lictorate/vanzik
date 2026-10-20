@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/metrics"
 )
 
 // ArchiveTimestampFormat is the format used to suffix archived audit files.

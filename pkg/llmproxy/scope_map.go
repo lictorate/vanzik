@@ -15,7 +15,7 @@ package llmproxy
 // collisions are impossible without an operator deliberately writing
 // one. A single `tool_scope_map:` section in policy YAML therefore
 // safely covers both transports — operators write one mapping table,
-// AgentGuard dispatches it correctly per request transport.
+// Vanzik dispatches it correctly per request transport.
 //
 // The merged map layers:
 //   1. Operator entries (from Policy.ToolScopeMap) — first-match-wins,
@@ -31,7 +31,7 @@ package llmproxy
 // docs/POLICY_REFERENCE.md § "LLM API Proxy tool scope mapping".
 
 import (
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // UnmappedScope is the sentinel scope returned when a tool name does
@@ -43,7 +43,7 @@ import (
 const UnmappedScope = "unmapped"
 
 // DefaultLLMToolScopeMap is the baked-in mapping from common tool
-// names to existing AgentGuard policy scopes. The LLM API Proxy maps
+// names to existing Vanzik policy scopes. The LLM API Proxy maps
 // to existing scopes only — no new policy primitives.
 //
 // Patterns are glob-matched (same matcher as policy rule patterns:

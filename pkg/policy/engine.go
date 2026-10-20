@@ -116,7 +116,7 @@ type SessionCfg struct {
 type RequestCfg struct {
 	// MaxBodyBytes caps POST /v1/check body size. 0 => DefaultMaxRequestBodyBytes.
 	// Requests larger than this receive 413 and increment
-	// agentguard_request_rejected_total{reason="body_too_large"}.
+	// vanzik_request_rejected_total{reason="body_too_large"}.
 	MaxBodyBytes int64 `yaml:"max_body_bytes,omitempty"`
 }
 
@@ -345,7 +345,7 @@ func validateFilesystemPaths(pol *Policy) error {
 	return nil
 }
 
-// knownPolicyScopes is the set of scopes that AgentGuard recognises for
+// knownPolicyScopes is the set of scopes that Vanzik recognises for
 // rule dispatch (engine.Check) and for tool_scope_map values. Rule
 // scopes outside this set still load (the engine's generic dispatch
 // matches any scope by Pattern/Action+Paths/Domain), but a
@@ -1106,7 +1106,7 @@ type ActionRequest struct {
 	// scratch. This is what makes the "approve once, model proceeds" UX
 	// work: when a model retries a tool call after a human clicks
 	// approve on the dashboard, the gateway propagates the original
-	// approval_id (carried through MCP `_meta.dev.agentguard/approval_id`)
+	// approval_id (carried through MCP `_meta.dev.vanzik/approval_id`)
 	// and the server honors the human's decision instead of producing a
 	// fresh REQUIRE_APPROVAL entry.
 	//
@@ -1433,7 +1433,7 @@ func (e *Engine) checkCompoundShell(rules []RuleSet, req ActionRequest, rawComma
 	if len(parsed.Unparsed) > 0 && innerVerdict.Decision == "" {
 		innerVerdict = CheckResult{
 			Decision: RequireApproval,
-			Reason:   fmt.Sprintf("AgentGuard couldn't read the script this command runs (heredoc, arithmetic expansion, case, unbalanced quotes or nesting too deep), so a person should look at it (command string %q)", stripControl(parsed.Unparsed[0])),
+			Reason:   fmt.Sprintf("Vanzik couldn't read the script this command runs (heredoc, arithmetic expansion, case, unbalanced quotes or nesting too deep), so a person should look at it (command string %q)", stripControl(parsed.Unparsed[0])),
 			Rule:     "require_approval:shell:unparseable_script",
 		}
 	}
@@ -2207,7 +2207,7 @@ const (
 //     answering a tenant-scoped question with cross-tenant data.
 //
 // Returns conditionNotMet when neither is configured: with no history source
-// there is no prior action (this is what offline `agentguard check` sees).
+// there is no prior action (this is what offline `vanzik check` sees).
 // Returns conditionUnknown when the configured source returns an error.
 func (e *Engine) checkRequirePrior(cond Condition, req ActionRequest, tenantID string) conditionResult {
 	if e.priorQuerier == nil && e.history == nil {

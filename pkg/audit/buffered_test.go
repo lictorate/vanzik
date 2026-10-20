@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // --- Test helpers ---
@@ -200,7 +200,7 @@ func TestBufferedAsync_OverflowOnSaturation(t *testing.T) {
 	}
 	var promOut strings.Builder
 	metrics.WritePrometheus(&promOut)
-	if !strings.Contains(promOut.String(), "agentguard_audit_buffered_queue_depth 2") {
+	if !strings.Contains(promOut.String(), "vanzik_audit_buffered_queue_depth 2") {
 		t.Errorf("queue-depth gauge not at 2; output:\n%s", promOut.String())
 	}
 

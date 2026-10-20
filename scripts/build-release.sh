@@ -3,13 +3,13 @@
 # for every supported platform, one archive per platform, plus checksums.txt.
 #
 # Usage (from the repo root):
-#   ./scripts/build-release.sh                      # version read from cmd/agentguard/main.go
+#   ./scripts/build-release.sh                      # version read from cmd/vanzik/main.go
 #   ./scripts/build-release.sh --version 1.2.0 --commit abc1234 --src . --out dist
 #
 # Output (in --out):
-#   agentguard_<version>_<os>_<arch>.tar.gz   (linux, darwin)
-#   agentguard_<version>_windows_<arch>.zip
-#   checksums.txt                             (sha256sum format, one line per archive)
+#   vanzik_<version>_<os>_<arch>.tar.gz   (linux, darwin)
+#   vanzik_<version>_windows_<arch>.zip
+#   checksums.txt                         (sha256sum format, one line per archive)
 # Each archive holds one directory named like the archive, containing the
 # three binaries, LICENSE, NOTICE, README.md and configs/default.yaml.
 #
@@ -39,16 +39,16 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-TOOLS=(agentguard agentguard-mcp-gateway agentguard-llm-proxy)
+TOOLS=(vanzik vanzik-mcp-gateway vanzik-llm-proxy)
 TARGETS=(linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64)
 
 SRC="$(cd "$SRC" && pwd)"
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
 
-src_version="$(sed -nE 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$SRC/cmd/agentguard/main.go" | head -n1)"
+src_version="$(sed -nE 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$SRC/cmd/vanzik/main.go" | head -n1)"
 if [ -z "$src_version" ]; then
-  echo "error: could not read the version from $SRC/cmd/agentguard/main.go" >&2
+  echo "error: could not read the version from $SRC/cmd/vanzik/main.go" >&2
   exit 1
 fi
 if [ -z "$VERSION" ]; then
@@ -86,12 +86,12 @@ sha256() { # sha256 <file...> in sha256sum output format
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 
-echo "Building AgentGuard $VERSION ($COMMIT) from $SRC into $OUT"
+echo "Building Vanzik $VERSION ($COMMIT) from $SRC into $OUT"
 archives=()
 for target in "${TARGETS[@]}"; do
   os="${target%/*}"
   arch="${target#*/}"
-  name="agentguard_${VERSION}_${os}_${arch}"
+  name="vanzik_${VERSION}_${os}_${arch}"
   dir="$stage/$name"
   mkdir -p "$dir/configs"
   ext=""

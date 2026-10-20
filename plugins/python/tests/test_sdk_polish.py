@@ -5,8 +5,8 @@ Closes the audit's R5 SDK-quality findings:
 - E8 / S13 — content-type / status-shape validation in ``Guard.check``.
 - E14   — jitter on the ``wait_for_approval`` polling loop.
 - E15   — reject unknown ``**check_kwargs`` in ``@guarded``.
-- P9    — distinguish HTTP 401/403 (``AgentGuardAuthError``) from
-          approval-poll timeout (``AgentGuardApprovalTimeout``).
+- P9    — distinguish HTTP 401/403 (``VanzikAuthError``) from
+          approval-poll timeout (``VanzikApprovalTimeout``).
 
 These are small, surgical regression coupons. The full Guard / decorator
 behavior tests live in test_guard.py and test_decorator.py; this file
@@ -22,18 +22,18 @@ from unittest.mock import patch
 
 import pytest
 
-import agentguard as ag
-from agentguard import (
-    AgentGuardAuthError,
-    AgentGuardApprovalTimeout,
-    AgentGuardError,
-    AgentGuardTimeoutError,
+import vanzik as ag
+from vanzik import (
+    VanzikAuthError,
+    VanzikApprovalTimeout,
+    VanzikError,
+    VanzikTimeoutError,
     DECISION_DENY,
     DECISION_ALLOW,
     Guard,
     guarded,
 )
-from tests.conftest import MockAgentGuardHandler
+from tests.conftest import MockVanzikHandler
 
 
 # ---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ from tests.conftest import MockAgentGuardHandler
 class _CustomHandler(BaseHTTPRequestHandler):
     """Per-test BaseHTTPRequestHandler with class-level response config.
 
-    Exists separately from MockAgentGuardHandler so each test can set up
+    Exists separately from MockVanzikHandler so each test can set up
     a precise set of Content-Type / body / status combinations without
     interfering with the shared mock.
     """
@@ -150,7 +150,7 @@ class TestCheckContentTypeValidation:
         assert result.denied
         # urlopen.read() yields bytes; json.loads raises ValueError /
         # JSONDecodeError, which the SDK wraps in the unreachable path.
-        assert "AgentGuard" in result.reason
+        assert "Vanzik" in result.reason
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +173,7 @@ class TestGuardedUnknownKwargs:
         injects it from positional args (``g.check(scope,
         command=str(cmd), **check_kwargs)``); passing both would collide.
         """
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         g = Guard(mock_server)
 
         @guarded("shell", guard=g, meta={"k": "v"}, session_id="s1")
@@ -205,7 +205,7 @@ class TestWaitForApprovalJitter:
         polling loop issues; the spread proves jitter is active.
         """
         # Always-pending response so the loop runs a handful of iterations.
-        MockAgentGuardHandler.status_response = {"id": "ap_x", "status": "pending"}
+        MockVanzikHandler.status_response = {"id": "ap_x", "status": "pending"}
 
         sleeps: list[float] = []
         real_sleep = time.sleep
@@ -216,7 +216,7 @@ class TestWaitForApprovalJitter:
             real_sleep(0)
 
         g = Guard(mock_server, api_key="k")
-        with patch("agentguard.time.sleep", side_effect=capturing_sleep):
+        with patch("vanzik.time.sleep", side_effect=capturing_sleep):
             r = g.wait_for_approval("ap_x", timeout=0.05, poll_interval=0.5)
         # The deadline elapsed; we get the synthetic timeout DENY.
         assert r.denied
@@ -229,7 +229,7 @@ class TestWaitForApprovalJitter:
         """Locks 'jitter is actually random' — three samples drawn from a
         20%-wide band must not collapse to a single value (probability of
         collision is astronomical for a real RNG)."""
-        MockAgentGuardHandler.status_response = {"id": "ap_x", "status": "pending"}
+        MockVanzikHandler.status_response = {"id": "ap_x", "status": "pending"}
         sleeps: list[float] = []
         real_sleep = time.sleep
 
@@ -240,7 +240,7 @@ class TestWaitForApprovalJitter:
         g = Guard(mock_server, api_key="k")
         # poll_interval=1 means the band is [0.8, 1.2]; collect more
         # samples by giving the loop a longer deadline.
-        with patch("agentguard.time.sleep", side_effect=capturing_sleep):
+        with patch("vanzik.time.sleep", side_effect=capturing_sleep):
             g.wait_for_approval("ap_x", timeout=0.01, poll_interval=1.0)
 
         # If the loop ran at least twice, the durations must differ.
@@ -251,7 +251,7 @@ class TestWaitForApprovalJitter:
 
 
 # ---------------------------------------------------------------------------
-# AgentGuardAuthError on 401/403 from /v1/status (R5 P9)
+# VanzikAuthError on 401/403 from /v1/status (R5 P9)
 # ---------------------------------------------------------------------------
 
 
@@ -283,11 +283,11 @@ def auth_refusing_server():
         _AuthRefusingHandler.status_code = 401
 
 
-class TestAgentGuardAuthError:
+class TestVanzikAuthError:
     def test_401_raises_auth_error(self, auth_refusing_server):
         url, _ = auth_refusing_server
         g = Guard(url, api_key="bad-key")
-        with pytest.raises(AgentGuardAuthError) as exc:
+        with pytest.raises(VanzikAuthError) as exc:
             g.wait_for_approval("ap_x", timeout=5, poll_interval=0.01)
         assert exc.value.status == 401
 
@@ -295,26 +295,26 @@ class TestAgentGuardAuthError:
         url, handler = auth_refusing_server
         handler.status_code = 403
         g = Guard(url, api_key="bad-key")
-        with pytest.raises(AgentGuardAuthError) as exc:
+        with pytest.raises(VanzikAuthError) as exc:
             g.wait_for_approval("ap_x", timeout=5, poll_interval=0.01)
         assert exc.value.status == 403
 
     def test_auth_error_subclasses_permission_error(self):
         # Existing `except PermissionError:` handlers still catch it.
-        e = AgentGuardAuthError("test", status=401)
+        e = VanzikAuthError("test", status=401)
         assert isinstance(e, PermissionError)
-        assert isinstance(e, AgentGuardError)
+        assert isinstance(e, VanzikError)
 
     def test_timeout_alias_is_approval_timeout(self):
-        # AgentGuardTimeoutError is just an alias for AgentGuardApprovalTimeout.
-        assert AgentGuardTimeoutError is AgentGuardApprovalTimeout
+        # VanzikTimeoutError is just an alias for VanzikApprovalTimeout.
+        assert VanzikTimeoutError is VanzikApprovalTimeout
 
     def test_500_keeps_polling_until_timeout(self, mock_server):
         """Other HTTP errors (transient 5xx) must NOT abort the poll
         — the contract is 'auth-failure is fatal, everything else is
         transient'. We use the existing mock with a 'pending' status so
         the loop runs to its natural deadline."""
-        MockAgentGuardHandler.status_response = {"id": "ap_x", "status": "pending"}
+        MockVanzikHandler.status_response = {"id": "ap_x", "status": "pending"}
         g = Guard(mock_server, api_key="k")
         r = g.wait_for_approval("ap_x", timeout=0.02, poll_interval=0.005)
         assert r.denied
@@ -329,10 +329,10 @@ class TestAgentGuardAuthError:
 class TestErrorHierarchy:
     def test_auth_error_caught_by_permission_error(self):
         try:
-            raise AgentGuardAuthError("bad", status=401)
+            raise VanzikAuthError("bad", status=401)
         except PermissionError as e:
-            assert isinstance(e, AgentGuardAuthError)
+            assert isinstance(e, VanzikAuthError)
 
     def test_auth_error_carries_status_field(self):
-        e = AgentGuardAuthError("bad", status=403)
+        e = VanzikAuthError("bad", status=403)
         assert e.status == 403

@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
-	"github.com/Caua-ferraz/AgentGuard/pkg/proxy"
-	"github.com/Caua-ferraz/AgentGuard/pkg/ratelimit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/store"
+	"lictorate.com/vanzik/v2/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/proxy"
+	"lictorate.com/vanzik/v2/pkg/ratelimit"
+	"lictorate.com/vanzik/v2/pkg/store"
 )
 
 // BenchmarkSyncer_Flush measures one write-behind flush cycle (snapshot all

@@ -2,7 +2,7 @@
 
 The embedded web UI at `/dashboard`. Zero-dep HTML/JS bundled in the binary — no separate frontend to deploy.
 
-![AgentGuard dashboard layout](assets/dashboard.svg)
+![Vanzik dashboard layout](assets/dashboard.svg)
 
 ---
 
@@ -10,7 +10,7 @@ The embedded web UI at `/dashboard`. Zero-dep HTML/JS bundled in the binary — 
 
 - **Triaging approvals** in real time as agents request them.
 - **Spot-checking audit decisions** without grepping `audit.jsonl`.
-- **Confirming AgentGuard is alive** when you can't reach `/health` directly.
+- **Confirming Vanzik is alive** when you can't reach `/health` directly.
 
 For structured dashboards (Grafana, Datadog, etc.), use `/metrics` — see [`OBSERVABILITY.md`](OBSERVABILITY.md). The built-in dashboard is for humans, not SLOs.
 
@@ -19,7 +19,7 @@ For structured dashboards (Grafana, Datadog, etc.), use `/metrics` — see [`OBS
 ## Enabling it
 
 ```bash
-agentguard server --dashboard --api-key $KEY
+vanzik server --dashboard --api-key $KEY
 ```
 
 Without `--api-key`, the dashboard is effectively unauthenticated — everyone on `127.0.0.1` (the only bind surface in that mode) sees everything. In production you always want `--api-key`.
@@ -32,8 +32,8 @@ Without `--api-key`, the dashboard is effectively unauthenticated — everyone o
 2. Server renders `loginHTML` with a single `<input>` for the API key.
 3. Submit → `POST /auth/login` with `{api_key: "..."}`.
 4. On success, the server sets two cookies:
-   - `ag_session` — HttpOnly, `SameSite=Strict`, opaque ID. Browser JS cannot read this.
-   - `ag_csrf` — NOT HttpOnly, `SameSite=Strict`, matches the server's stored CSRF token. JS reads it and echoes it on mutating requests.
+   - `vanzik_session` — HttpOnly, `SameSite=Strict`, opaque ID. Browser JS cannot read this.
+   - `vanzik_csrf` — NOT HttpOnly, `SameSite=Strict`, matches the server's stored CSRF token. JS reads it and echoes it on mutating requests.
 5. Both cookies get `Secure` when `r.TLS != nil` **or** `--tls-terminated-upstream` is set. Otherwise `Secure` is omitted (still safe because HTTPS is enforced upstream).
 6. Redirect to `/dashboard` — now renders `dashboardHTML`.
 
@@ -75,7 +75,7 @@ Sections you'll see:
 
 Each pending item has two buttons. Clicking either:
 
-1. Reads `document.cookie['ag_csrf']` for the CSRF token.
+1. Reads `document.cookie['vanzik_csrf']` for the CSRF token.
 2. `fetch('/v1/approve/{id}' or '/v1/deny/{id}', { method: 'POST', headers: { 'X-CSRF-Token': csrf } })`.
 3. On success the server broadcasts a `resolved` SSE event; the item fades from the pending list.
 
@@ -114,7 +114,7 @@ Every value in the view comes from the audit log, which agents write. The page s
 ## SSE (`/api/stream`) behavior
 
 - The dashboard opens an `EventSource` on page load and handles every message on it (the stream sends unnamed `check` and `resolved` events — see [`API.md`](API.md#get-apistream)). Each event is added to the feed and refreshes the counters; a `REQUIRE_APPROVAL` decision or a `resolved` event also refreshes the pending list.
-- On a slow consumer, the server drops events silently and increments `agentguard_sse_events_dropped_total{reason="slow_consumer"}`. The UI will appear to miss events.
+- On a slow consumer, the server drops events silently and increments `vanzik_sse_events_dropped_total{reason="slow_consumer"}`. The UI will appear to miss events.
 - **There is no client-side auto-reconnect beyond what `EventSource` does natively.** If the server restarts, the browser reconnects on its own within a few seconds. If the reverse proxy closes the stream (idle timeout), `EventSource` also reconnects.
 
 ### LIVE badge semantics

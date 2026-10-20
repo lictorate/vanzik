@@ -1,7 +1,7 @@
 package audit
 
 // read.go — reading a whole audit log, rotated archives included, for tools
-// that report on it (`agentguard report`). It walks the same files
+// that report on it (`vanzik report`). It walks the same files
 // VerifyChain checks and scans them with the startup replay's scanner, so a
 // report and a verify of one log always look at the same entries.
 

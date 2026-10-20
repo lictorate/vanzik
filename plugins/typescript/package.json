@@ -1,7 +1,7 @@
 {
-  "name": "@lictorate/agentguard",
-  "version": "1.4.0",
-  "description": "TypeScript SDK for AgentGuard — the firewall for AI agents",
+  "name": "@lictorate/vanzik",
+  "version": "2.0.0",
+  "description": "TypeScript SDK for Vanzik — the firewall for AI agents",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
@@ -20,11 +20,11 @@
     "policy",
     "guardrails",
     "safety",
-    "agentguard"
+    "vanzik"
   ],
   "author": {
     "name": "Cauã Ferraz",
-    "email": "cauaferrazp@gmail.com"
+    "email": "hello@lictorate.com"
   },
   "license": "Apache-2.0",
   "engines": {
@@ -32,12 +32,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Caua-ferraz/AgentGuard.git",
+    "url": "git+https://github.com/lictorate/vanzik.git",
     "directory": "plugins/typescript"
   },
-  "homepage": "https://github.com/Caua-ferraz/AgentGuard",
+  "homepage": "https://github.com/lictorate/vanzik",
   "bugs": {
-    "url": "https://github.com/Caua-ferraz/AgentGuard/issues"
+    "url": "https://github.com/lictorate/vanzik/issues"
   },
   "publishConfig": {
     "access": "public"

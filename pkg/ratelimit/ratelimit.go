@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/metrics"
 )
 
 const (

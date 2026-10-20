@@ -1,6 +1,6 @@
 """Property-based tests for the MCP adapter's redactor (Phase 3 — AT).
 
-These tests verify three properties of ``agentguard.adapters.mcp._redact``:
+These tests verify three properties of ``vanzik.adapters.mcp._redact``:
 
   1. Coverage — given random plaintext padded with a known secret pattern,
      the secret value MUST be redacted before the output leaves the SDK.
@@ -27,7 +27,7 @@ import string
 
 import pytest
 
-from agentguard.adapters.mcp import _redact
+from vanzik.adapters.mcp import _redact
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +254,7 @@ def test_patterns_match_go_default_redactor():
     and notifications. Skipped outside a repository checkout."""
     import pathlib
 
-    from agentguard.adapters.mcp import _REDACT_PATTERNS
+    from vanzik.adapters.mcp import _REDACT_PATTERNS
 
     go_file = pathlib.Path(__file__).resolve().parents[3] / "pkg" / "notify" / "notify.go"
     if not go_file.exists():

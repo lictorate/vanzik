@@ -2,8 +2,8 @@ package examples_test
 
 // AT (Test Wrangler) — verifies that every client-config JSON file
 // shipped under examples/ parses as valid JSON, contains the expected
-// shape (an "mcpServers.agentguard" entry), and references the
-// production AgentGuard CLI flags. A20 owns the file contents; this
+// shape (an "mcpServers.vanzik" entry), and references the
+// production Vanzik CLI flags. A20 owns the file contents; this
 // test catches accidental JSON breakage during edits, and pins that
 // the documented flag set is the same set the gateway's flag parser
 // understands.
@@ -25,7 +25,7 @@ import (
 // expectedFlags are the long-form flags every example config must
 // reference at least once (any subset is fine — different IDEs may
 // reasonably configure different defaults). The set is the public
-// interface from cmd/agentguard-mcp-gateway/main.go via
+// interface from cmd/vanzik-mcp-gateway/main.go via
 // pkg/mcpgw.ParseConfig.
 var expectedFlags = []string{
 	"--upstream",
@@ -63,7 +63,7 @@ func TestExamples_ClientConfigsParseAsJSON(t *testing.T) {
 			}
 
 			// Every config has a server-list object containing at least
-			// an "agentguard" entry. The container key varies by IDE:
+			// an "vanzik" entry. The container key varies by IDE:
 			//   - Claude Desktop / Cline / Continue / Cursor → "mcpServers"
 			//   - Zed → "context_servers" (Zed's MCP-equivalent key)
 			// We accept either.
@@ -75,19 +75,19 @@ func TestExamples_ClientConfigsParseAsJSON(t *testing.T) {
 			} else {
 				t.Fatalf("missing mcpServers or context_servers field; doc keys=%v", mapKeys(doc))
 			}
-			ag, ok := servers["agentguard"].(map[string]interface{})
+			ag, ok := servers["vanzik"].(map[string]interface{})
 			if !ok {
-				t.Fatalf("missing or non-object .agentguard entry; servers=%v", servers)
+				t.Fatalf("missing or non-object .vanzik entry; servers=%v", servers)
 			}
 
-			// The agentguard entry must have a command + args. The
+			// The vanzik entry must have a command + args. The
 			// command should be the gateway binary name.
 			cmd, ok := ag["command"].(string)
 			if !ok || cmd == "" {
 				t.Fatalf("missing or empty command field; ag=%v", ag)
 			}
-			if !strings.Contains(cmd, "agentguard-mcp-gateway") {
-				t.Errorf("command %q does not reference agentguard-mcp-gateway", cmd)
+			if !strings.Contains(cmd, "vanzik-mcp-gateway") {
+				t.Errorf("command %q does not reference vanzik-mcp-gateway", cmd)
 			}
 
 			argsRaw, ok := ag["args"].([]interface{})

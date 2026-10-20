@@ -1,7 +1,7 @@
 
   # --- Codex CLI ---
-  # Rules for Codex CLI's tool calls, which `agentguard hook codex`
-  # checks as agent "codex" (connect it with `agentguard setup`). A
+  # Rules for Codex CLI's tool calls, which `vanzik hook codex`
+  # checks as agent "codex" (connect it with `vanzik setup`). A
   # coding agent works on your real project, so the sandbox rules above would
   # block most of its work: these replace them for Codex CLI only, scope by
   # scope. Scopes not listed here (mcp_tool, browser) keep the rules above.

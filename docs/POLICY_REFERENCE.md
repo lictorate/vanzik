@@ -1,6 +1,6 @@
 # Policy Reference
 
-Canonical reference for the AgentGuard policy YAML format as of **v1.4.0**.
+Canonical reference for the Vanzik policy YAML format as of **v2.0.0**.
 
 Source of truth: `pkg/policy/engine.go` (types) and `pkg/policy/engine.go:Engine.Check` (evaluation). Examples here are the shapes the Go YAML decoder accepts — unknown keys are silently ignored.
 
@@ -48,7 +48,7 @@ Both `version` and `name` are required. Absence returns `policy missing required
 
 ## Rule sets and scopes
 
-A `RuleSet` groups rules that share a scope. Scopes are free strings — AgentGuard ships with dedicated handling for a few and treats everything else generically.
+A `RuleSet` groups rules that share a scope. Scopes are free strings — Vanzik ships with dedicated handling for a few and treats everything else generically.
 
 ```yaml
 rules:
@@ -71,7 +71,7 @@ rules:
 | `mcp_tool` | none (generic) | `pattern` matched against `<namespace>:<tool>` — see [mcp_tool scope](#mcp_tool-scope) |
 | *any other string* | none | generic; `pattern`/`action`/`domain` all still work — a custom scope applies to requests that send exactly that scope string. A name one or two edits from a built-in one is flagged at load as a likely typo |
 
-**One rule set per scope.** If a scope appears in more than one block of `rules:` (or of one agent's `override:`), the blocks are merged at load, in file order: their `deny`, `require_approval` and `allow` rules are combined, so deny → require_approval → allow precedence holds across them. `agentguard validate` prints a `WARN` line for each merge. A `rate_limit` or `limits` set in more than one of the merged blocks must be identical, or the policy is rejected. Before v1.2.0 the first block that decided won, and a `deny` in a later block for the same scope never applied.
+**One rule set per scope.** If a scope appears in more than one block of `rules:` (or of one agent's `override:`), the blocks are merged at load, in file order: their `deny`, `require_approval` and `allow` rules are combined, so deny → require_approval → allow precedence holds across them. `vanzik validate` prints a `WARN` line for each merge. A `rate_limit` or `limits` set in more than one of the merged blocks must be identical, or the policy is rejected. Before v1.2.0 the first block that decided won, and a `deny` in a later block for the same scope never applied.
 
 ### Scope field reference
 
@@ -163,7 +163,7 @@ If the `HistoryQuerier` is not wired (it is by default in `NewServer`), or the a
 
 **In-memory; per-instance on the default SQLite store.** Multi-replica deployments on SQLite do not share buckets — agents can burst past the nominal cap by hitting different pods. With the v1.0 PostgreSQL backend, replicas share consumption via background reconcile (bounded-overshoot: brief bursts can still exceed the cap by ≈ `reconcile-interval × peak rate` per extra replica). See [`docs/OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments).
 
-A rate-limit denial produces `CheckResult{Decision: DENY, Rule: "deny:ratelimit:<scope>"}` and increments `agentguard_rate_limited_total`.
+A rate-limit denial produces `CheckResult{Decision: DENY, Rule: "deny:ratelimit:<scope>"}` and increments `vanzik_rate_limited_total`.
 
 ---
 
@@ -204,7 +204,7 @@ Applies only when `scope: cost`. The incoming request must carry a numeric `est_
 
 ## Data scope
 
-The `data` scope gates **form inputs and browser data submissions** so operators can write rules against the value being submitted (PII, credentials, credit-card-shaped strings) and the destination URL — independently of the broader `browser` scope which only sees navigation and clicks. The browser-use adapter (`plugins/python/agentguard/adapters/browseruse.py`) routes every `GuardedPage.fill`, `GuardedPage.type`, `GuardedFrame.fill`, and `GuardedBrowser.check_form_input` call through `scope: data`; framework adapters that wrap form-completion tools should follow the same convention.
+The `data` scope gates **form inputs and browser data submissions** so operators can write rules against the value being submitted (PII, credentials, credit-card-shaped strings) and the destination URL — independently of the broader `browser` scope which only sees navigation and clicks. The browser-use adapter (`plugins/python/vanzik/adapters/browseruse.py`) routes every `GuardedPage.fill`, `GuardedPage.type`, `GuardedFrame.fill`, and `GuardedBrowser.check_form_input` call through `scope: data`; framework adapters that wrap form-completion tools should follow the same convention.
 
 ### Request fields
 
@@ -258,7 +258,7 @@ A `data`-scoped request that matches no allow rule receives `DENY "No matching a
 
 ## `mcp_tool` scope
 
-The `mcp_tool` scope is the primary scope the [AgentGuard MCP Gateway](./MCP_GATEWAY.md) (`agentguard-mcp-gateway`) checks every host `tools/call` against. The gateway sits between an MCP host (Claude Desktop, Cursor, IDE plugins) and one or more downstream MCP servers; on every `tools/call` it runs `Engine.Check` with `scope: "mcp_tool"` and `command: "<namespace>:<tool>"`.
+The `mcp_tool` scope is the primary scope the [Vanzik MCP Gateway](./MCP_GATEWAY.md) (`vanzik-mcp-gateway`) checks every host `tools/call` against. The gateway sits between an MCP host (Claude Desktop, Cursor, IDE plugins) and one or more downstream MCP servers; on every `tools/call` it runs `Engine.Check` with `scope: "mcp_tool"` and `command: "<namespace>:<tool>"`.
 
 In `--policy-mode strict` (the gateway's default) it also fires a **second** `Engine.Check` against the **mapped existing scope** (filesystem / network / shell / browser / data) per the [`tool_scope_map`](#tool_scope_map) — so existing rules apply to MCP traffic without duplication. Either DENY denies; either REQUIRE_APPROVAL requires approval.
 
@@ -276,7 +276,7 @@ The gateway populates an `ActionRequest` with:
 | `meta.tool_name` | un-prefixed tool name |
 | `meta.transport` | `"mcp_gateway"` |
 | `meta.arg_<key>` | best-effort serialised arguments |
-| `meta.approval_id` | echoed back from `_meta.dev.agentguard/approval_id` on retry |
+| `meta.approval_id` | echoed back from `_meta.dev.vanzik/approval_id` on retry |
 
 Rules match on `pattern` against the namespaced `command`:
 
@@ -363,7 +363,7 @@ See [`docs/MCP_GATEWAY.md`](./MCP_GATEWAY.md) for the gateway's full wire format
 
 ## LLM API Proxy tool scope mapping
 
-The LLM API Proxy (`agentguard-llm-proxy`) inspects upstream model responses for `tool_calls` and gates each call against operator policy **using the same `tool_scope_map:` section** the MCP Gateway uses. There is no separate `llm_tool_scope_map:` key — the bare tool names emitted by chat-style models (`bash`, `read_file`, `web_search`) and the namespaced names emitted by MCP servers (`fs:read_text_file`, `github:list_issues`) occupy disjoint regions of the pattern space, so a single mapping table covers both transports without ambiguity.
+The LLM API Proxy (`vanzik-llm-proxy`) inspects upstream model responses for `tool_calls` and gates each call against operator policy **using the same `tool_scope_map:` section** the MCP Gateway uses. There is no separate `llm_tool_scope_map:` key — the bare tool names emitted by chat-style models (`bash`, `read_file`, `web_search`) and the namespaced names emitted by MCP servers (`fs:read_text_file`, `github:list_issues`) occupy disjoint regions of the pattern space, so a single mapping table covers both transports without ambiguity.
 
 ### Bundled defaults
 
@@ -493,7 +493,7 @@ notifications:
       timeout: "5s"
   on_deny:
     - type: webhook
-      url: "https://logs.example.com/agentguard"
+      url: "https://logs.example.com/vanzik"
     - type: console
   redaction:
     extra_patterns:
@@ -599,7 +599,7 @@ The coding-agent blocks (`configs/claude-code.yaml`, `configs/codex.yaml` and th
 
 **Allow rules that contain shell syntax** are matched command by command: `allow: "ls * | grep *"` allows `ls /tmp | grep x` (two commands, each matching its glob) but not `ls /tmp | grep x; rm -rf /` (three commands). Only the commands are compared, not the operators between them. Redirections are still checked against the filesystem rules. Only real shell syntax in the pattern makes it work this way: `allow: "bash -lc *"` is a plain pattern for the `bash -lc` command itself, and the commands in its script still need rules of their own.
 
-**What the engine won't guess.** Heredocs (`<<`), arithmetic expansion (`$(( … ))`), parameter expansions that can run a command (`${x:-$(…)}`), unbalanced quotes or parentheses, a `$'…'` escape that can't be decoded safely (a missing digit, a value that isn't a byte or a Unicode code point), more than 64 commands (or 64 command strings, or 64 wrapped commands), more than 16 wrappers or two `env -S` strings in one command, or nesting deeper than 8 levels → `DENY deny:shell:unparseable_command`. A command string inside another command (the script of `bash -c`, `eval` or a here-string fed to a shell) that can't be split, or nests too deep, is not denied: since v1.4 it asks for approval as `require_approval:shell:unparseable_script`, with a reason saying AgentGuard couldn't read the script, so a person can look at it. Deny and approval rules are still matched against the script's text first, and the outer command is still checked, so under an allowlist without `bash`, `bash -c 'echo $((1+2))'` is still denied.
+**What the engine won't guess.** Heredocs (`<<`), arithmetic expansion (`$(( … ))`), parameter expansions that can run a command (`${x:-$(…)}`), unbalanced quotes or parentheses, a `$'…'` escape that can't be decoded safely (a missing digit, a value that isn't a byte or a Unicode code point), more than 64 commands (or 64 command strings, or 64 wrapped commands), more than 16 wrappers or two `env -S` strings in one command, or nesting deeper than 8 levels → `DENY deny:shell:unparseable_command`. A command string inside another command (the script of `bash -c`, `eval` or a here-string fed to a shell) that can't be split, or nests too deep, is not denied: since v1.4 it asks for approval as `require_approval:shell:unparseable_script`, with a reason saying Vanzik couldn't read the script, so a person can look at it. Deny and approval rules are still matched against the script's text first, and the outer command is still checked, so under an allowlist without `bash`, `bash -c 'echo $((1+2))'` is still denied.
 
 **What it can't see.** Matching reads the command text, not what a program does with its arguments or its input. These run code the engine doesn't look into:
 
@@ -642,7 +642,7 @@ Pattern matching is where most policy bugs come from.
 > The direction of the risk matters: on a **deny** rule an over-matching `*` makes
 > the deny *broader* (fail-safe), but on an **allow** rule it *widens* access
 > (fail-open). Audit ALLOW path rules for a bare `*` first, and write path bounds
-> with `**` so the depth is explicit. `agentguard server` / policy load also emits
+> with `**` so the depth is explicit. `vanzik server` / policy load also emits
 > a non-fatal warning for exactly this pattern shape — see
 > [Load-time validation](#load-time-validation).
 
@@ -734,7 +734,7 @@ AWS's IPv6 endpoint `fd00:ec2::254`.
 
 ## Load-time validation
 
-Every policy load — the `--policy` file, a hot reload, a tenant policy from the store, `agentguard validate` — goes through `parsePolicyBytesWithWarnings` (`pkg/policy/policy_load.go`), which enforces:
+Every policy load — the `--policy` file, a hot reload, a tenant policy from the store, `vanzik validate` — goes through `parsePolicyBytesWithWarnings` (`pkg/policy/policy_load.go`), which enforces:
 
 - `version` present, non-empty.
 - `name` present, non-empty.
@@ -743,19 +743,19 @@ Every policy load — the `--policy` file, a hot reload, a tenant policy from th
 - `conditions.time_window` without `require_prior` is rejected as a hard load error (since v0.5.0).
 - Blocks for the same scope are merged; a `rate_limit` or `limits` that differs between them is a load error (since v1.2.0).
 
-**Non-fatal warnings** are logged at load and printed by `agentguard validate` (to stderr, prefixed `WARN:`); the policy still loads:
+**Non-fatal warnings** are logged at load and printed by `vanzik validate` (to stderr, prefixed `WARN:`); the policy still loads:
 
 - (v1.2.0) a scope that appears in more than one block — the blocks were merged (see [Rule sets and scopes](#rule-sets-and-scopes));
 - (v1.2.0) a scope name that isn't built-in but is one or two edits away from one (`shel`, `filesytem`, `Shell`): its rules only apply to requests whose scope is spelled exactly that way, so it is almost always a typo;
 - (v1.0) a rule path pattern that contains `/` but no `**` (e.g. `/workspace/*`) — its single `*` crosses `/` and matches recursively (`/workspace/a/b/secret.env`), usually broader than intended. Switch to `**` (segment-aware) if you meant one level. See [Single-star `*` crosses `/`](#single-star--crosses-).
 
-There is **no** schema validation beyond the above — typos in field names are silently ignored by the YAML decoder. Always run `agentguard validate --policy <file>` after edits; wire `agentguard validate --strict` into CI against every policy file you ship, so warnings fail the build.
+There is **no** schema validation beyond the above — typos in field names are silently ignored by the YAML decoder. Always run `vanzik validate --policy <file>` after edits; wire `vanzik validate --strict` into CI against every policy file you ship, so warnings fail the build.
 
 ---
 
 ## Testing policies
 
-`validate` tells you a policy loads. It does not tell you the policy still blocks `rm -rf /` after someone widened an allow rule. For that, write test cases: example actions and the verdict each one must get. `agentguard test` runs them against the policy, with no server.
+`validate` tells you a policy loads. It does not tell you the policy still blocks `rm -rf /` after someone widened an allow rule. For that, write test cases: example actions and the verdict each one must get. `vanzik test` runs them against the policy, with no server.
 
 Put the cases in a file whose name ends in `_test.yaml` (or `_test.yml`), next to the policy or in a folder of their own. For this policy:
 
@@ -813,7 +813,7 @@ tests:
 ```
 
 ```bash
-agentguard test policy-tests/
+vanzik test policy-tests/
 ```
 
 What a case can check:
@@ -826,11 +826,11 @@ What a case can check:
 
 Each case runs on a fresh engine: cost spent under a `session_id` in one case does not count in the next. Rate limits are not tested, because the server applies them, not the policy engine. A misspelled key in a test file is an error, not a case that silently checks nothing.
 
-Per-agent overrides are tested by setting `agent_id` to the agent's name, or with hook cases (below). The cases for the policies in this repo are in [`configs/tests/`](../configs/tests/); they cover the starter policy's sandbox rules, compound shell commands, and each coding agent's block through its hook. Full flag and output reference: [`CLI.md` § `agentguard test`](CLI.md#agentguard-test).
+Per-agent overrides are tested by setting `agent_id` to the agent's name, or with hook cases (below). The cases for the policies in this repo are in [`configs/tests/`](../configs/tests/); they cover the starter policy's sandbox rules, compound shell commands, and each coding agent's block through its hook. Full flag and output reference: [`CLI.md` § `vanzik test`](CLI.md#vanzik-test).
 
 ### Testing a coding agent's tool calls
 
-A case can give a coding agent's tool call instead of a request. `hook:` names the agent (`claude-code`, `cursor`, `gemini-cli` or `codex`) and `input:` is the call as that agent sends it to [`agentguard hook`](CODING_AGENTS.md), written as YAML:
+A case can give a coding agent's tool call instead of a request. `hook:` names the agent (`claude-code`, `cursor`, `gemini-cli` or `codex`) and `input:` is the call as that agent sends it to [`vanzik hook`](CODING_AGENTS.md), written as YAML:
 
 ```yaml
   - name: Claude Code sudo needs approval
@@ -866,7 +866,7 @@ The input goes through the same code as the real hook, so the case tests which r
 
 ### In CI
 
-`agentguard test` exits `0` when every case passes, `1` when one fails, and `3` when a test file or policy does not load, so a CI step fails on its own. With `--output junit` it writes JUnit XML for CI test-report viewers.
+`vanzik test` exits `0` when every case passes, `1` when one fails, and `3` when a test file or policy does not load, so a CI step fails on its own. With `--output junit` it writes JUnit XML for CI test-report viewers.
 
 A GitHub Actions job:
 
@@ -883,10 +883,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: stable
-      - name: Install agentguard
-        run: go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard@latest
+      - name: Install vanzik
+        run: go install lictorate.com/vanzik/v2/cmd/vanzik@latest
       - name: Validate the policy
-        run: agentguard validate --strict policy.yaml
+        run: vanzik validate --strict policy.yaml
       - name: Test the policy
-        run: agentguard test --strict policy-tests/
+        run: vanzik test --strict policy-tests/
 ```

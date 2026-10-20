@@ -1,7 +1,7 @@
-# LangChain — AgentGuard LLM API Proxy
+# LangChain — Vanzik LLM API Proxy
 
 A minimal LangChain agent (`langchain_openai.ChatOpenAI` + a Python
-tool bound via `bind_tools`) wired through the AgentGuard LLM API
+tool bound via `bind_tools`) wired through the Vanzik LLM API
 Proxy. Existing LangChain code that uses the OpenAI provider works
 unchanged after passing one `base_url=` argument (or exporting one env
 var).
@@ -20,11 +20,11 @@ var).
 - Python 3.10+
 - `pip install "langchain>=0.3,<2.0" "langchain-openai>=0.2"`
 - A valid `OPENAI_API_KEY` (the proxy forwards it verbatim)
-- Two `agentguard` binaries on `PATH`:
+- Two `vanzik` binaries on `PATH`:
 
   ```bash
-  go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard@latest
-  go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard-llm-proxy@latest
+  go install lictorate.com/vanzik/v2/cmd/vanzik@latest
+  go install lictorate.com/vanzik/v2/cmd/vanzik-llm-proxy@latest
   ```
 
 ## What this config does
@@ -32,7 +32,7 @@ var).
 ```
 your script ──► LangChain ChatOpenAI ──► OpenAI SDK ──► http://127.0.0.1:8081/v1
                                                                    │
-                                                          (agentguard-llm-proxy)
+                                                          (vanzik-llm-proxy)
                                                                    │
                                                 ┌──────────────────┴──────────────┐
                                                 ▼                                  ▼
@@ -54,30 +54,30 @@ synthetic refusal.
    pip install "langchain>=0.3,<2.0" "langchain-openai>=0.2"
    ```
 
-2. **Generate AgentGuard's API key:**
+2. **Generate Vanzik's API key:**
 
    ```bash
-   export AGENTGUARD_API_KEY="$(openssl rand -hex 32)"
+   export VANZIK_API_KEY="$(openssl rand -hex 32)"
    ```
 
-3. **Start the central AgentGuard server** in one terminal:
+3. **Start the central Vanzik server** in one terminal:
 
    ```bash
-   agentguard server \
+   vanzik server \
        --policy configs/default.yaml \
        --dashboard \
        --watch \
-       --api-key "$AGENTGUARD_API_KEY"
+       --api-key "$VANZIK_API_KEY"
    ```
 
 4. **Start the LLM API Proxy** in a second terminal:
 
    ```bash
-   agentguard-llm-proxy \
+   vanzik-llm-proxy \
        --listen 127.0.0.1:8081 \
        --policy configs/default.yaml \
        --guard-url http://127.0.0.1:8080 \
-       --api-key "$AGENTGUARD_API_KEY"
+       --api-key "$VANZIK_API_KEY"
    ```
 
 5. **Point LangChain at the proxy** and run the example:
@@ -92,7 +92,7 @@ synthetic refusal.
 
 ## Configure custom tool names
 
-The script defines a tool called `list_tmp_files`. AgentGuard's
+The script defines a tool called `list_tmp_files`. Vanzik's
 default LLM tool-scope map (in
 [`pkg/llmproxy/scope_map.go`](../pkg/llmproxy/scope_map.go)) does not
 have an entry for that name — it's not one of the bundled built-ins
@@ -114,9 +114,9 @@ rules:
       - pattern: "list_tmp_files"
 ```
 
-`tool_scope_map` is a list of `pattern` / `scope` entries. For a tool mapped to `shell`, the proxy checks the tool's `command` argument; `list_tmp_files` takes no arguments, so the check runs with the tool name as the command — that's why the `allow` rule names it. In `configs/default.yaml`, add the mapping at the top of the existing `tool_scope_map:` list and the `pattern:` line to the existing `shell` block's `allow:` list, rather than a second `shell` block (a second block is merged into the first, and `agentguard validate` warns about it).
+`tool_scope_map` is a list of `pattern` / `scope` entries. For a tool mapped to `shell`, the proxy checks the tool's `command` argument; `list_tmp_files` takes no arguments, so the check runs with the tool name as the command — that's why the `allow` rule names it. In `configs/default.yaml`, add the mapping at the top of the existing `tool_scope_map:` list and the `pattern:` line to the existing `shell` block's `allow:` list, rather than a second `shell` block (a second block is merged into the first, and `vanzik validate` warns about it).
 
-The proxy reloads its policy file on its own when you save it; so does `agentguard server`. See
+The proxy reloads its policy file on its own when you save it; so does `vanzik server`. See
 [`docs/POLICY_REFERENCE.md` § "LLM API Proxy tool scope mapping"](../docs/POLICY_REFERENCE.md)
 for the full schema.
 
@@ -132,7 +132,7 @@ With the mapping and the allow rule above in place:
 - **DENY:** add `- pattern: "list_tmp_files"` to the `shell` block's
   `deny:` list. Re-run — the proxy rewrites the response as assistant
   text: `response.tool_calls` is empty and `response.content` starts
-  with `AgentGuard denied this action.`, followed by the reason and
+  with `Vanzik denied this action.`, followed by the reason and
   rule.
 - **REQUIRE_APPROVAL:** put the same pattern under `require_approval:`
   instead. The refusal text contains the approval ID; approve it on
@@ -146,7 +146,7 @@ contract, denied).
 ## Inspecting the audit log
 
 ```bash
-agentguard audit --transport llm_api_proxy --limit 20
+vanzik audit --transport llm_api_proxy --limit 20
 ```
 
 Each entry has `meta.provider="openai"`, `meta.tool_call_id` (the
@@ -170,13 +170,13 @@ OpenAI `call_xxx` id), and the resolved scope from the tool-scope map.
   attribute names. The script reads `response.tool_calls`, which is
   the modern (1.x) location. On older versions you may need
   `response.additional_kwargs["tool_calls"]`.
-- **Tool execution is your responsibility.** AgentGuard gates the
+- **Tool execution is your responsibility.** Vanzik gates the
   *call* — the *execution* of the local Python function is
-  unguarded. If you want both ends gated, also wire the AgentGuard
+  unguarded. If you want both ends gated, also wire the Vanzik
   Python SDK's `Guard.check(...)` inside the tool's `_run`. See
   [`docs/SDK_PYTHON.md`](../docs/SDK_PYTHON.md).
 
-## Pairing with the AgentGuard LangChain adapter
+## Pairing with the Vanzik LangChain adapter
 
 The Python SDK ships a `GuardedTool` wrapper that adds a `Guard.check`
 call inside the tool's `invoke`. You can stack it on top of the proxy

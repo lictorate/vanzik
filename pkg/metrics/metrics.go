@@ -7,11 +7,11 @@
 // before/after delta arithmetic against process-global counters.
 //
 // Instrumented points on the hot path:
-//   - agentguard_checks_total            — counter, by decision label
-//   - agentguard_request_duration_ms     — histogram, end-to-end /v1/check
-//   - agentguard_policy_eval_duration_ms — histogram, Engine.Check only
-//   - agentguard_audit_write_duration_ms — histogram, Logger.Log only
-//   - agentguard_pending_approvals       — gauge, current queue depth
+//   - vanzik_checks_total            — counter, by decision label
+//   - vanzik_request_duration_ms     — histogram, end-to-end /v1/check
+//   - vanzik_policy_eval_duration_ms — histogram, Engine.Check only
+//   - vanzik_audit_write_duration_ms — histogram, Logger.Log only
+//   - vanzik_pending_approvals       — gauge, current queue depth
 package metrics
 
 import (
@@ -23,7 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/deprecation"
+	"lictorate.com/vanzik/v2/pkg/deprecation"
 )
 
 // -- Label constants -----------------------------------------------------------
@@ -66,7 +66,7 @@ const (
 )
 
 // notifyDroppedKey is the composite label key (notifier + reason) for
-// agentguard_notify_events_dropped_total. Using a struct as the map key
+// vanzik_notify_events_dropped_total. Using a struct as the map key
 // keeps the two-dimensional label space cheap without allocating strings.
 type notifyDroppedKey struct {
 	Notifier string
@@ -297,7 +297,7 @@ func (r *Registry) AddDecision(decision string, n uint64) {
 func (r *Registry) IncRateLimited() { atomic.AddUint64(&r.rateLimitedTotal, 1) }
 
 // IncApprovalReplayMismatch increments
-// agentguard_approval_replay_mismatch_total. Called from
+// vanzik_approval_replay_mismatch_total. Called from
 // pkg/proxy.handleCheck when the approval-id round-trip lookup hits an
 // entry but the retry request's shape differs from the original.
 //
@@ -331,7 +331,7 @@ func (r *Registry) ApprovalReplayMismatchTotal() uint64 {
 }
 
 // IncApprovalReplayRefused increments
-// agentguard_approval_replay_refused_total{reason=...}. Called from
+// vanzik_approval_replay_refused_total{reason=...}. Called from
 // pkg/proxy.handleCheck when an approval-id round-trip matched the original
 // request shape but the short-circuit was refused by the one-shot /
 // validity state machine: reason "consumed" means the resolved ALLOW was
@@ -362,7 +362,7 @@ func (r *Registry) ApprovalReplayRefusedTotal(reason string) uint64 {
 
 // -- Labeled counters ------------------------------------------------------------
 
-// IncRequestRejected increments agentguard_request_rejected_total{reason=...}.
+// IncRequestRejected increments vanzik_request_rejected_total{reason=...}.
 // Keyed by a short, bounded-cardinality reason string.
 func (r *Registry) IncRequestRejected(reason string) {
 	if reason == "" {
@@ -380,7 +380,7 @@ func (r *Registry) RequestRejectedSnapshot() map[string]uint64 {
 	return copyStringMap(r.requestRejectedCount)
 }
 
-// IncApprovalEvicted increments agentguard_approvals_evicted_total{reason=...}.
+// IncApprovalEvicted increments vanzik_approvals_evicted_total{reason=...}.
 // Cardinality is bounded to the ApprovalEvicted* constants above.
 func (r *Registry) IncApprovalEvicted(reason string) {
 	if reason == "" {
@@ -399,7 +399,7 @@ func (r *Registry) ApprovalEvictedFor(reason string) uint64 {
 }
 
 // IncRateLimitBucketEvicted increments
-// agentguard_ratelimit_bucket_evictions_total{scope=...}. Cardinality is
+// vanzik_ratelimit_bucket_evictions_total{scope=...}. Cardinality is
 // bounded by the set of policy scopes (typically < 20 across a deployment).
 func (r *Registry) IncRateLimitBucketEvicted(scope string) {
 	if scope == "" {
@@ -475,7 +475,7 @@ func (r *Registry) NotifyDroppedFor(notifier, reason string) uint64 {
 // -- LLM-proxy series ------------------------------------------------------------
 
 // IncLLMProxyBufferOverflow increments
-// agentguard_llmproxy_buffer_overflow_total{provider=...}. Provider
+// vanzik_llmproxy_buffer_overflow_total{provider=...}. Provider
 // MUST be "openai" or "anthropic" — the LLM proxy enforces that
 // upstream so cardinality stays bounded. The proxy buffers streaming
 // tool_call deltas up to --max-buffer-bytes; if accumulated arguments
@@ -499,7 +499,7 @@ func (r *Registry) LLMProxyBufferOverflowFor(provider string) uint64 {
 }
 
 // IncLLMProxyNonStreamingOverflow increments
-// agentguard_llmproxy_non_streaming_overflow_total{provider=...}.
+// vanzik_llmproxy_non_streaming_overflow_total{provider=...}.
 // Distinct from the streaming overflow counter so dashboards can break
 // out the two failure modes (the streaming counter measures runaway
 // tool_call argument accumulation; this one measures upstream response
@@ -522,7 +522,7 @@ func (r *Registry) LLMProxyNonStreamingOverflowFor(provider string) uint64 {
 }
 
 // IncLLMProxyProtocolViolation increments
-// agentguard_llmproxy_protocol_violation_total{provider=...}. Security
+// vanzik_llmproxy_protocol_violation_total{provider=...}. Security
 // audit finding H1: a structurally unsafe stream (e.g. a second
 // Anthropic tool_use content block opened before the first closed) is
 // refused fail-closed rather than partially gated. A non-zero rate here
@@ -546,10 +546,10 @@ func (r *Registry) LLMProxyProtocolViolationFor(provider string) uint64 {
 }
 
 // IncLLMProxyUndecodableToolCall increments
-// agentguard_llmproxy_undecodable_tool_call_total{provider=...}. Audit
+// vanzik_llmproxy_undecodable_tool_call_total{provider=...}. Audit
 // finding B6: a non-streaming upstream body that fails strict decode
 // into the typed response struct was forwarded verbatim and UNGATED,
-// because "AgentGuard cannot decode it" was treated as "the client
+// because "Vanzik cannot decode it" was treated as "the client
 // cannot use it". Go rejects a type-mismatched field a lenient client
 // SDK ignores — including the tool_calls sitting next to it. When such a
 // body is found to carry a tool call after all, the proxy now refuses it
@@ -599,7 +599,7 @@ func (r *Registry) AddLLMProxyStreamsActive(delta int64) int64 {
 }
 
 // IncLLMProxyStreamsRejected bumps
-// agentguard_llmproxy_streams_rejected_total. Called once per
+// vanzik_llmproxy_streams_rejected_total. Called once per
 // streaming request that was refused with 503 because the global
 // cap was already at MaxConcurrentStreams.
 func (r *Registry) IncLLMProxyStreamsRejected() {
@@ -620,7 +620,7 @@ func (r *Registry) LLMProxyStreamsRejectedTotal() uint64 {
 
 // -- Audit series ----------------------------------------------------------------
 
-// IncAuditCorruptLine bumps agentguard_audit_corrupt_lines_total: audit
+// IncAuditCorruptLine bumps vanzik_audit_corrupt_lines_total: audit
 // log lines that failed JSON parse during Query() and were skipped. Rare
 // in practice — the usual cause is a crash between the write syscall and
 // the newline flush, or disk corruption. Kept visible via /metrics so
@@ -648,7 +648,7 @@ func (r *Registry) AddAuditReplayEntries(n uint64) {
 	atomic.AddUint64(&r.auditReplayEntriesTotal, n)
 }
 
-// IncAuditRotation increments agentguard_audit_rotations_total. Called from
+// IncAuditRotation increments vanzik_audit_rotations_total. Called from
 // the FileLogger rotation success path after the new live file is open.
 func (r *Registry) IncAuditRotation() { atomic.AddUint64(&r.auditRotationsTotal, 1) }
 
@@ -663,7 +663,7 @@ func (r *Registry) AuditRotationsTotal() uint64 {
 }
 
 // SetAuditSealSeq records the seq of the newest published audit anchor
-// (agentguard_audit_seal_seq). Set by the FileLogger when it publishes an
+// (vanzik_audit_seal_seq). Set by the FileLogger when it publishes an
 // anchor (every --audit-anchor-interval, at rotation and at shutdown), not
 // per entry, so a scrape sees the same head the anchor log line shows.
 func (r *Registry) SetAuditSealSeq(seq uint64) { atomic.StoreUint64(&r.auditSealSeq, seq) }
@@ -918,132 +918,132 @@ func (h *Histogram) reset() {
 // WritePrometheus writes all metrics to w in the Prometheus text exposition
 // format (https://prometheus.io/docs/instrumenting/exposition_formats/).
 func (r *Registry) WritePrometheus(w io.Writer) {
-	writeCounter(w, "agentguard_checks_total",
+	writeCounter(w, "vanzik_checks_total",
 		"Total number of /v1/check requests processed.",
 		atomic.LoadUint64(&r.checksTotal))
-	writeCounter(w, "agentguard_allowed_total",
+	writeCounter(w, "vanzik_allowed_total",
 		"Number of requests with decision ALLOW.",
 		atomic.LoadUint64(&r.allowedTotal))
-	writeCounter(w, "agentguard_denied_total",
+	writeCounter(w, "vanzik_denied_total",
 		"Number of requests with decision DENY (including rate-limit denies).",
 		atomic.LoadUint64(&r.deniedTotal))
-	writeCounter(w, "agentguard_approval_required_total",
+	writeCounter(w, "vanzik_approval_required_total",
 		"Number of requests with decision REQUIRE_APPROVAL.",
 		atomic.LoadUint64(&r.approvalTotal))
-	writeCounter(w, "agentguard_rate_limited_total",
+	writeCounter(w, "vanzik_rate_limited_total",
 		"Number of requests denied by the rate limiter.",
 		atomic.LoadUint64(&r.rateLimitedTotal))
-	writeCounter(w, "agentguard_approval_replay_mismatch_total",
+	writeCounter(w, "vanzik_approval_replay_mismatch_total",
 		"approval_id round-trips whose retry request shape did not match the original PendingAction.Request and therefore fell through to fresh policy evaluation. Non-zero values indicate either a buggy gateway or an attempted replay attack.",
 		atomic.LoadUint64(&r.approvalReplayMismatchTotal))
 	r.writeApprovalReplayRefused(w)
 
-	writeGauge(w, "agentguard_pending_approvals",
+	writeGauge(w, "vanzik_pending_approvals",
 		"Current number of actions waiting for human approval.",
 		float64(atomic.LoadInt64(&r.pendingApprovals)))
 
-	writeHistogram(w, "agentguard_request_duration_ms",
+	writeHistogram(w, "vanzik_request_duration_ms",
 		"End-to-end latency of /v1/check in milliseconds.",
 		r.requestDuration)
-	writeHistogram(w, "agentguard_policy_eval_duration_ms",
+	writeHistogram(w, "vanzik_policy_eval_duration_ms",
 		"Time spent in Engine.Check (policy rule evaluation) in milliseconds.",
 		r.policyEvalDuration)
-	writeHistogram(w, "agentguard_audit_write_duration_ms",
+	writeHistogram(w, "vanzik_audit_write_duration_ms",
 		"Time spent in Logger.Log (audit file write) in milliseconds.",
 		r.auditWriteDuration)
 
-	writeGauge(w, "agentguard_ratelimit_buckets",
+	writeGauge(w, "vanzik_ratelimit_buckets",
 		"Current number of active rate-limit token buckets tracked in memory.",
 		float64(atomic.LoadInt64(&r.rateLimitBuckets)))
 
-	writeGauge(w, "agentguard_sse_subscribers",
+	writeGauge(w, "vanzik_sse_subscribers",
 		"Current number of connected Server-Sent Events subscribers on /api/stream.",
 		float64(atomic.LoadInt64(&r.sseSubscribers)))
 
-	writeGauge(w, "agentguard_notify_queue_depth",
+	writeGauge(w, "vanzik_notify_queue_depth",
 		"Current length of the shared notify dispatch queue (sampled at last enqueue).",
 		float64(atomic.LoadInt64(&r.notifyQueueDepth)))
-	writeCounter(w, "agentguard_notify_spooled_to_disk_total",
+	writeCounter(w, "vanzik_notify_spooled_to_disk_total",
 		"Notification events written to the on-disk spool because the dispatch queue was full (retried by the recovery loop, not dropped).",
 		atomic.LoadUint64(&r.notifySpooledTotal))
-	writeCounter(w, "agentguard_notify_despooled_total",
+	writeCounter(w, "vanzik_notify_despooled_total",
 		"Spooled notification events re-enqueued for dispatch.",
 		atomic.LoadUint64(&r.notifyDespooledTotal))
 	r.writeNotifyDispatchDuration(w)
 
-	writeCounter(w, "agentguard_audit_replay_entries_total",
+	writeCounter(w, "vanzik_audit_replay_entries_total",
 		"Audit log entries re-read at startup to seed in-memory counters.",
 		atomic.LoadUint64(&r.auditReplayEntriesTotal))
-	writeCounter(w, "agentguard_audit_rotations_total",
+	writeCounter(w, "vanzik_audit_rotations_total",
 		"Audit file rotations triggered by the live-file size threshold.",
 		atomic.LoadUint64(&r.auditRotationsTotal))
-	writeCounter(w, "agentguard_audit_corrupt_lines_total",
+	writeCounter(w, "vanzik_audit_corrupt_lines_total",
 		"Audit log lines that failed JSON parse during Query() and were skipped.",
 		atomic.LoadUint64(&r.auditCorruptLinesTotal))
 	// Replay duration is stored as nanoseconds; emit as seconds to match the
 	// Prometheus base-unit convention.
-	writeGauge(w, "agentguard_audit_replay_duration_seconds",
+	writeGauge(w, "vanzik_audit_replay_duration_seconds",
 		"Wall-clock duration of the most recent startup audit replay.",
 		time.Duration(atomic.LoadInt64(&r.auditReplayDurationNanos)).Seconds())
 
-	writeGauge(w, "agentguard_audit_seal_seq",
+	writeGauge(w, "vanzik_audit_seal_seq",
 		"Seq of the newest published audit anchor (the sealed chain's head at the last anchor). 0 when --audit-seal is off or nothing is sealed yet.",
 		float64(atomic.LoadUint64(&r.auditSealSeq)))
-	writeCounter(w, "agentguard_audit_seal_tail_mismatch_total",
+	writeCounter(w, "vanzik_audit_seal_tail_mismatch_total",
 		"Startups where the sealed audit log ended before the chain head recorded in the replay checkpoint (entries may have been removed).",
 		atomic.LoadUint64(&r.auditSealTailMismatchTotal))
 
-	writeCounter(w, "agentguard_audit_buffered_dropped_to_overflow_total",
+	writeCounter(w, "vanzik_audit_buffered_dropped_to_overflow_total",
 		"Audit entries spilled to the buffered logger's overflow file (queue saturated or underlying write failed); durable on disk, not lost.",
 		atomic.LoadUint64(&r.auditBufferedDroppedTotal))
-	writeCounter(w, "agentguard_audit_buffered_drained_from_overflow_total",
+	writeCounter(w, "vanzik_audit_buffered_drained_from_overflow_total",
 		"Audit entries the recovery goroutine pushed back from the overflow file into the queue.",
 		atomic.LoadUint64(&r.auditBufferedDrainedTotal))
-	writeGauge(w, "agentguard_audit_buffered_queue_depth",
+	writeGauge(w, "vanzik_audit_buffered_queue_depth",
 		"Approximate number of audit entries waiting in the buffered logger's in-memory queue.",
 		float64(atomic.LoadInt64(&r.auditBufferedQueueDepth)))
 
-	writeGauge(w, "agentguard_llmproxy_streams_active",
+	writeGauge(w, "vanzik_llmproxy_streams_active",
 		"Current number of in-flight streaming LLM proxy requests (server-process gauge; bounded by --max-concurrent-streams).",
 		float64(atomic.LoadInt64(&r.llmProxyStreamsActive)))
-	writeCounter(w, "agentguard_llmproxy_streams_rejected_total",
+	writeCounter(w, "vanzik_llmproxy_streams_rejected_total",
 		"LLM proxy streaming requests refused with 503 because the --max-concurrent-streams cap was reached.",
 		atomic.LoadUint64(&r.llmProxyStreamsRejectedTotal))
 
-	writeLabeledCounter(w, "agentguard_request_rejected_total",
+	writeLabeledCounter(w, "vanzik_request_rejected_total",
 		"Requests rejected before policy evaluation, by reason (e.g. body_too_large).",
 		"reason", snapshotStringMap(&r.requestRejectedMu, r.requestRejectedCount))
 	r.writeNotifyDropped(w)
-	writeLabeledCounter(w, "agentguard_approvals_evicted_total",
+	writeLabeledCounter(w, "vanzik_approvals_evicted_total",
 		"Approval queue entries removed under capacity pressure, by reason (lru_resolved|queue_full).",
 		"reason", snapshotStringMap(&r.approvalEvictedMu, r.approvalEvictedCount))
-	writeLabeledCounter(w, "agentguard_ratelimit_bucket_evictions_total",
+	writeLabeledCounter(w, "vanzik_ratelimit_bucket_evictions_total",
 		"Rate-limit token buckets evicted under capacity pressure (MaxBuckets), labeled by policy scope.",
 		"scope", snapshotStringMap(&r.rateLimitEvictedMu, r.rateLimitEvictedCount))
-	writeLabeledCounter(w, "agentguard_sse_events_dropped_total",
+	writeLabeledCounter(w, "vanzik_sse_events_dropped_total",
 		"Server-Sent Events dropped before reaching the subscriber, labeled by reason (slow_consumer).",
 		"reason", snapshotStringMap(&r.sseDroppedMu, r.sseDroppedCount))
 	r.writeMigrationStatus(w)
-	writeLabeledCounter(w, "agentguard_llmproxy_buffer_overflow_total",
+	writeLabeledCounter(w, "vanzik_llmproxy_buffer_overflow_total",
 		"LLM-proxy streaming tool_call accumulations that exceeded --max-buffer-bytes and were converted to synthetic refusals, by provider.",
 		"provider", snapshotStringMap(&r.llmProxyBufferOverflowMu, r.llmProxyBufferOverflowCount))
-	writeLabeledCounter(w, "agentguard_llmproxy_non_streaming_overflow_total",
+	writeLabeledCounter(w, "vanzik_llmproxy_non_streaming_overflow_total",
 		"LLM-proxy non-streaming upstream responses that exceeded --max-buffer-bytes and were converted to synthetic refusals, by provider.",
 		"provider", snapshotStringMap(&r.llmProxyNonStreamingOverflowMu, r.llmProxyNonStreamingOverflowCount))
-	writeLabeledCounter(w, "agentguard_llmproxy_protocol_violation_total",
+	writeLabeledCounter(w, "vanzik_llmproxy_protocol_violation_total",
 		"LLM-proxy streams refused fail-closed because the upstream's content-block ordering was structurally unsafe to gate (e.g. an interleaved second tool_use), by provider.",
 		"provider", snapshotStringMap(&r.llmProxyProtocolViolationMu, r.llmProxyProtocolViolationCount))
-	writeLabeledCounter(w, "agentguard_llmproxy_undecodable_tool_call_total",
+	writeLabeledCounter(w, "vanzik_llmproxy_undecodable_tool_call_total",
 		"LLM-proxy non-streaming responses refused fail-closed because the body failed strict decode yet still carried a tool call, which a lenient client SDK would have executed ungated, by provider.",
 		"provider", snapshotStringMap(&r.llmProxyUndecodableToolCallMu, r.llmProxyUndecodableToolCallCount))
 	writeDeprecations(w)
 }
 
-// writeMigrationStatus emits agentguard_audit_migration_status{from,to,status}.
+// writeMigrationStatus emits vanzik_audit_migration_status{from,to,status}.
 // Always emits HELP/TYPE so the series is visible before the first
 // migration is observed.
 func (r *Registry) writeMigrationStatus(w io.Writer) {
-	const name = "agentguard_audit_migration_status"
+	const name = "vanzik_audit_migration_status"
 	const help = "Audit-schema migration outcome gauge, labeled by from/to versions and status (ran|skipped|failed)."
 	fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s gauge\n", name, help, name)
 
@@ -1076,11 +1076,11 @@ func (r *Registry) writeMigrationStatus(w io.Writer) {
 }
 
 // writeNotifyDispatchDuration emits the labeled histogram
-// agentguard_notify_dispatch_duration_seconds{notifier=...}. Always emits
+// vanzik_notify_dispatch_duration_seconds{notifier=...}. Always emits
 // HELP/TYPE so the scraper sees the metric even when no dispatch has
 // happened yet.
 func (r *Registry) writeNotifyDispatchDuration(w io.Writer) {
-	const name = "agentguard_notify_dispatch_duration_seconds"
+	const name = "vanzik_notify_dispatch_duration_seconds"
 	const help = "Wall-clock time spent in Notifier.Notify() per notifier type, in seconds."
 	fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s histogram\n", name, help, name)
 
@@ -1108,14 +1108,14 @@ func (r *Registry) writeNotifyDispatchDuration(w io.Writer) {
 	}
 }
 
-// writeNotifyDropped emits agentguard_notify_events_dropped_total with the
+// writeNotifyDropped emits vanzik_notify_events_dropped_total with the
 // two-dimensional (notifier, reason) label. Always emits HELP/TYPE so a
 // Prometheus scraper sees the metric even when no drops have happened.
-// writeApprovalReplayRefused emits agentguard_approval_replay_refused_total
+// writeApprovalReplayRefused emits vanzik_approval_replay_refused_total
 // with its closed two-value reason label. Both series are always emitted
 // (even at zero) so alert rules on either reason never see a missing metric.
 func (r *Registry) writeApprovalReplayRefused(w io.Writer) {
-	const name = "agentguard_approval_replay_refused_total"
+	const name = "vanzik_approval_replay_refused_total"
 	const help = "approval_id round-trips that matched the original request shape but were refused by the approval state machine and fell through to fresh policy evaluation: reason=\"consumed\" (resolved ALLOW already spent — approvals are one-shot) or reason=\"expired\" (resolution older than --approval-validity)."
 	fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s counter\n", name, help, name)
 	fmt.Fprintf(w, "%s{reason=\"consumed\"} %d\n", name, atomic.LoadUint64(&r.approvalReplayConsumedTotal))
@@ -1123,7 +1123,7 @@ func (r *Registry) writeApprovalReplayRefused(w io.Writer) {
 }
 
 func (r *Registry) writeNotifyDropped(w io.Writer) {
-	const name = "agentguard_notify_events_dropped_total"
+	const name = "vanzik_notify_events_dropped_total"
 	const help = "Notifier events dropped before delivery, by notifier type and reason (e.g. queue_full)."
 	fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s counter\n", name, help, name)
 	snap := r.NotifyDroppedSnapshot()
@@ -1153,7 +1153,7 @@ func (r *Registry) writeNotifyDropped(w io.Writer) {
 // pkg/deprecation's process-global state, so this series is shared across
 // registries.
 func writeDeprecations(w io.Writer) {
-	writeLabeledCounter(w, "agentguard_deprecations_used_total",
+	writeLabeledCounter(w, "vanzik_deprecations_used_total",
 		"Times a deprecated feature was used, labeled by stable feature key (see docs/DEPRECATIONS.md).",
 		"feature", deprecation.Snapshot())
 }

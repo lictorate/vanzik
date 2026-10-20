@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 var sessT0 = time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)

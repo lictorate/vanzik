@@ -4,7 +4,7 @@ import importlib.metadata
 
 import pytest
 
-crewai_adapter = pytest.importorskip("agentguard.adapters.crewai")
+crewai_adapter = pytest.importorskip("vanzik.adapters.crewai")
 pytest.importorskip("crewai")
 
 

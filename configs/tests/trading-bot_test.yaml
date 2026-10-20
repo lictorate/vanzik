@@ -1,6 +1,6 @@
 # Test cases for configs/examples/trading-bot.yaml. Run them with:
 #
-#   agentguard test configs/tests
+#   vanzik test configs/tests
 
 policy: ../examples/trading-bot.yaml
 

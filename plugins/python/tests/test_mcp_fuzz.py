@@ -33,8 +33,8 @@ import sys
 import pytest
 from unittest.mock import patch
 
-from agentguard.adapters.mcp import GuardedMCPServer
-from tests.conftest import MockAgentGuardHandler
+from vanzik.adapters.mcp import GuardedMCPServer
+from tests.conftest import MockVanzikHandler
 
 
 # ---------------------------------------------------------------------------
@@ -145,11 +145,11 @@ def test_process_frame_survives_fuzz(mock_server, capsys, label, frame, expectat
     frame are processed via ``_process_frame`` directly so we don't
     depend on stdin / stdout plumbing.
     """
-    MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+    MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
     s = _build_server(mock_server)
 
     fake_stdout = io.StringIO()
-    with patch("agentguard.adapters.mcp.sys.stdout", fake_stdout):
+    with patch("vanzik.adapters.mcp.sys.stdout", fake_stdout):
         # 1. Send the fuzz vector — must not raise.
         try:
             s._process_frame(frame)
@@ -221,7 +221,7 @@ def test_process_frame_survives_fuzz(mock_server, capsys, label, frame, expectat
 def test_process_frame_high_unicode_command(mock_server, capsys):
     """A frame whose params contain high-Unicode codepoints must be processed
     as ordinary input — not blow up the adapter."""
-    MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+    MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
     s = _build_server(mock_server)
 
     # Mix BMP, emoji, and 4-byte codepoints. All valid UTF-8 once encoded.
@@ -232,7 +232,7 @@ def test_process_frame_high_unicode_command(mock_server, capsys):
     })
 
     fake_stdout = io.StringIO()
-    with patch("agentguard.adapters.mcp.sys.stdout", fake_stdout):
+    with patch("vanzik.adapters.mcp.sys.stdout", fake_stdout):
         s._process_frame(frame)
 
     lines = [l for l in fake_stdout.getvalue().splitlines() if l.strip()]
@@ -251,7 +251,7 @@ def test_process_frame_high_unicode_command(mock_server, capsys):
 def test_sequential_mixed_frames_survive(mock_server, capsys):
     """200 frames alternating bad / good. The adapter must process every
     good frame's response without losing one."""
-    MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+    MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
     s = _build_server(mock_server)
 
     # Build the corpus.
@@ -266,7 +266,7 @@ def test_sequential_mixed_frames_survive(mock_server, capsys):
         seen_good.append(i)
 
     fake_stdout = io.StringIO()
-    with patch("agentguard.adapters.mcp.sys.stdout", fake_stdout):
+    with patch("vanzik.adapters.mcp.sys.stdout", fake_stdout):
         for line in corpus:
             s._process_frame(line)
 
@@ -290,7 +290,7 @@ def test_sequential_mixed_frames_survive(mock_server, capsys):
 def test_process_frame_handler_exception_emits_internal_error(mock_server, capsys):
     """When the router itself throws, ``_process_frame`` MUST emit a
     JSON-RPC -32603 error response and continue accepting frames."""
-    MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+    MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
     s = _build_server(mock_server)
 
     original = s._handle_request
@@ -305,7 +305,7 @@ def test_process_frame_handler_exception_emits_internal_error(mock_server, capsy
     s._handle_request = boom  # type: ignore[assignment]
 
     fake_stdout = io.StringIO()
-    with patch("agentguard.adapters.mcp.sys.stdout", fake_stdout):
+    with patch("vanzik.adapters.mcp.sys.stdout", fake_stdout):
         s._process_frame(json.dumps({
             "jsonrpc": "2.0", "id": 1, "method": "tools/list",
         }))

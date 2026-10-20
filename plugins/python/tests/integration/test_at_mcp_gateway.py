@@ -22,7 +22,7 @@ tools/call, notifications/*).
 Closes the v0.5 plan AT brief item: "Real MCP server gating ... write a
 tiny Python MCP-stdio stub server you write in
 ``tests/integration/_mcp_stub_server.py``. Drive the gateway against it.
-Send a ``tools/list``, ``tools/call``, etc. Assert AgentGuard gates each
+Send a ``tools/list``, ``tools/call``, etc. Assert Vanzik gates each
 call."
 """
 
@@ -34,8 +34,8 @@ import sys
 
 import pytest
 
-from agentguard import Guard
-from agentguard.adapters.mcp import GuardedMCPGateway
+from vanzik import Guard
+from vanzik.adapters.mcp import GuardedMCPGateway
 
 from .conftest import allow, deny
 
@@ -85,7 +85,7 @@ class TestGatewayAgainstRealStub:
 
         assert resp["id"] == 1
         assert resp["result"]["serverInfo"]["name"] == "at-mcp-stub"
-        # The gateway DOES NOT consult AgentGuard for initialize — we
+        # The gateway DOES NOT consult Vanzik for initialize — we
         # don't gate the lifecycle handshake.
         assert len(integration_mock.requests_to("/v1/check")) == 0
 

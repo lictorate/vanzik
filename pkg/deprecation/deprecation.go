@@ -1,10 +1,10 @@
-// Package deprecation is the AgentGuard helper for flagging features that are
+// Package deprecation is the Vanzik helper for flagging features that are
 // scheduled for removal. It does three things:
 //
 //  1. Logs a single WARN line the first time each deprecated feature is used
 //     in a given process (so a long-running server does not spam its log).
 //  2. Tracks a per-feature counter that is exported as
-//     agentguard_deprecations_used_total{feature="..."} by the metrics package.
+//     vanzik_deprecations_used_total{feature="..."} by the metrics package.
 //     Scraping the counter before a planned removal release is the way to tell
 //     whether anyone is still relying on the feature.
 //  3. Keeps the stable feature-key convention in one place. Keys must match the
@@ -68,7 +68,7 @@ func Count(feature string) uint64 {
 }
 
 // Snapshot returns a copy of all current feature counters. The metrics package
-// consumes this to emit agentguard_deprecations_used_total. The returned map
+// consumes this to emit vanzik_deprecations_used_total. The returned map
 // is owned by the caller.
 func Snapshot() map[string]uint64 {
 	mu.RLock()

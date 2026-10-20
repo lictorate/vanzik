@@ -26,7 +26,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // tenantCtxKeyT is the unexported context-key type for the tenant ID. Using

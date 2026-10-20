@@ -1,4 +1,4 @@
-"""Real-framework integration tests for AgentGuard SDK adapters.
+"""Real-framework integration tests for Vanzik SDK adapters.
 
 These tests are gated behind ``@pytest.mark.integration`` and exercise full
 agent loops against the actual upstream framework libraries. They are

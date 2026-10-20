@@ -1,9 +1,9 @@
 # Hook cases for the claude-code block of configs/default.yaml. Run them
 # with:
 #
-#   agentguard test configs/tests
+#   vanzik test configs/tests
 #
-# Each case is a tool call as Claude Code sends it to `agentguard hook
+# Each case is a tool call as Claude Code sends it to `vanzik hook
 # claude-code` (its PreToolUse input), and the verdict the policy must give
 # it. The call goes through the hook's own mapping, so these cases also
 # catch a tool that stops being checked the way the policy expects. See
@@ -134,13 +134,13 @@ tests:
     input: {tool_name: Bash, tool_input: {command: "eval \"$(ssh-agent -s)\""}}
     expect: ALLOW
 
-  - name: a bash -c script AgentGuard can't read asks
+  - name: a bash -c script Vanzik can't read asks
     hook: claude-code
     input: {tool_name: Bash, tool_input: {command: "sh -c 'echo $((1+2))'"}}
     expect: REQUIRE_APPROVAL
     expect_rule: "require_approval:shell:unparseable_script"
 
-  - name: a command line AgentGuard can't read is denied
+  - name: a command line Vanzik can't read is denied
     hook: claude-code
     input: {tool_name: Bash, tool_input: {command: "echo $((1+2))"}}
     expect: DENY

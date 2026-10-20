@@ -20,8 +20,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 func replayTestEntry(agent string, d policy.Decision) Entry {
@@ -515,7 +515,7 @@ func TestCheckpoint_JSONIsBackwardAndForwardCompatible(t *testing.T) {
 }
 
 // CheckpointPath is the single source of truth every reader and writer
-// (server seeder, `agentguard migrate`, the v040 migration) must go
+// (server seeder, `vanzik migrate`, the v040 migration) must go
 // through. Pin it to what WriteCheckpoint actually creates on disk.
 func TestCheckpointPath_IsWhereWriteCheckpointWrites(t *testing.T) {
 	dir := t.TempDir()

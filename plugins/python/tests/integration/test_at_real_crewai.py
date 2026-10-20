@@ -45,11 +45,11 @@ except ImportError:  # pragma: no cover - layout shifts across versions
         allow_module_level=True,
     )
 
-from agentguard import (  # noqa: E402
-    AgentGuardDenied,
+from vanzik import (  # noqa: E402
+    VanzikDenied,
     Guard,
 )
-from agentguard.adapters.crewai import GuardedCrewTool  # noqa: E402
+from vanzik.adapters.crewai import GuardedCrewTool  # noqa: E402
 
 from .conftest import allow, deny  # noqa: E402
 
@@ -214,7 +214,7 @@ class TestRealCrewKickoffGatesTool:
 
 class TestRealCrewKickoffDenyHaltsTool:
     def test_kickoff_with_deny_does_not_run_underlying(self, integration_mock):
-        """When AgentGuard denies, the agent MUST NOT execute the
+        """When Vanzik denies, the agent MUST NOT execute the
         underlying tool. CrewAI's run loop may still complete (the agent
         may "think harder" and try alternative tools) — what we lock is:
         every gated invocation that returned DENY left ``_run`` with
@@ -255,7 +255,7 @@ class TestRealCrewKickoffDenyHaltsTool:
             )
             crew = Crew(agents=[agent], tasks=[task], verbose=False)
             crew.kickoff()
-        except AgentGuardDenied:
+        except VanzikDenied:
             # If CrewAI propagates the deny, that's also acceptable.
             pass
         except Exception as e:  # noqa: BLE001

@@ -95,7 +95,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
 <table>
 <tr><th>Period</th><td>{{period .Period}}</td></tr>
 <tr><th>Generated</th><td>{{stamp .GeneratedAt}}</td></tr>
-<tr><th>AgentGuard</th><td>{{.AgentGuardVersion}}</td></tr>
+<tr><th>Vanzik</th><td>{{.VanzikVersion}}</td></tr>
 <tr><th>Source</th><td>{{source .Source}}</td></tr>
 <tr><th>Policy</th><td>{{policy .Policy}}</td></tr>
 <tr><th>Decisions</th><td>{{decisions .Activity}}</td></tr>

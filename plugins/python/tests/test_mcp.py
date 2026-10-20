@@ -1,4 +1,4 @@
-"""Comprehensive tests for the AgentGuard MCP adapter.
+"""Comprehensive tests for the Vanzik MCP adapter.
 
 Covers every JSON-RPC method the server implements, each decision branch
 of tools/call, scope inference, argument parsing edge cases, and the stdio
@@ -12,14 +12,14 @@ from unittest.mock import patch
 
 import pytest
 
-from agentguard import DEFAULT_BASE_URL, Guard
-from agentguard.adapters.mcp import (
+from vanzik import DEFAULT_BASE_URL, Guard
+from vanzik.adapters.mcp import (
     GuardedMCPServer,
     MCP_PROTOCOL_VERSION,
     SDK_VERSION,
     ToolDefinition,
 )
-from tests.conftest import MockAgentGuardHandler
+from tests.conftest import MockVanzikHandler
 
 
 # ---------------------------------------------------------------------------
@@ -48,7 +48,7 @@ class TestToolDefinition:
 class TestServerInit:
     def test_defaults(self):
         s = GuardedMCPServer(guard_url=DEFAULT_BASE_URL)
-        assert s._server_name == "agentguard"
+        assert s._server_name == "vanzik"
         assert s._server_version == SDK_VERSION
         assert s._tools == {}
         assert s._handlers == {}
@@ -90,7 +90,7 @@ class TestInitialize:
         s = GuardedMCPServer(guard_url=DEFAULT_BASE_URL)
         resp = s._handle_request({"jsonrpc": "2.0", "id": 1, "method": "initialize"})
         info = resp["result"]["serverInfo"]
-        assert info["name"] == "agentguard"
+        assert info["name"] == "vanzik"
         assert info["version"] == SDK_VERSION
 
     def test_capabilities(self):
@@ -127,7 +127,7 @@ class TestInitialize:
 
         err = capsys.readouterr().err
         assert "WARN" in err
-        assert "agentguard.mcp" in err
+        assert "vanzik.mcp" in err
         assert "2099-12-31" in err
         assert MCP_PROTOCOL_VERSION in err
 
@@ -176,7 +176,7 @@ class TestToolsList:
 
 class TestToolsCall:
     def test_allowed_dict_args(self, mock_server):
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
 
         s = GuardedMCPServer(guard_url=mock_server)
 
@@ -199,12 +199,12 @@ class TestToolsCall:
         assert received == {"command": "ls -la"}
 
         # The policy server saw a shell-scoped check with the agent's command.
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body["scope"] == "shell"
         assert body["command"] == "ls -la"
 
     def test_allowed_non_string_output_serialized(self, mock_server):
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         s = GuardedMCPServer(guard_url=mock_server)
         s.add_tool("get_obj", "returns a dict", handler=lambda: {"x": 1}, scope="shell")
 
@@ -219,7 +219,7 @@ class TestToolsCall:
         assert json.loads(content) == {"x": 1}
 
     def test_denied_returns_error_content(self, mock_server):
-        MockAgentGuardHandler.check_response = {"decision": "DENY", "reason": "blocked"}
+        MockVanzikHandler.check_response = {"decision": "DENY", "reason": "blocked"}
 
         s = GuardedMCPServer(guard_url=mock_server)
 
@@ -238,7 +238,7 @@ class TestToolsCall:
         assert calls == [], "denied tool must not execute"
 
     def test_require_approval_returns_approval_url(self, mock_server):
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "REQUIRE_APPROVAL",
             "reason": "needs review",
             "approval_id": "ap_xyz",
@@ -273,7 +273,7 @@ class TestToolsCall:
         assert "Unknown tool" in resp["error"]["message"]
 
     def test_handler_exception_wrapped(self, mock_server):
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         s = GuardedMCPServer(guard_url=mock_server)
 
         def boom(**_):
@@ -290,7 +290,7 @@ class TestToolsCall:
         assert "kaboom" in resp["result"]["content"][0]["text"]
 
     def test_non_dict_arguments_still_invokes(self, mock_server):
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         s = GuardedMCPServer(guard_url=mock_server)
 
         observed = []
@@ -316,7 +316,7 @@ class TestToolsCall:
 
 class TestScopeInference:
     def test_url_triggers_network_scope(self, mock_server):
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         s = GuardedMCPServer(guard_url=mock_server)
         s.add_tool("fetch", "", handler=lambda **_: "", scope="shell")
 
@@ -324,14 +324,14 @@ class TestScopeInference:
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": "fetch", "arguments": {"url": "https://api.example.com/x"}},
         })
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         # scope auto-upgraded to network, domain parsed from URL.
         assert body["scope"] == "network"
         assert body["domain"] == "api.example.com"
         assert body["url"] == "https://api.example.com/x"
 
     def test_path_triggers_filesystem_scope(self, mock_server):
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         s = GuardedMCPServer(guard_url=mock_server)
         s.add_tool("read_file", "", handler=lambda **_: "", scope="shell")
 
@@ -339,44 +339,44 @@ class TestScopeInference:
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": "read_file", "arguments": {"path": "/tmp/x"}},
         })
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body["scope"] == "filesystem"
         assert body["path"] == "/tmp/x"
         # Action inferred from tool name.
         assert body["action"] == "read"
 
     def test_file_path_alias(self, mock_server):
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         s = GuardedMCPServer(guard_url=mock_server)
         s.add_tool("write_doc", "", handler=lambda **_: "", scope="shell")
         s._handle_request({
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": "write_doc", "arguments": {"file_path": "/tmp/out.txt"}},
         })
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body["path"] == "/tmp/out.txt"
         assert body["action"] == "write"
 
     def test_delete_action_inferred_from_remove(self, mock_server):
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         s = GuardedMCPServer(guard_url=mock_server)
         s.add_tool("remove_tmp", "", handler=lambda **_: "", scope="shell")
         s._handle_request({
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": "remove_tmp", "arguments": {"path": "/tmp/x"}},
         })
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body["action"] == "delete"
 
     def test_shell_scope_fallback_uses_tool_name_and_args(self, mock_server):
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         s = GuardedMCPServer(guard_url=mock_server)
         s.add_tool("custom_thing", "", handler=lambda **_: "", scope="shell")
         s._handle_request({
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": "custom_thing", "arguments": {"a": 1, "b": "x"}},
         })
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body["scope"] == "shell"
         assert body["command"].startswith("custom_thing ")
         # The JSON-serialized arguments must be present so the policy can see them.
@@ -384,14 +384,14 @@ class TestScopeInference:
         assert '"b": "x"' in body["command"]
 
     def test_domain_from_arguments(self, mock_server):
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         s = GuardedMCPServer(guard_url=mock_server)
         s.add_tool("curl_tool", "", handler=lambda **_: "", scope="shell")
         s._handle_request({
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": "curl_tool", "arguments": {"domain": "example.com"}},
         })
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body["scope"] == "network"
         assert body["domain"] == "example.com"
 
@@ -402,14 +402,14 @@ class TestScopeInference:
     def test_domain_argument_does_not_override_url_host(self, mock_server, url, want):
         # The model writes the arguments; an allow-listed domain next to a
         # URL on another host must not be what the server checks.
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         s = GuardedMCPServer(guard_url=mock_server)
         s.add_tool("fetch_tool", "", handler=lambda **_: "", scope="network")
         s._handle_request({
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": "fetch_tool", "arguments": {"url": url, "domain": "api.github.com"}},
         })
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body.get("domain") == want
 
 
@@ -450,7 +450,7 @@ class TestProtocolEdges:
 class TestRunLoop:
     def test_run_processes_requests(self, mock_server):
         """Feed JSON-RPC lines over stdin and verify stdout contains responses."""
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
 
         s = GuardedMCPServer(guard_url=mock_server)
         s.add_tool("ping", "", handler=lambda **_: "pong", scope="shell")
@@ -469,8 +469,8 @@ class TestRunLoop:
 
         stdout = io.StringIO()
 
-        with patch("agentguard.adapters.mcp.sys.stdin", stdin), \
-             patch("agentguard.adapters.mcp.sys.stdout", stdout):
+        with patch("vanzik.adapters.mcp.sys.stdin", stdin), \
+             patch("vanzik.adapters.mcp.sys.stdout", stdout):
             s.run()
 
         lines = [l for l in stdout.getvalue().splitlines() if l]
@@ -481,7 +481,7 @@ class TestRunLoop:
         assert ids == [1, 2]
 
     def test_run_handles_multiple_tool_calls_in_order(self, mock_server):
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         s = GuardedMCPServer(guard_url=mock_server)
 
         log = []
@@ -497,8 +497,8 @@ class TestRunLoop:
         stdin = io.StringIO("\n".join(stdin_lines) + "\n")
         stdout = io.StringIO()
 
-        with patch("agentguard.adapters.mcp.sys.stdin", stdin), \
-             patch("agentguard.adapters.mcp.sys.stdout", stdout):
+        with patch("vanzik.adapters.mcp.sys.stdin", stdin), \
+             patch("vanzik.adapters.mcp.sys.stdout", stdout):
             s.run()
 
         assert log == [0, 1, 2, 3, 4]
@@ -522,7 +522,7 @@ class TestCapacity:
     def test_concurrent_tool_calls(self, mock_server):
         """Fire many concurrent tool calls; all must see an auth-tagged header
         (if configured) and return responses without dropping any."""
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
 
         s = GuardedMCPServer(guard_url=mock_server)
         s.add_tool("t", "", handler=lambda **_: "ok", scope="shell")
@@ -549,7 +549,7 @@ class TestCapacity:
     def test_multi_agent_isolation(self, mock_server):
         """Different GuardedMCPServer instances using different agent_ids must
         each send their own agent_id to the policy server."""
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
 
         g_a = Guard(mock_server, agent_id="agent-a")
         g_b = Guard(mock_server, agent_id="agent-b")
@@ -563,14 +563,14 @@ class TestCapacity:
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": "ta", "arguments": {"command": "a"}},
         })
-        body_a = json.loads(MockAgentGuardHandler.last_request_body)
+        body_a = json.loads(MockVanzikHandler.last_request_body)
         assert body_a["agent_id"] == "agent-a"
 
         s_b._handle_request({
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": "tb", "arguments": {"command": "b"}},
         })
-        body_b = json.loads(MockAgentGuardHandler.last_request_body)
+        body_b = json.loads(MockVanzikHandler.last_request_body)
         assert body_b["agent_id"] == "agent-b"
 
 
@@ -580,7 +580,7 @@ class TestCapacity:
 
 class TestAuthPropagation:
     def test_agent_id_forwarded_on_check(self, mock_server):
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         s = GuardedMCPServer(guard_url=mock_server, agent_id="mcp-test")
         s.add_tool("t", "", handler=lambda **_: "", scope="shell")
 
@@ -589,5 +589,5 @@ class TestAuthPropagation:
             "method": "tools/call",
             "params": {"name": "t", "arguments": {"command": "ls"}},
         })
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body["agent_id"] == "mcp-test"

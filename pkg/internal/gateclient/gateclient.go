@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // DefaultGuardHTTPTimeout is the per-/v1/check-call timeout applied

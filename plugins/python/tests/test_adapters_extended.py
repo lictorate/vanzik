@@ -17,8 +17,8 @@ from unittest.mock import MagicMock, AsyncMock
 
 import pytest
 
-from agentguard import Guard, DEFAULT_BASE_URL
-from tests.conftest import MockAgentGuardHandler
+from vanzik import Guard, DEFAULT_BASE_URL
+from tests.conftest import MockVanzikHandler
 
 
 # ---------------------------------------------------------------------------
@@ -27,9 +27,9 @@ from tests.conftest import MockAgentGuardHandler
 
 class TestLangChainExtended:
     def test_run_approval_returns_message(self, mock_server):
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "REQUIRE_APPROVAL",
             "reason": "needs review",
             "approval_url": "http://approve/ap_1",
@@ -46,9 +46,9 @@ class TestLangChainExtended:
         tool.run.assert_not_called()
 
     def test_async_run_allowed(self, mock_server):
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         guard = Guard(mock_server)
 
         tool = MagicMock()
@@ -62,9 +62,9 @@ class TestLangChainExtended:
         tool.arun.assert_called_once()
 
     def test_async_run_denied(self, mock_server):
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
-        MockAgentGuardHandler.check_response = {"decision": "DENY", "reason": "blocked"}
+        MockVanzikHandler.check_response = {"decision": "DENY", "reason": "blocked"}
         guard = Guard(mock_server)
 
         tool = MagicMock()
@@ -78,9 +78,9 @@ class TestLangChainExtended:
         tool.arun.assert_not_called()
 
     def test_infer_scope_prefers_network_on_url(self, mock_server):
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         guard = Guard(mock_server)
 
         tool = MagicMock()
@@ -89,14 +89,14 @@ class TestLangChainExtended:
         gt = GuardedTool(tool, guard, scope="shell")
         gt.run({"url": "https://api.example.com/path"})
 
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body["scope"] == "network"
         assert body["domain"] == "api.example.com"
 
     def test_infer_scope_prefers_filesystem_on_path(self, mock_server):
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         guard = Guard(mock_server)
 
         tool = MagicMock()
@@ -105,7 +105,7 @@ class TestLangChainExtended:
         gt = GuardedTool(tool, guard, scope="shell")
         gt.run({"path": "/tmp/x.txt"})
 
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body["scope"] == "filesystem"
         assert body["path"] == "/tmp/x.txt"
         assert body["action"] == "write"
@@ -120,7 +120,7 @@ class TestLangChainExtended:
         AttributeError instead. The security property is unchanged: the
         wrapper does not proxy arbitrary attributes to the wrapped tool.
         """
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
         guard = Guard(mock_server)
         tool = MagicMock()
@@ -138,9 +138,9 @@ class TestLangChainExtended:
             _ = gt.custom_attr
 
     def test_malformed_url_does_not_crash(self, mock_server):
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         guard = Guard(mock_server)
         tool = MagicMock()
         tool.name = "fetch"
@@ -148,7 +148,7 @@ class TestLangChainExtended:
         gt = GuardedTool(tool, guard, scope="shell")
         gt.run({"url": "not://a//valid::url"})
         # Should not have thrown.
-        assert MockAgentGuardHandler.last_request_body is not None
+        assert MockVanzikHandler.last_request_body is not None
 
 
 # ---------------------------------------------------------------------------
@@ -182,9 +182,9 @@ class TestCrewAIExtended:
     def test_run_method_alias_underscore(self, mock_server):
         """CrewAI calls _run internally; our wrapper routes both to the same
         policy-enforced entry point."""
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         guard = Guard(mock_server)
         inner = _FakeCrewTool(name="x", description="")
 
@@ -196,10 +196,10 @@ class TestCrewAIExtended:
 
     def test_approval_response(self, mock_server):
         """v0.5: REQUIRE_APPROVAL raises PermissionError (typed)."""
-        from agentguard.adapters.crewai import GuardedCrewTool
-        from agentguard import AgentGuardApprovalRequired
+        from vanzik.adapters.crewai import GuardedCrewTool
+        from vanzik import VanzikApprovalRequired
 
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "REQUIRE_APPROVAL",
             "reason": "needs review",
             "approval_url": "http://approve/x",
@@ -210,14 +210,14 @@ class TestCrewAIExtended:
 
         with pytest.raises(PermissionError) as ei:
             gt.run("sudo")
-        assert isinstance(ei.value, AgentGuardApprovalRequired)
+        assert isinstance(ei.value, VanzikApprovalRequired)
         assert "approval" in str(ei.value).lower()
         assert "http://approve/x" in str(ei.value)
         # Underlying never called.
         assert inner.calls == []
 
     def test_extract_params_malformed_url_no_domain(self, mock_server):
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
         guard = Guard(mock_server)
         inner = _FakeCrewTool()
@@ -228,7 +228,7 @@ class TestCrewAIExtended:
         assert params.get("domain", "") == ""
 
     def test_infer_scope_from_description(self, mock_server):
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
         guard = Guard(mock_server)
         for desc, expected in [
@@ -243,9 +243,9 @@ class TestCrewAIExtended:
 
     def test_falls_back_to_run_if_no_underscore(self, mock_server):
         """If the wrapped tool has no _run (legacy), .run() is called."""
-        from agentguard.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.crewai import GuardedCrewTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         guard = Guard(mock_server)
 
         class LegacyTool:
@@ -258,7 +258,7 @@ class TestCrewAIExtended:
         assert gt.run("hi") == "ran-hi"
 
     def test_guard_crew_tools_wraps_all(self, mock_server):
-        from agentguard.adapters.crewai import guard_crew_tools, GuardedCrewTool
+        from vanzik.adapters.crewai import guard_crew_tools, GuardedCrewTool
 
         tools = [_FakeCrewTool(name=f"t{i}") for i in range(3)]
 
@@ -273,41 +273,41 @@ class TestCrewAIExtended:
 
 class TestBrowserUseExtended:
     def test_check_action(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         browser = GuardedBrowser(guard_url=mock_server)
         result = browser.check_action("click", "#login-button", meta={"context": "home"})
         assert result.allowed
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body["scope"] == "browser"
         assert "click" in body["command"]
         assert body["meta"]["context"] == "home"
 
     def test_check_navigation_denied(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "DENY", "reason": "blocked"}
+        MockVanzikHandler.check_response = {"decision": "DENY", "reason": "blocked"}
         browser = GuardedBrowser(guard_url=mock_server)
         result = browser.check_navigation("https://bank.com/transfer")
         assert result.denied
         assert result.reason == "blocked"
 
     def test_malformed_url_no_domain(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         browser = GuardedBrowser(guard_url=mock_server)
         browser.check_navigation("::garbage::")
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         # Still sends url, domain may be empty.
         assert body["url"] == "::garbage::"
         assert body.get("domain", "") == ""
 
     def test_guarded_page_goto_allowed(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         browser = GuardedBrowser(guard_url=mock_server)
 
         inner = MagicMock()
@@ -319,9 +319,9 @@ class TestBrowserUseExtended:
         inner.goto.assert_called_once()
 
     def test_guarded_page_goto_denied_raises(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "DENY", "reason": "blocked"}
+        MockVanzikHandler.check_response = {"decision": "DENY", "reason": "blocked"}
         browser = GuardedBrowser(guard_url=mock_server)
 
         inner = MagicMock()
@@ -334,9 +334,9 @@ class TestBrowserUseExtended:
         inner.goto.assert_not_called()
 
     def test_guarded_page_goto_approval_raises(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {
+        MockVanzikHandler.check_response = {
             "decision": "REQUIRE_APPROVAL",
             "reason": "needs review",
             "approval_url": "http://approve/x",
@@ -358,7 +358,7 @@ class TestBrowserUseExtended:
         # forward; everything else raises AttributeError. This test pins
         # the new contract so a regression that re-introduces the proxy
         # is caught.
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
         browser = GuardedBrowser(guard_url=mock_server)
         inner = MagicMock()
@@ -372,15 +372,15 @@ class TestBrowserUseExtended:
         # Non-allowlisted attribute is rejected with a security message.
         with pytest.raises(AttributeError) as ei:
             page.custom_method
-        assert "AgentGuard" in str(ei.value) or "Guarded" in str(ei.value)
+        assert "Vanzik" in str(ei.value) or "Guarded" in str(ei.value)
 
     def test_agent_id_propagation(self, mock_server):
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
         browser = GuardedBrowser(guard_url=mock_server, agent_id="browser-bot")
         browser.check_navigation("https://example.com")
-        body = json.loads(MockAgentGuardHandler.last_request_body)
+        body = json.loads(MockVanzikHandler.last_request_body)
         assert body["agent_id"] == "browser-bot"
 
 
@@ -390,11 +390,11 @@ class TestBrowserUseExtended:
 
 class TestMultiAgentAcrossAdapters:
     def test_separate_adapters_send_distinct_agent_ids(self, mock_server):
-        from agentguard.adapters.langchain import GuardedTool
-        from agentguard.adapters.crewai import GuardedCrewTool
-        from agentguard.adapters.browseruse import GuardedBrowser
+        from vanzik.adapters.langchain import GuardedTool
+        from vanzik.adapters.crewai import GuardedCrewTool
+        from vanzik.adapters.browseruse import GuardedBrowser
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
 
         lc_guard = Guard(mock_server, agent_id="langchain-agent")
         lc_tool = MagicMock(name="lc_tool")
@@ -402,28 +402,28 @@ class TestMultiAgentAcrossAdapters:
         lc_tool.description = ""
         lc = GuardedTool(lc_tool, lc_guard, scope="shell")
         lc.run("x")
-        body_lc = json.loads(MockAgentGuardHandler.last_request_body)
+        body_lc = json.loads(MockVanzikHandler.last_request_body)
         assert body_lc["agent_id"] == "langchain-agent"
 
         crew_guard = Guard(mock_server, agent_id="crew-agent")
         crew_tool = _FakeCrewTool(name="t", description="")
         crew = GuardedCrewTool(crew_tool, guard=crew_guard, scope="shell")
         crew.run("y")
-        body_crew = json.loads(MockAgentGuardHandler.last_request_body)
+        body_crew = json.loads(MockVanzikHandler.last_request_body)
         assert body_crew["agent_id"] == "crew-agent"
 
         browser = GuardedBrowser(guard_url=mock_server, agent_id="browser-agent")
         browser.check_navigation("https://example.com")
-        body_br = json.loads(MockAgentGuardHandler.last_request_body)
+        body_br = json.loads(MockVanzikHandler.last_request_body)
         assert body_br["agent_id"] == "browser-agent"
 
     def test_concurrent_multi_agent_checks(self, mock_server):
         """Fan out checks from 3 agents in parallel and make sure each sees
         its own agent_id. Uses a thread-local last-request attribute via the
         mock handler's class-level capture."""
-        from agentguard.adapters.langchain import GuardedTool
+        from vanzik.adapters.langchain import GuardedTool
 
-        MockAgentGuardHandler.check_response = {"decision": "ALLOW"}
+        MockVanzikHandler.check_response = {"decision": "ALLOW"}
 
         agents = ["a1", "a2", "a3"]
         results = {a: [] for a in agents}

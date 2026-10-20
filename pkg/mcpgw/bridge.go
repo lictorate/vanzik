@@ -13,25 +13,25 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/internal/gateclient"
+	"lictorate.com/vanzik/v2/pkg/internal/gateclient"
 )
 
 // MetaApprovalIDKey is the reserved `_meta` key MCP clients use to
-// echo an AgentGuard approval id back to the gateway on retry. The
-// reverse-DNS prefix `dev.agentguard/` follows the MCP `2025-11-25`
+// echo a Vanzik approval id back to the gateway on retry. The
+// reverse-DNS prefix `dev.vanzik/` follows the MCP `2025-11-25`
 // `_meta` rules and avoids the reserved `io.modelcontextprotocol/`
 // and `dev.mcp/` prefixes (per docs/MCP_GATEWAY.md § 6.2).
-const MetaApprovalIDKey = "dev.agentguard/approval_id"
+const MetaApprovalIDKey = "dev.vanzik/approval_id"
 
-// MetaPrefixAgentGuard is the namespace the bridge strips out of
+// MetaPrefixVanzik is the namespace the bridge strips out of
 // `_meta` before forwarding tools/call to the upstream. Downstream
 // MCP servers should not see the gateway's internal protocol.
-const MetaPrefixAgentGuard = "dev.agentguard/"
+const MetaPrefixVanzik = "dev.vanzik/"
 
 // GatewayServerName is the ServerInfo.name advertised on `initialize`.
 // The gateway never impersonates a downstream — its identity is
-// always agentguard-mcp-gateway.
-const GatewayServerName = "agentguard-mcp-gateway"
+// always vanzik-mcp-gateway.
+const GatewayServerName = "vanzik-mcp-gateway"
 
 // Bridge is the JSON-RPC orchestrator. It owns the set of upstreams,
 // reads frames from the host's stdin, dispatches them per method,
@@ -106,11 +106,11 @@ type ToolsCallRequest struct {
 	ToolName   string                 // un-prefixed name as the upstream sees it
 	FullName   string                 // the prefixed name as the host sent it
 	Arguments  map[string]interface{} // tool arguments verbatim
-	Meta       map[string]interface{} // _meta with `dev.agentguard/*` keys preserved
+	Meta       map[string]interface{} // _meta with `dev.vanzik/*` keys preserved
 	TenantID   string                 // from cfg.TenantID
 	AgentID    string                 // synthesised from ClientInfo.Name
 	SessionID  string                 // session-scoped key (clientInfo + pid hint)
-	ApprovalID string                 // populated from _meta.dev.agentguard/approval_id if present
+	ApprovalID string                 // populated from _meta.dev.vanzik/approval_id if present
 
 	// ConnectionID is this gateway process's random id, sent as
 	// meta["gateway_connection"]. SessionID is derived from the client
@@ -607,7 +607,7 @@ func (b *Bridge) collectAllTools(ctx context.Context, up Upstream) ([]ToolDescri
 //  3. Run PolicyCheck (A18's hook). On DENY/REQUIRE_APPROVAL surface
 //     as an isError=true content block.
 //  4. On ALLOW, strip the namespace prefix from the request, strip
-//     dev.agentguard/* keys from `_meta`, and forward to upstream.
+//     dev.vanzik/* keys from `_meta`, and forward to upstream.
 //  5. Emit audit + SSE.
 func (b *Bridge) handleToolsCall(ctx context.Context, id RequestID, raw json.RawMessage) *Response {
 	start := time.Now()
@@ -664,18 +664,18 @@ func (b *Bridge) handleToolsCall(ctx context.Context, id RequestID, raw json.Raw
 		// model sees a clean refusal.
 		b.logger.Infof("policy hook error: %v", err)
 		b.emitAudit(preq, "DENY", "deny:guard_unreachable", err.Error(), start)
-		return NewResponseFrom(id, toolErrorResult(fmt.Sprintf("[AgentGuard] policy check failed: %v", err)))
+		return NewResponseFrom(id, toolErrorResult(fmt.Sprintf("[Vanzik] policy check failed: %v", err)))
 	}
 
 	if !dec.Allow && dec.RequiresApproval {
 		// REQUIRE_APPROVAL: surface as isError content block per
 		// MCP_GATEWAY.md § 6.1, so the model can either retry with
-		// `_meta.dev.agentguard/approval_id` or surface the URL to
+		// `_meta.dev.vanzik/approval_id` or surface the URL to
 		// the user.
 		b.emitAudit(preq, "REQUIRE_APPROVAL", dec.Rule, dec.Reason, start)
 		b.emitSSE(preq, "approval_required", "REQUIRE_APPROVAL")
 		text := fmt.Sprintf(
-			"[AgentGuard] Action requires approval.\nReason: %s\nApproval ID: %s\nApprove at: %s",
+			"[Vanzik] Action requires approval.\nReason: %s\nApproval ID: %s\nApprove at: %s",
 			dec.Reason, dec.ApprovalID, dec.ApprovalURL)
 		// Embed structured info in _meta so MCP-aware clients can
 		// pick it up programmatically. The MCP spec says result
@@ -694,8 +694,8 @@ func (b *Bridge) handleToolsCall(ctx context.Context, id RequestID, raw json.Raw
 			Content: result.Content,
 			IsError: result.IsError,
 			Meta: map[string]interface{}{
-				MetaApprovalIDKey:             dec.ApprovalID,
-				"dev.agentguard/approval_url": dec.ApprovalURL,
+				MetaApprovalIDKey:         dec.ApprovalID,
+				"dev.vanzik/approval_url": dec.ApprovalURL,
 			},
 		})
 		return NewResponseResult(id, out)
@@ -708,7 +708,7 @@ func (b *Bridge) handleToolsCall(ctx context.Context, id RequestID, raw json.Raw
 		// docs/MCP_GATEWAY.md § 11.)
 		b.emitAudit(preq, "DENY", dec.Rule, dec.Reason, start)
 		b.emitSSE(preq, "denied", "DENY")
-		text := fmt.Sprintf("[AgentGuard] Action denied by policy.\nReason: %s\nRule: %s",
+		text := fmt.Sprintf("[Vanzik] Action denied by policy.\nReason: %s\nRule: %s",
 			dec.Reason, dec.Rule)
 		result := ToolsCallResult{
 			Content: []ContentBlock{{Type: "text", Text: text}},
@@ -717,9 +717,9 @@ func (b *Bridge) handleToolsCall(ctx context.Context, id RequestID, raw json.Raw
 		return NewResponseFrom(id, result)
 	}
 
-	// ALLOW: strip dev.agentguard/* meta keys and the namespace
+	// ALLOW: strip dev.vanzik/* meta keys and the namespace
 	// prefix, then forward.
-	forwardMeta := stripAgentGuardMeta(params.Meta)
+	forwardMeta := stripVanzikMeta(params.Meta)
 	forwardParams := map[string]interface{}{"name": toolName}
 	if params.Arguments != nil {
 		forwardParams["arguments"] = params.Arguments
@@ -958,17 +958,17 @@ func splitNamespacedName(name string) (ns, tool string, ok bool) {
 	return name[:idx], name[idx+1:], true
 }
 
-// stripAgentGuardMeta returns a copy of meta with all
-// dev.agentguard/* keys removed. Returns nil if the result would be
+// stripVanzikMeta returns a copy of meta with all
+// dev.vanzik/* keys removed. Returns nil if the result would be
 // empty (so we don't add an `_meta` field downstream when the host
 // only sent gateway-internal keys).
-func stripAgentGuardMeta(meta map[string]interface{}) map[string]interface{} {
+func stripVanzikMeta(meta map[string]interface{}) map[string]interface{} {
 	if len(meta) == 0 {
 		return nil
 	}
 	out := make(map[string]interface{}, len(meta))
 	for k, v := range meta {
-		if strings.HasPrefix(k, MetaPrefixAgentGuard) {
+		if strings.HasPrefix(k, MetaPrefixVanzik) {
 			continue
 		}
 		out[k] = v
@@ -989,7 +989,7 @@ func toolErrorResult(text string) ToolsCallResult {
 }
 
 // Run is the package-level convenience entry point invoked by
-// cmd/agentguard-mcp-gateway/main.go. Wires the bridge against the
+// cmd/vanzik-mcp-gateway/main.go. Wires the bridge against the
 // supplied stdio handles and returns when the bridge's main loop
 // exits.
 func Run(ctx context.Context, cfg *Config, in io.Reader, out io.Writer, errLog io.Writer) error {

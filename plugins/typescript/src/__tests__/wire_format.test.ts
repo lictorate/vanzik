@@ -25,7 +25,7 @@
 import * as fs from "fs";
 import * as path from "path";
 
-import { AgentGuard } from "../index";
+import { Vanzik } from "../index";
 import type { CheckOptions } from "../index";
 
 // ---------------------------------------------------------------------------
@@ -126,14 +126,14 @@ describe("v1 wire-protocol fixtures", () => {
 // subset of the v1 schema.
 // =========================================================================
 
-describe("AgentGuard.check wire format", () => {
+describe("Vanzik.check wire format", () => {
   test("emitted body is a v1 ActionRequest subset", async () => {
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(
       jsonResponse(loadFixture("sample_result.json"))
     );
 
-    const guard = new AgentGuard({
+    const guard = new Vanzik({
       baseUrl: "http://example.invalid",
       agentId: "test-agent-001",
     });
@@ -168,7 +168,7 @@ describe("AgentGuard.check wire format", () => {
       jsonResponse(loadFixture("sample_result.json"))
     );
 
-    const guard = new AgentGuard({
+    const guard = new Vanzik({
       baseUrl: "http://example.invalid",
       agentId: "test-agent-001",
     });
@@ -198,7 +198,7 @@ describe("AgentGuard.check wire format", () => {
       jsonResponse(loadFixture("sample_result.json"))
     );
 
-    const guard = new AgentGuard({ agentId: "x" });
+    const guard = new Vanzik({ agentId: "x" });
     await guard.check("cost", {
       sessionId: "sess-x",
       estCost: 0.05,
@@ -226,7 +226,7 @@ describe("AgentGuard.check wire format", () => {
       jsonResponse(loadFixture("sample_result.json"))
     );
 
-    const guard = new AgentGuard({ agentId: "x" });
+    const guard = new Vanzik({ agentId: "x" });
     await guard.check("shell", { command: "ls", estCost: 0 });
 
     const [, init] = fetchMock.mock.calls[0];
@@ -239,7 +239,7 @@ describe("AgentGuard.check wire format", () => {
 // Response decoder: every v1 result must round-trip through the SDK.
 // =========================================================================
 
-describe("AgentGuard.check response decoding", () => {
+describe("Vanzik.check response decoding", () => {
   test.each(["ALLOW", "DENY", "REQUIRE_APPROVAL"] as const)(
     "decodes %s decision from a v1-shaped response",
     async (decision) => {
@@ -252,7 +252,7 @@ describe("AgentGuard.check response decoding", () => {
         })
       );
 
-      const guard = new AgentGuard({ agentId: "x" });
+      const guard = new Vanzik({ agentId: "x" });
       const result = await guard.check("shell", { command: "ls" });
       expect(result.decision).toBe(decision);
     }
@@ -264,7 +264,7 @@ describe("AgentGuard.check response decoding", () => {
       jsonResponse(loadFixture("sample_result.json"))
     );
 
-    const guard = new AgentGuard({ agentId: "x" });
+    const guard = new Vanzik({ agentId: "x" });
     const result = await guard.check("shell", { command: "ls -la" });
     expect(result.allowed).toBe(true);
     expect(result.decision).toBe("ALLOW");
@@ -286,7 +286,7 @@ describe("AgentGuard.check response decoding", () => {
       })
     );
 
-    const guard = new AgentGuard({ agentId: "x" });
+    const guard = new Vanzik({ agentId: "x" });
     const result = await guard.check("shell", { command: "ls" });
     expect(result.allowed).toBe(true);
     expect(result.matchedRule).toBe("allow:shell:ls");

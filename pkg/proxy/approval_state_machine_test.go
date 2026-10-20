@@ -29,8 +29,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // --- queue-level invariants -------------------------------------------------

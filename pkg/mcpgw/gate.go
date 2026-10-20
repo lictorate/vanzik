@@ -1,7 +1,7 @@
 package mcpgw
 
 // gate.go wires the MCP Gateway's PolicyCheck hook against the central
-// AgentGuard server's /v1/check endpoint. The gateway loads the same
+// Vanzik server's /v1/check endpoint. The gateway loads the same
 // policy YAML the central server loads (via --policy <path>) so it can
 // resolve the dual-check tool_scope_map locally without an extra HTTP
 // roundtrip; the policy values fed to the hook are kept in lockstep
@@ -42,8 +42,8 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/internal/gateclient"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/internal/gateclient"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // DefaultGuardHTTPTimeout is the per-/v1/check-call timeout the gate
@@ -77,7 +77,7 @@ var gatewayFailModeRules = gateclient.FailModeRules{
 	Invalid:     InvalidResponseRule,
 }
 
-// HTTPPolicyClient calls the central AgentGuard server's /v1/check
+// HTTPPolicyClient calls the central Vanzik server's /v1/check
 // endpoint and orchestrates the dual-check pattern. One client per
 // gateway process; the underlying http.Client (and its connection
 // pool) is reused. The /v1/check wire contract and fail-mode
@@ -150,7 +150,7 @@ func (c *HTTPPolicyClient) Check(ctx context.Context, req *ToolsCallRequest) (De
 	// 1. mcp_tool scope check. Always runs.
 	//
 	// ApprovalID propagation: when the host retries a tools/call with
-	// `_meta.dev.agentguard/approval_id` set, the bridge stamps it on
+	// `_meta.dev.vanzik/approval_id` set, the bridge stamps it on
 	// req.ApprovalID and we forward it as a top-level field on the
 	// /v1/check body. The central server's handleCheck consults the
 	// approval queue first when this is set; resolved entries short-
@@ -345,7 +345,7 @@ func (c *HTTPPolicyClient) callV1Check(ctx context.Context, ar policy.ActionRequ
 		GuardURL:   c.GuardURL,
 		APIKey:     c.APIKey,
 		TenantID:   c.TenantID,
-		UserAgent:  "agentguard-mcp-gateway/" + GatewayBuildVersion,
+		UserAgent:  "vanzik-mcp-gateway/" + GatewayBuildVersion,
 		HTTPClient: c.HTTPClient,
 	}
 	return caller.CallV1Check(ctx, ar, gatewayFailModeRules)

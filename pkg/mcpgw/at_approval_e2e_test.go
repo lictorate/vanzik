@@ -11,7 +11,7 @@ package mcpgw_test
 //   3. /v1/status/{id} reports the approval as resolved=true,
 //      decision="ALLOW".
 //   4. The model retries the same tools/call with
-//      `_meta.dev.agentguard/approval_id` set; the bridge stamps it on
+//      `_meta.dev.vanzik/approval_id` set; the bridge stamps it on
 //      the /v1/check body's top-level ApprovalID field; the central
 //      server's handleCheck consults the approval queue, sees the
 //      resolved ALLOW, and short-circuits. The retry succeeds with a
@@ -36,11 +36,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/mcpgw"
-	"github.com/Caua-ferraz/AgentGuard/pkg/notify"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
-	"github.com/Caua-ferraz/AgentGuard/pkg/proxy"
+	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/mcpgw"
+	"lictorate.com/vanzik/v2/pkg/notify"
+	"lictorate.com/vanzik/v2/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/proxy"
 )
 
 // startCentralServerForApproval is a customised version of
@@ -217,7 +217,7 @@ func TestAT_ApprovalE2E_RequireApproveRetry(t *testing.T) {
 		t.Errorf("status.Decision = %q; want ALLOW", status.Decision)
 	}
 
-	// 4. Retry the tools/call with `_meta.dev.agentguard/approval_id`
+	// 4. Retry the tools/call with `_meta.dev.vanzik/approval_id`
 	//    set. The bridge stamps it onto ToolsCallRequest.ApprovalID;
 	//    HTTPPolicyClient.Check propagates that to the /v1/check body's
 	//    top-level ApprovalID field; the central server's handleCheck
@@ -311,5 +311,5 @@ func extractApprovalMeta(t *testing.T, raw json.RawMessage) (id, url string) {
 	if err := json.Unmarshal(metaRaw, &meta); err != nil {
 		t.Fatalf("decode _meta: %v", err)
 	}
-	return meta[mcpgw.MetaApprovalIDKey], meta["dev.agentguard/approval_url"]
+	return meta[mcpgw.MetaApprovalIDKey], meta["dev.vanzik/approval_url"]
 }

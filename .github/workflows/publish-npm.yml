@@ -1,14 +1,14 @@
 name: Publish TypeScript SDK to npm
 
-# Stages plugins/typescript as @lictorate/agentguard when a GitHub release is
+# Stages plugins/typescript as @lictorate/vanzik when a GitHub release is
 # published — the same trigger as publish-pypi.yml. The version is not public
 # until a maintainer approves it with 2FA: on npmjs.com, the package page's
 # "Staged Packages" tab → Approve (or `npm stage approve <stage-id>`). npm
 # scans a staged package for malware before it can be approved.
 #
 # Authenticates with npm trusted publishing (GitHub OIDC), so no npm token
-# is stored in this repository. On npmjs.com, @lictorate/agentguard's trusted
-# publisher must name the repository Caua-ferraz/AgentGuard and the workflow
+# is stored in this repository. On npmjs.com, @lictorate/vanzik's trusted
+# publisher must name the repository lictorate/vanzik and the workflow
 # file publish-npm.yml; renaming this file stops publishing until the setting
 # is updated. The publisher is stage-only: it may run `npm stage publish` but
 # not `npm publish`, so a workflow run can never make a version public on its
@@ -16,10 +16,13 @@ name: Publish TypeScript SDK to npm
 # links the version to this workflow run. Staged publishing needs
 # npm >= 11.15.0.
 #
-# npm only accepts a trusted publisher for a package that already exists, so
-# the first version (1.1.1) was published by hand. A version that's already
-# on npm is skipped. A version that's already staged can't be staged again,
-# so re-running before approval fails; approve or reject the staged one.
+# npm only accepts a trusted publisher for a package that already exists.
+# 1.x was published as @lictorate/agentguard; @lictorate/vanzik is a new
+# package, so its first version (2.0.0) has to be published by hand before
+# its trusted publisher can be set up. Until then the job stops at "Check
+# the package exists" and says so. A version that's already on npm is
+# skipped. A version that's already staged can't be staged again, so
+# re-running before approval fails; approve or reject the staged one.
 on:
   release:
     types: [published]
@@ -69,6 +72,15 @@ jobs:
 
       - name: Update npm (staged publishing needs >= 11.15.0)
         run: npm install -g npm@^11.15.0
+
+      # Trusted publishing can't create a package (see the top of this file).
+      - name: Check the package exists
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          if ! npm view "${name}" name >/dev/null 2>&1; then
+            echo "::error::${name} is not on npm yet. Publish its first version by hand, add this workflow as its trusted publisher (stage-only), then re-run."
+            exit 1
+          fi
 
       - name: Stage for approval
         run: |

@@ -26,10 +26,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
-// atCentralRecorder is a minimal mock of the AgentGuard central server's
+// atCentralRecorder is a minimal mock of the Vanzik central server's
 // /v1/check endpoint used by AT's full-stack tests. It records every
 // ActionRequest the proxy POSTs and lets the test pick a CheckResult to
 // return per request.

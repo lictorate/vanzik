@@ -8,7 +8,7 @@ package llmproxy
 // LAST value for a duplicate key. But on the ALLOW path the proxy replays the
 // upstream's RAW argument bytes byte-identically, and a downstream tool
 // executor whose JSON parser resolves duplicate keys FIRST-wins would then act
-// on a different value than the one AgentGuard gated. That gap — the gated view
+// on a different value than the one Vanzik gated. That gap — the gated view
 // differing from what the executor runs — is exactly what this product exists
 // to prevent. We therefore reject any tool-call arguments containing a
 // duplicate key, fail-closed, before evaluating policy.

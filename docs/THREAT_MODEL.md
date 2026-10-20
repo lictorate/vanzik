@@ -1,10 +1,10 @@
 # Threat Model
 
-This document states who AgentGuard defends against, what it trusts, and what it deliberately does not attempt. It is written from the code: every defence named below points at the function that implements it, and every non-goal is one the README or a design decision already records. Treat it as binding — a change that moves an actor across a boundary is a security decision, not a refactor.
+This document states who Vanzik defends against, what it trusts, and what it deliberately does not attempt. It is written from the code: every defence named below points at the function that implements it, and every non-goal is one the README or a design decision already records. Treat it as binding — a change that moves an actor across a boundary is a security decision, not a refactor.
 
 Related: [`README.md` § Limitations & Threat Model](../README.md#limitations--threat-model) (the short form), [`SECURITY.md`](../SECURITY.md) (reporting, out-of-scope list), [`DEPLOYMENT.md`](DEPLOYMENT.md) (the flags that move the boundaries).
 
-## What AgentGuard is
+## What Vanzik is
 
 A policy enforcement and audit layer at two protocol boundaries — the MCP stdio gateway and the OpenAI/Anthropic HTTP proxy — plus an advisory SDK layer. Every gated action becomes a `/v1/check` question to the central server, which answers `ALLOW`, `DENY`, or `REQUIRE_APPROVAL` from in-memory policy state and writes an append-only audit entry.
 
@@ -24,13 +24,13 @@ Go code that imports `pkg/proxy`, `pkg/llmproxy`, or `pkg/mcpgw` directly. The p
 
 Tenants share one process and one store. Every enforcement key carries the tenant: rate-limit buckets (`scope:tenant:agent`), session-cost accumulators (`{tenant, session}`), the approval queue (`tenantsMatch` on every lookup, resolve, and status read), the `require_prior` index (`{tenant, agent, scope}`), audit queries, and every store function (`tenant_id` is a required explicit parameter; `ErrTenantRequired` otherwise). Tenant-aware routes validate the tenant before dispatch (`pkg/proxy/tenant.go`, `withTenant`). Cross-tenant reads are a bug even in tests.
 
-Metrics are process-wide and carry no tenant label by design: aggregate counters leak nothing tenant-specific, and per-tenant series would make `/metrics` cardinality client-controlled. The one client-influenced label, `agentguard_ratelimit_bucket_evictions_total{scope}`, is bounded by the union of policy scope names.
+Metrics are process-wide and carry no tenant label by design: aggregate counters leak nothing tenant-specific, and per-tenant series would make `/metrics` cardinality client-controlled. The one client-influenced label, `vanzik_ratelimit_bucket_evictions_total{scope}`, is bounded by the union of policy scope names.
 
 ### The agent and its model — untrusted
 
 Prompt injection is assumed. Everything the agent emits is attacker-controlled input: tool-call arguments, scope strings, `agent_id`, `session_id`, `meta`, and any `approval_id` it presents. Defences:
 
-- **Approval replay is shape-bound and one-shot.** An `approval_id` is honoured only when the retry's operationally-meaningful fields match the original request (`matchesOriginalRequest`), only within `--approval-validity`, and only once for an ALLOW (`ConsumeResolved`, compare-and-consume under the write lock). Mismatches fall through to fresh evaluation rather than a 4xx, so the endpoint is not an oracle. Counted in `agentguard_approval_replay_mismatch_total` and `agentguard_approval_replay_refused_total`.
+- **Approval replay is shape-bound and one-shot.** An `approval_id` is honoured only when the retry's operationally-meaningful fields match the original request (`matchesOriginalRequest`), only within `--approval-validity`, and only once for an ALLOW (`ConsumeResolved`, compare-and-consume under the write lock). Mismatches fall through to fresh evaluation rather than a 4xx, so the endpoint is not an oracle. Counted in `vanzik_approval_replay_mismatch_total` and `vanzik_approval_replay_refused_total`.
 - **Duplicate JSON keys in tool arguments are a hard deny** (`pkg/llmproxy/streaming.go`, `runPolicyCheck`). The gate projects a Go map (last-wins) while the ALLOW path replays the raw bytes; a first-wins executor would act on a different value than the one gated. This deny is not subject to `--fail-mode allow`.
 - **Secrets in requests are masked before they are stored or shown** (`server --audit-redact`, default on since v1.2.0): the audit trail, `GET /v1/audit`, the SSE stream, the dashboard and the pending list see `[REDACTED]` for keys, tokens and passwords an agent puts in a command. The approval store keeps the original request for replay matching. See [OPERATIONS § Audit redaction](OPERATIONS.md#audit-redaction).
 - **Input normalisation before matching** (`pkg/policy/engine.go`, `normalizeRequest`): control bytes stripped, domains lower-cased, paths cleaned — so `EVIL.com` cannot slip past a `evil.com` deny.
@@ -38,7 +38,7 @@ Prompt injection is assumed. Everything the agent emits is attacker-controlled i
 - **Shell commands are split before matching** (`pkg/policy/shell_segments.go`, since v1.2.0). Chained commands, substitutions, subshells, command strings run by another shell (`bash -c`, `eval`, a here-string fed to a shell; since v1.4), line breaks and redirections are evaluated one command at a time, so an allow rule for the first command can't carry the rest. Since v1.4, the command behind a wrapper or launcher (`env`, `timeout`, `sudo`, `pkexec`, `xargs`, `npm exec`, …) is matched against deny and approval rules too, and whole-string rules are matched against each command string and each pipeline; a whole-line approval no longer hides a deny on a part. Redirection targets are checked as filesystem access. A command line that can't be split safely is denied (`deny:shell:unparseable_command`); a script inside it that can't be split asks for approval (`require_approval:shell:unparseable_script`). See [POLICY_REFERENCE § Compound shell commands](POLICY_REFERENCE.md#compound-shell-commands).
 - **Glob matching is string matching.** An agent can express the same action differently (`find / -delete` for `rm -rf`), and a single allowed command can run others through its arguments or its input (`find -exec`, `git -c core.sshCommand=…`, `python -c`, `echo … | bash`, `bash -c "$(curl …)"`); see [POLICY_REFERENCE § Compound shell commands](POLICY_REFERENCE.md#compound-shell-commands) for what the splitter can't see. Policies are a high-signal filter, not a semantic authorisation model — pair with OS isolation (README).
 
-Anything the agent does outside the gated transport — shelling out directly, pointing itself at a different MCP server or base URL — is out of scope. AgentGuard is not a sandbox.
+Anything the agent does outside the gated transport — shelling out directly, pointing itself at a different MCP server or base URL — is out of scope. Vanzik is not a sandbox.
 
 ### The upstream LLM provider — semi-trusted
 
@@ -50,7 +50,7 @@ The provider is trusted for the *content* of its answers but **not for the struc
 | Start-seeded input plus streamed deltas | `anthropic_parser.go` (audit H2) | Two argument sources would concatenate into invalid JSON and the gate would evaluate a truncated view. Refused. |
 | First-wins function name | `openai_parser.go` (audit M1) | A second, different name for the same `tool_calls[i]` would make the gate evaluate a different call than the client executes. The first name wins, matching client SDKs. |
 
-Each refusal is a synthetic refusal to the client, counted in `agentguard_llmproxy_protocol_violation_total{provider}`, and the buffered bytes are discarded. Oversized argument accumulation is capped by `--max-buffer-bytes` with a built-in 64 MiB ceiling. Still open and priced in `local_fixes/STATUS.md`: B6, B17, B18, B21+B7.
+Each refusal is a synthetic refusal to the client, counted in `vanzik_llmproxy_protocol_violation_total{provider}`, and the buffered bytes are discarded. Oversized argument accumulation is capped by `--max-buffer-bytes` with a built-in 64 MiB ceiling. Still open and priced in `local_fixes/STATUS.md`: B6, B17, B18, B21+B7.
 
 ### The downstream MCP server — untrusted for framing and liveness
 
@@ -72,7 +72,7 @@ It cannot approve, deny, read the audit trail, or reuse an approval it did not o
 
 ### Outbound connections
 
-The enforcement server initiates only the connections the operator configured: the PostgreSQL store (`--store-dsn`) and the policy's notifiers. `agentguard server` performs no update check and sends no telemetry. The interactive `agentguard` subcommands, `agentguard setup` included, query the GitHub Releases API once at startup unless `AGENTGUARD_NO_UPDATE_CHECK` is set. When you choose Update in `agentguard setup`, it downloads the release archive and `checksums.txt` from GitHub (or `AGENTGUARD_DOWNLOAD_URL`) and replaces its binaries only if the checksum matches — the same trust as the one-line installers: the checksum catches a corrupted or swapped download, not a compromised release; `gh attestation verify` checks provenance. CI, not the binaries, talks to OSV.dev, PyPI, npm, and the Go module proxy (`pkg/depaudit`). The MCP gateway reaches `--guard-url` and the MCP servers it spawns; the LLM proxy reaches `--guard-url` and the configured provider. Each of these peers is a trust decision the operator made; The update check only parses a tag name; setup's Update, which you choose, is the only place AgentGuard installs code.
+The enforcement server initiates only the connections the operator configured: the PostgreSQL store (`--store-dsn`) and the policy's notifiers. `vanzik server` performs no update check and sends no telemetry. The interactive `vanzik` subcommands, `vanzik setup` included, query the GitHub Releases API once at startup unless `VANZIK_NO_UPDATE_CHECK` is set. When you choose Update in `vanzik setup`, it downloads the release archive and `checksums.txt` from GitHub (or `VANZIK_DOWNLOAD_URL`) and replaces its binaries only if the checksum matches — the same trust as the one-line installers: the checksum catches a corrupted or swapped download, not a compromised release; `gh attestation verify` checks provenance. CI, not the binaries, talks to OSV.dev, PyPI, npm, and the Go module proxy (`pkg/depaudit`). The MCP gateway reaches `--guard-url` and the MCP servers it spawns; the LLM proxy reaches `--guard-url` and the configured provider. Each of these peers is a trust decision the operator made; The update check only parses a tag name; setup's Update, which you choose, is the only place Vanzik installs code.
 
 ### Supply chain — checked in CI
 
@@ -83,7 +83,7 @@ The enforcement server initiates only the connections the operator configured: t
 ```
    untrusted            semi-trusted             trusted
  ┌──────────┐  stream  ┌──────────────┐          ┌────────────┐
- │ LLM      │ ───────► │ LLM proxy    │ /v1/check│ agentguard │ ◄── operator
+ │ LLM      │ ───────► │ LLM proxy    │ /v1/check│ vanzik │ ◄── operator
  │ provider │ ◄─────── │ (gate)       │ ───────► │ server     │ ◄── approver
  └──────────┘          └──────────────┘          │ (policy,   │
  ┌──────────┐  frames  ┌──────────────┐          │  approvals,│ ◄── store (--store-dsn)
@@ -112,7 +112,7 @@ These are documented decisions, not gaps:
 
 - **OS sandboxing or syscall interception.** Use containers, seccomp, AppArmor, egress rules.
 - **Semantic understanding of commands.** Matching is glob on strings; a single `*` crosses `/` (see `POLICY_REFERENCE.md`).
-- **Tamper-proof audit storage.** The audit log is append-only JSONL. `--audit-seal` (v1.4, file backend, off by default) makes changes *detectable*: an HMAC-SHA256 hash chain that `agentguard audit verify` checks, plus anchors (`seq` and `hash` of the head) logged and served on `GET /v1/audit/head`. It does not stop a writer who holds the key, or without a key anyone who can write the file, from rewriting the chain, and it cannot by itself show that the newest entries were cut off. Anchors copied off the box, or WORM storage, cover that. Signed seals and Merkle proofs are not planned.
+- **Tamper-proof audit storage.** The audit log is append-only JSONL. `--audit-seal` (v1.4, file backend, off by default) makes changes *detectable*: an HMAC-SHA256 hash chain that `vanzik audit verify` checks, plus anchors (`seq` and `hash` of the head) logged and served on `GET /v1/audit/head`. It does not stop a writer who holds the key, or without a key anyone who can write the file, from rewriting the chain, and it cannot by itself show that the newest entries were cut off. Anchors copied off the box, or WORM storage, cover that. Signed seals and Merkle proofs are not planned.
 - **RBAC or multi-key auth.** One bearer key; capability-scoped keys are post-v1.
 - **PII or secret detection in data flows.** Deferred (`#data-pii`) — a weak classifier would create false confidence.
 - **MCP resources, prompts, sampling, elicitation, cancellation.** Masked out of the handshake or dropped; tools only.
@@ -121,4 +121,4 @@ These are documented decisions, not gaps:
 
 ## Keeping this document true
 
-When a change adds an outbound connection, a new unauthenticated endpoint, a new actor whose bytes reach a parser, or relaxes one of the defences in the table above, update this file in the same change. `cmd/agentguard/docs_consistency_test.go` pins the claims that are cheap to check mechanically.
+When a change adds an outbound connection, a new unauthenticated endpoint, a new actor whose bytes reach a parser, or relaxes one of the defences in the table above, update this file in the same change. `cmd/vanzik/docs_consistency_test.go` pins the claims that are cheap to check mechanically.

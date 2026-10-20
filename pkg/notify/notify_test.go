@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/policy"
 	"os"
 	"path/filepath"
 )
@@ -229,7 +229,7 @@ func TestDispatcher_BoundedConcurrency(t *testing.T) {
 }
 
 // TestDispatcher_DroppedCounterIsLabeled: when the queue overflows the
-// Prometheus counter agentguard_notify_events_dropped_total must get
+// Prometheus counter vanzik_notify_events_dropped_total must get
 // incremented with the correct notifier type label, not only the legacy
 // unlabeled package atomic.
 func TestDispatcher_DroppedCounterIsLabeled(t *testing.T) {
@@ -295,14 +295,14 @@ func TestDispatcher_ObservesDispatchDuration(t *testing.T) {
 }
 
 // readHistogramCount parses the Prometheus output for the current
-// _count value of agentguard_notify_dispatch_duration_seconds{notifier=X}.
+// _count value of vanzik_notify_dispatch_duration_seconds{notifier=X}.
 // Returns 0 if the series hasn't been emitted yet (no observation).
 func readHistogramCount(t *testing.T, notifier string) uint64 {
 	t.Helper()
 	var buf strings.Builder
 	metrics.WritePrometheus(&buf)
 	out := buf.String()
-	needle := "agentguard_notify_dispatch_duration_seconds_count{notifier=\"" + notifier + "\"} "
+	needle := "vanzik_notify_dispatch_duration_seconds_count{notifier=\"" + notifier + "\"} "
 	idx := strings.Index(out, needle)
 	if idx == -1 {
 		return 0
@@ -338,10 +338,10 @@ func TestDispatcher_QueueDepthGaugeMoves(t *testing.T) {
 	var buf strings.Builder
 	metrics.WritePrometheus(&buf)
 	out := buf.String()
-	if !strings.Contains(out, "# TYPE agentguard_notify_queue_depth gauge") {
+	if !strings.Contains(out, "# TYPE vanzik_notify_queue_depth gauge") {
 		t.Fatalf("queue_depth gauge TYPE missing; got:\n%s", out)
 	}
-	if !strings.Contains(out, "\nagentguard_notify_queue_depth ") {
+	if !strings.Contains(out, "\nvanzik_notify_queue_depth ") {
 		t.Errorf("queue_depth gauge value line missing; got:\n%s", out)
 	}
 }

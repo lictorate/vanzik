@@ -9,10 +9,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/Caua-ferraz/AgentGuard/internal/clihelp"
+	"lictorate.com/vanzik/v2/internal/clihelp"
 )
 
-// agentguard-mcp-gateway -h prints every flag in a group, as --flag, within 80 columns.
+// vanzik-mcp-gateway -h prints every flag in a group, as --flag, within 80 columns.
 func TestParseConfig_HelpGroupsEveryFlag(t *testing.T) {
 	var out bytes.Buffer
 	_, err := ParseConfigWithOutput([]string{"-h"}, &out)
@@ -23,7 +23,7 @@ func TestParseConfig_HelpGroupsEveryFlag(t *testing.T) {
 	if strings.Contains(help, clihelp.Ungrouped+":") {
 		t.Errorf("a flag is missing from the help groups:\n%s", help)
 	}
-	for _, want := range []string{`--upstream "<ns>:<cmd>"`, "--reconnect-cap duration", "--version", "AGENTGUARD_URL"} {
+	for _, want := range []string{`--upstream "<ns>:<cmd>"`, "--reconnect-cap duration", "--version", "VANZIK_URL"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("help lacks %q", want)
 		}

@@ -1,6 +1,6 @@
 """Filesystem-action inference parity: Python SDK <-> Go transports.
 
-The Python adapters (infer_path_action in agentguard.adapters._common) and
+The Python adapters (infer_path_action in vanzik.adapters._common) and
 the Go transports (gateclient.InferFilesystemAction) must map a tool name to
 the SAME filesystem `action` ("read"/"write"/"delete"/""), otherwise an
 `action:`-keyed filesystem policy rule fires on one transport and not the
@@ -11,11 +11,11 @@ side in pkg/internal/gateclient/gateclient_test.go (TestInferFilesystemAction).
 When you add or change a verb in one place, change it in the other and update
 BOTH tables — this test and that Go test are the tripwire.
 
-This module imports ONLY agentguard.adapters._common, so it runs without
+This module imports ONLY vanzik.adapters._common, so it runs without
 langchain / crewai / mcp (or any framework dependency) installed.
 """
 
-from agentguard.adapters._common import infer_path_action
+from vanzik.adapters._common import infer_path_action
 
 
 # Mirror of gateclient_test.go's TestInferFilesystemAction table. Keep in sync.

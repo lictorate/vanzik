@@ -7,7 +7,7 @@ What happens from the moment a policy returns `REQUIRE_APPROVAL` to the moment t
 ## The 5-step lifecycle
 
 ```
- Agent               AgentGuard proxy            Human (dashboard / CLI / API)
+ Agent               Vanzik proxy            Human (dashboard / CLI / API)
  ─────               ──────────────────          ─────────────────────────────
   │                   │                           │
   │ 1. /v1/check ─────▶                           │
@@ -106,7 +106,7 @@ Redaction runs on `Command`, `Path`, `Domain`, `Action`, `URL`, `Reason`, and ev
   "attachments": [{
     "color": "#ecb22e",
     "text": ":warning: *REQUIRE_APPROVAL* | scope: `shell` | action: `sudo apt upgrade`\n>Matches approval rule in shell scope\n><https://guardrails.example/v1/approve/ap_1a2b…|Approve this action>",
-    "footer": "AgentGuard",
+    "footer": "Vanzik",
     "ts": 1745064224,
     "mrkdwn_in": ["text"]
   }]
@@ -115,14 +115,14 @@ Redaction runs on `Command`, `Path`, `Domain`, `Action`, `URL`, `Reason`, and ev
 
 ### Webhook payload
 
-POST of the raw event JSON to the configured URL with `User-Agent: AgentGuard/1.0` and a 10 s timeout.
+POST of the raw event JSON to the configured URL with `User-Agent: Vanzik/2.0` and a 10 s timeout.
 
 ### Dropped events
 
 If the notifier queue (`DefaultQueueSize=256`) is full, the event is dropped and counted:
 
 ```
-agentguard_notify_events_dropped_total{notifier="slack",reason="queue_full"}
+vanzik_notify_events_dropped_total{notifier="slack",reason="queue_full"}
 ```
 
 See [`OPERATIONS.md`](OPERATIONS.md#notifier-queue-capacity) for tuning.
@@ -180,10 +180,10 @@ Approver opens the dashboard at `<base-url>/dashboard`, which lists pending appr
 ### b) CLI
 
 ```bash
-AGENTGUARD_API_KEY=$KEY agentguard approve ap_1a2b…
+VANZIK_API_KEY=$KEY vanzik approve ap_1a2b…
 # Approved ap_1a2b…
 
-agentguard deny ap_1a2b… --url https://guardrails.example
+vanzik deny ap_1a2b… --url https://guardrails.example
 ```
 
 Useful for scripted approvals (e.g., a runbook step) or when the dashboard is unreachable.
@@ -232,7 +232,7 @@ A resolved **ALLOW** is a single-use, time-boxed capability:
 - `GET /v1/status/{id}` is read-only — SDK poll loops and dashboards never
   spend the capability.
 - Refused replays are visible as
-  `agentguard_approval_replay_refused_total{reason="consumed"|"expired"}`;
+  `vanzik_approval_replay_refused_total{reason="consumed"|"expired"}`;
   a rising `consumed` count means something is trying to reuse one
   approval for multiple executions.
 - Consumption survives restarts (persisted with the approval), so a
@@ -297,7 +297,7 @@ const gated = guarded(guard, 'cost', makeExpensiveCall, {
 });
 ```
 
-The decorator/HOF internally: `check` → if REQUIRE_APPROVAL, `wait_for_approval` → on ALLOW resolution, replay `check` with `approval_id` (consuming the approval and reserving cost) → run the wrapped function only if the replay allows. A DENY resolution, a denied replay, or a timeout raises `AgentGuardDenied` / `AgentGuardApprovalTimeout`; a refused replay that re-entered the approval flow raises `AgentGuardApprovalRequired` carrying the **new** id — the wrapper never waits a second time on its own.
+The decorator/HOF internally: `check` → if REQUIRE_APPROVAL, `wait_for_approval` → on ALLOW resolution, replay `check` with `approval_id` (consuming the approval and reserving cost) → run the wrapped function only if the replay allows. A DENY resolution, a denied replay, or a timeout raises `VanzikDenied` / `VanzikApprovalTimeout`; a refused replay that re-entered the approval flow raises `VanzikApprovalRequired` carrying the **new** id — the wrapper never waits a second time on its own.
 
 ---
 
@@ -307,7 +307,7 @@ The decorator/HOF internally: `check` → if REQUIRE_APPROVAL, `wait_for_approva
 
 - `MaxPendingApprovals = 10000` (hardcoded).
 - **Evicts resolved entries first**, so a healthy triage process never hits the cap.
-- A backlog > 1000 almost always means **nobody is triaging** — alert on `agentguard_pending_approvals > 100 for 15m`.
+- A backlog > 1000 almost always means **nobody is triaging** — alert on `vanzik_pending_approvals > 100 for 15m`.
 
 ### Choosing notifier targets
 
@@ -325,7 +325,7 @@ Every resolution is recorded in the audit log with `decision: ALLOW` or `DENY` a
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Approvers never see Slack/webhook notification | Queue dropped on slow endpoint, or filter mismatch in `notifications.approval_required` | Watch `agentguard_notify_events_dropped_total`; verify the notifier's `type` block in policy. |
+| Approvers never see Slack/webhook notification | Queue dropped on slow endpoint, or filter mismatch in `notifications.approval_required` | Watch `vanzik_notify_events_dropped_total`; verify the notifier's `type` block in policy. |
 | `approval_url` in Slack is `http://localhost:8080` behind a proxy | `--base-url` not set | Start server with `--base-url https://guardrails.example`. |
 | Approval works in dashboard but `POST /v1/approve/{id}` from script returns 401 | Missing Bearer | Set `Authorization: Bearer $KEY`. |
 | Approvals "stuck" after a restart | Running with `--persist=false`, or the entry was created inside the final store-sync window before a crash | Re-issue `check()` from the agent; resolving stale IDs is a no-op. |

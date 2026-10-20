@@ -6,7 +6,7 @@ toolkit / batch / async / introspection. The contribution of *this* file
 is the **agent loop**: a model that decides to call a tool, the agent
 runtime that dispatches, and the gate firing during that dispatch.
 
-Why a fake LLM? AgentGuard's repo policy is "no API keys in tests" —
+Why a fake LLM? Vanzik's repo policy is "no API keys in tests" —
 so we use ``FakeMessagesListChatModel`` from langchain_core. The fake
 model emits a pre-canned sequence of ``AIMessage`` objects (including
 ones carrying ``tool_calls``), the agent runtime invokes the tool, and
@@ -54,8 +54,8 @@ from langchain_core.messages import AIMessage, BaseMessage  # noqa: E402
 from langchain_core.outputs import ChatGeneration, ChatResult  # noqa: E402
 from langchain_core.tools import Tool  # noqa: E402
 
-from agentguard import Guard  # noqa: E402
-from agentguard.adapters.langchain import GuardedTool  # noqa: E402
+from vanzik import Guard  # noqa: E402
+from vanzik.adapters.langchain import GuardedTool  # noqa: E402
 
 from .conftest import allow, deny  # noqa: E402
 
@@ -118,7 +118,7 @@ def _make_gated_tool(guard, name: str = "echo", scope: str = "shell"):
         return f"echo:{text}"
 
     underlying = Tool.from_function(
-        name=name, description="echoes input through the AgentGuard gate",
+        name=name, description="echoes input through the Vanzik gate",
         func=_underlying,
     )
     gt = GuardedTool(underlying, guard, scope=scope)
@@ -137,7 +137,7 @@ class TestAgentLoopGate:
         emits a tool_call. The agent runtime dispatches to the wrapped
         tool. The gate MUST fire exactly once during that dispatch.
 
-        We capture the calls into the AgentGuard mock to assert the
+        We capture the calls into the Vanzik mock to assert the
         ``/v1/check`` body shape and count.
         """
         # We build the agent loop with langgraph's prebuilt helper because

@@ -60,7 +60,7 @@ type PolicyProvider interface {
 	Watch(tenantID string, callback func(*Policy)) (stop func(), err error)
 
 	// Validate parses+validates a policy without committing it. Used by
-	// `agentguard validate` and admin endpoints. The error message is
+	// `vanzik validate` and admin endpoints. The error message is
 	// intended for display to operators; it includes the YAML path of
 	// any failing field.
 	Validate(policyBytes []byte) error
@@ -183,7 +183,7 @@ func (p *FilePolicyProvider) Watch(tenantID string, cb func(*Policy)) (func(), e
 }
 
 // Validate parses+validates raw YAML bytes without committing them.
-// `agentguard validate` and any admin endpoints that pre-validate a policy
+// `vanzik validate` and any admin endpoints that pre-validate a policy
 // before writing it to disk/DB go through here.
 func (p *FilePolicyProvider) Validate(policyBytes []byte) error {
 	return validatePolicyBytes(policyBytes)
@@ -232,7 +232,7 @@ func (p *FilePolicyProvider) onPolicyChange(newPol *Policy) {
 // rebind the static policy — Validate is a pure function.
 //
 // StaticPolicyProvider also serves as the escape hatch for users who
-// embed AgentGuard as a library and prefer to manage policy lifecycle
+// embed Vanzik as a library and prefer to manage policy lifecycle
 // themselves; UpdatePolicy lets them swap the served policy at runtime.
 type StaticPolicyProvider struct {
 	mu        sync.RWMutex

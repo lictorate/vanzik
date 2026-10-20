@@ -3,9 +3,9 @@
 # coding-agents.yaml: the starter policy with every agent's block. Run them
 # with:
 #
-#   agentguard test configs/tests
+#   vanzik test configs/tests
 #
-# Each case is a tool call as Gemini CLI sends it to `agentguard hook
+# Each case is a tool call as Gemini CLI sends it to `vanzik hook
 # gemini-cli` (its BeforeTool input). A call that maps to several checks
 # (read_many_files, a web_fetch with several URLs) gets the most severe
 # verdict. See docs/POLICY_REFERENCE.md § Testing policies.

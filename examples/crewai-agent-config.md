@@ -1,7 +1,7 @@
-# CrewAI — AgentGuard LLM API Proxy
+# CrewAI — Vanzik LLM API Proxy
 
 A minimal CrewAI Crew (one agent, one tool, one task) wired through
-the AgentGuard LLM API Proxy by passing a CrewAI `LLM(...)` instance
+the Vanzik LLM API Proxy by passing a CrewAI `LLM(...)` instance
 with `base_url=` set to the proxy. CrewAI delegates LLM calls to
 LiteLLM, which forwards the OpenAI-compatible base URL to its OpenAI
 client.
@@ -19,11 +19,11 @@ client.
   [`plugins/python/pyproject.toml`](../plugins/python/pyproject.toml))
 - A valid `OPENAI_API_KEY` (forwarded to OpenAI by LiteLLM via the
   proxy)
-- Two `agentguard` binaries on `PATH`:
+- Two `vanzik` binaries on `PATH`:
 
   ```bash
-  go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard@latest
-  go install github.com/Caua-ferraz/AgentGuard/cmd/agentguard-llm-proxy@latest
+  go install lictorate.com/vanzik/v2/cmd/vanzik@latest
+  go install lictorate.com/vanzik/v2/cmd/vanzik-llm-proxy@latest
   ```
 
 ## What this config does
@@ -37,16 +37,16 @@ Crew.kickoff() ──► CrewAI Agent loop ──► CrewAI LLM(base_url=...)
                                                    ▼
                               http://127.0.0.1:8081/v1/chat/completions
                                                    │
-                                          (agentguard-llm-proxy)
+                                          (vanzik-llm-proxy)
                                                    │
                           ┌────────────────────────┼─────────────────────────┐
                           ▼                                                  ▼
         http://127.0.0.1:8080/v1/check               https://api.openai.com/...
-        (central AgentGuard)                          (real upstream)
+        (central Vanzik)                          (real upstream)
 ```
 
 The CrewAI agent loop is unmodified. Each tool call the model emits
-inside a turn is gated by AgentGuard before LiteLLM streams the
+inside a turn is gated by Vanzik before LiteLLM streams the
 response back to CrewAI.
 
 ## Setup (5 steps)
@@ -57,30 +57,30 @@ response back to CrewAI.
    pip install "crewai>=1.0,<2.0"
    ```
 
-2. **Generate AgentGuard's API key:**
+2. **Generate Vanzik's API key:**
 
    ```bash
-   export AGENTGUARD_API_KEY="$(openssl rand -hex 32)"
+   export VANZIK_API_KEY="$(openssl rand -hex 32)"
    ```
 
-3. **Start the central AgentGuard server** in one terminal:
+3. **Start the central Vanzik server** in one terminal:
 
    ```bash
-   agentguard server \
+   vanzik server \
        --policy configs/default.yaml \
        --dashboard \
        --watch \
-       --api-key "$AGENTGUARD_API_KEY"
+       --api-key "$VANZIK_API_KEY"
    ```
 
 4. **Start the LLM API Proxy** in a second terminal:
 
    ```bash
-   agentguard-llm-proxy \
+   vanzik-llm-proxy \
        --listen 127.0.0.1:8081 \
        --policy configs/default.yaml \
        --guard-url http://127.0.0.1:8080 \
-       --api-key "$AGENTGUARD_API_KEY"
+       --api-key "$VANZIK_API_KEY"
    ```
 
 5. **Point CrewAI at the proxy** and run the example:
@@ -98,7 +98,7 @@ response back to CrewAI.
 ## Configure custom tool names
 
 The script defines a CrewAI tool called `list_tmp_files`. As with the
-LangChain example, this is not in AgentGuard's bundled tool-scope map,
+LangChain example, this is not in Vanzik's bundled tool-scope map,
 so map it to a scope in your policy and allow it there:
 
 ```yaml
@@ -113,9 +113,9 @@ rules:
       - pattern: "list_tmp_files"
 ```
 
-`tool_scope_map` is a list of `pattern` / `scope` entries. For a tool mapped to `shell`, the proxy checks the tool's `command` argument; `list_tmp_files` takes no arguments, so the check runs with the tool name as the command — that's why the `allow` rule names it. In `configs/default.yaml`, add the mapping at the top of the existing `tool_scope_map:` list and the `pattern:` line to the existing `shell` block's `allow:` list, rather than a second `shell` block (a second block is merged into the first, and `agentguard validate` warns about it).
+`tool_scope_map` is a list of `pattern` / `scope` entries. For a tool mapped to `shell`, the proxy checks the tool's `command` argument; `list_tmp_files` takes no arguments, so the check runs with the tool name as the command — that's why the `allow` rule names it. In `configs/default.yaml`, add the mapping at the top of the existing `tool_scope_map:` list and the `pattern:` line to the existing `shell` block's `allow:` list, rather than a second `shell` block (a second block is merged into the first, and `vanzik validate` warns about it).
 
-The proxy reloads its policy file on its own when you save it; so does `agentguard server`.
+The proxy reloads its policy file on its own when you save it; so does `vanzik server`.
 
 ## Verification
 
@@ -136,7 +136,7 @@ The proxy reloads its policy file on its own when you save it; so does `agentgua
 ## Inspecting the audit log
 
 ```bash
-agentguard audit --transport llm_api_proxy --limit 20
+vanzik audit --transport llm_api_proxy --limit 20
 ```
 
 CrewAI agents often emit several tool calls per `kickoff()`. Filter
@@ -167,11 +167,11 @@ calls cleanly).
   delivered either, by design (agents that mix benign and risky
   calls in one turn should be refactored).
 - **Two API keys, two purposes.** `OPENAI_API_KEY` flows through the
-  proxy to OpenAI. `AGENTGUARD_API_KEY` is the central server's
+  proxy to OpenAI. `VANZIK_API_KEY` is the central server's
   bearer for `/v1/check`. They are independent.
 - **CrewAI's `verbose=True`.** The example sets `verbose=True` on
   both the agent and the crew so you can watch the tool calls fire
-  in CrewAI's own logs alongside the AgentGuard dashboard. Drop
+  in CrewAI's own logs alongside the Vanzik dashboard. Drop
   verbose flags for production.
 
 ## Anthropic models in CrewAI
@@ -184,10 +184,10 @@ Anthropic. Point `base_url=` at the proxy without `/v1`
 [`anthropic-sdk-config.md`](./anthropic-sdk-config.md) example. The
 proxy speaks both providers on the same listen address.
 
-## Pairing with the AgentGuard CrewAI adapter
+## Pairing with the Vanzik CrewAI adapter
 
 The Python SDK ships `GuardedCrewTool` (in
-[`plugins/python/agentguard/adapters/crewai.py`](../plugins/python/agentguard/adapters/crewai.py))
+[`plugins/python/vanzik/adapters/crewai.py`](../plugins/python/vanzik/adapters/crewai.py))
 which adds a `Guard.check` call inside the tool's `_run`. Stack it
 on top of the proxy for defense-in-depth: the proxy gates the wire,
 the adapter gates the local Python execution. See

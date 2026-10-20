@@ -1,7 +1,7 @@
 """Real-CrewAI integration tests (Phase 3 — A14).
 
 These tests build and exercise actual ``crewai`` ``BaseTool`` subclasses,
-not mocks. The AgentGuard HTTP server is mocked via ``integration_mock``.
+not mocks. The Vanzik HTTP server is mocked via ``integration_mock``.
 
 Closes audit findings R5 P1 (real-framework canary), R5 P2/P3/P4 (modern
 CrewAI / LangChain Runnable bypass closure), R1 F1 (version floor bound).
@@ -31,12 +31,12 @@ except ImportError:  # pragma: no cover - layout differs across versions
         allow_module_level=True,
     )
 
-from agentguard import (  # noqa: E402
-    AgentGuardApprovalRequired,
-    AgentGuardDenied,
+from vanzik import (  # noqa: E402
+    VanzikApprovalRequired,
+    VanzikDenied,
     Guard,
 )
-from agentguard.adapters.crewai import (  # noqa: E402
+from vanzik.adapters.crewai import (  # noqa: E402
     GuardedCrewTool,
     guard_crew_tools,
 )
@@ -91,7 +91,7 @@ class TestRealCrewAIInvoke:
         guard = Guard(integration_mock.base_url, agent_id="crew-int")
         wrapped = GuardedCrewTool(_RealCrewTool(), guard=guard, scope="shell")
 
-        with pytest.raises(AgentGuardDenied) as ei:
+        with pytest.raises(VanzikDenied) as ei:
             wrapped.invoke({"query": "bad"})
         assert "denied" in str(ei.value).lower()
 
@@ -100,7 +100,7 @@ class TestRealCrewAIInvoke:
         guard = Guard(integration_mock.base_url, agent_id="crew-int")
         wrapped = GuardedCrewTool(_RealCrewTool(), guard=guard, scope="shell")
 
-        with pytest.raises(AgentGuardApprovalRequired):
+        with pytest.raises(VanzikApprovalRequired):
             wrapped.invoke({"query": "needs-review"})
 
 
@@ -146,7 +146,7 @@ class TestRealCrewAIRunLoop:
 
         wrapped.invoke({"query": "1"})
         wrapped.invoke({"query": "2"})
-        with pytest.raises(AgentGuardDenied):
+        with pytest.raises(VanzikDenied):
             wrapped.invoke({"query": "3"})
 
 

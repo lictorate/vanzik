@@ -3,9 +3,9 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agentguardproxy"
-version = "1.4.0"
-description = "Python SDK for AgentGuard — the firewall for AI agents"
+name = "vanzik"
+version = "2.0.0"
+description = "Python SDK for Vanzik — the firewall for AI agents"
 readme = "README.md"
 license = "Apache-2.0"
 # requires-python: 3.10 floor.
@@ -13,11 +13,11 @@ license = "Apache-2.0"
 # 3.8 was dropped in v0.5.0 (upstream EOL October 2024). 3.9 was dropped
 # after upstream EOL (October 2025) — the `mcp` PyPI extra requires >=3.10
 # anyway, so keeping 3.9 in the trove invited a broken
-# `pip install agentguardproxy[mcp]` resolution. The CI matrix exercises
+# `pip install vanzik[mcp]` resolution. The CI matrix exercises
 # 3.10, 3.11, 3.12, 3.13 on every push.
 requires-python = ">=3.10"
 authors = [
-    { name = "Cauã Ferraz", email = "cauaferrazp@gmail.com" },
+    { name = "Cauã Ferraz", email = "hello@lictorate.com" },
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -33,10 +33,10 @@ classifiers = [
 keywords = ["ai", "agents", "firewall", "policy", "guardrails", "safety"]
 
 [project.urls]
-Homepage = "https://github.com/Caua-ferraz/AgentGuard"
-Repository = "https://github.com/Caua-ferraz/AgentGuard"
-Documentation = "https://github.com/Caua-ferraz/AgentGuard/blob/master/docs/SETUP.md"
-Issues = "https://github.com/Caua-ferraz/AgentGuard/issues"
+Homepage = "https://github.com/lictorate/vanzik"
+Repository = "https://github.com/lictorate/vanzik"
+Documentation = "https://github.com/lictorate/vanzik/blob/master/docs/SETUP.md"
+Issues = "https://github.com/lictorate/vanzik/issues"
 
 [project.optional-dependencies]
 # Framework extras carry upper bounds (v0.5 R5 P1/P2/P3/P4/P5, R1 F1).
@@ -45,7 +45,7 @@ Issues = "https://github.com/Caua-ferraz/AgentGuard/issues"
 # pinned major every week; the upper bound is bumped only after a new major
 # is verified end-to-end.
 #
-# Floors reflect the API surface that AgentGuard's adapters were hardened
+# Floors reflect the API surface that Vanzik's adapters were hardened
 # against (A11/A12/A13). Ceilings are the next major boundary so a future
 # breaking release does not silently install on top of v0.5.
 #
@@ -78,7 +78,7 @@ browser-use = [
 mcp = ["mcp>=0.9,<3.0"]
 # OpenAI Agents SDK (import name `agents`). 0.3.3 is the floor: it is the
 # first release with tool input guardrails and ToolContext.tool_arguments,
-# which agentguard_tool_guardrail uses; the adapter refuses anything older.
+# which vanzik_tool_guardrail uses; the adapter refuses anything older.
 # The ceiling follows the browser-use rule for pre-1.0 packages: <1.0, not
 # the next minor. The adapter touches only FunctionTool.on_invoke_tool and
 # the public guardrail API, which held from 0.3.3 through 0.23.x, and the
@@ -87,7 +87,7 @@ mcp = ["mcp>=0.9,<3.0"]
 openai-agents = ["openai-agents>=0.3.3,<1.0"]
 # Convenience: install every adapter extra in one go (pip install ".[all]").
 # Self-reference picks up the version-pinned extras above.
-all = ["agentguardproxy[langchain,crewai,browser-use,mcp,openai-agents]"]
+all = ["vanzik[langchain,crewai,browser-use,mcp,openai-agents]"]
 # Test deps. responses + pytest-asyncio added so integration tests can use
 # them without each extra group dragging them in.
 dev = [
@@ -100,10 +100,10 @@ dev = [
 # one shot. Mirrors `all` but exists separately so a downstream user
 # who wants the heavyweight test deps does not have to remember every
 # extra. Paired with `[dev]` in the CI workflow.
-integration = ["agentguardproxy[langchain,crewai,browser-use,mcp,openai-agents]"]
+integration = ["vanzik[langchain,crewai,browser-use,mcp,openai-agents]"]
 
 [tool.setuptools.packages.find]
-include = ["agentguard*"]
+include = ["vanzik*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

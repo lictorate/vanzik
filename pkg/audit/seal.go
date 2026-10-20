@@ -1,7 +1,7 @@
 package audit
 
 // seal.go — the optional tamper-evident hash chain of the file backend
-// (v1.4, `agentguard server --audit-seal`).
+// (v1.4, `vanzik server --audit-seal`).
 //
 // Each sealed entry carries seq (1, 2, 3, ... across rotations), prev_hash
 // (the hash of the entry before it) and hash. The hash covers the entry's
@@ -14,7 +14,7 @@ package audit
 //	hash == hex(HMAC-SHA256(key, body))   or   hex(SHA-256(body)) without a key
 //
 // Sealing is not encryption: entries stay readable. It makes edits,
-// deletions and reordering detectable by `agentguard audit verify`. Without
+// deletions and reordering detectable by `vanzik audit verify`. Without
 // a key anyone who can write the file can recompute the chain, so a plain
 // SHA-256 chain only catches naive edits; anchors published off the box
 // (see Anchor) are what pin the head.
@@ -36,7 +36,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/metrics"
+	"lictorate.com/vanzik/v2/pkg/metrics"
 )
 
 // Seal algorithms, as written in MetaRecord.Seal.Alg.
@@ -77,7 +77,7 @@ func (c SealConfig) info() SealInfo {
 }
 
 // LoadSealKey reads an HMAC seal key file. The key is the file's content
-// with surrounding whitespace removed, so a hex key written by `agentguard
+// with surrounding whitespace removed, so a hex key written by `vanzik
 // setup` or `openssl rand -hex 32 > key` works as is. With strictPerms (the
 // server), a key file that other users can read is refused on Unix: anyone
 // holding the key can forge a valid chain.
@@ -102,7 +102,7 @@ func LoadSealKey(path string, strictPerms bool) ([]byte, error) {
 
 // Anchor is a published head of the chain: the entry with this seq has this
 // hash. Copied somewhere the audit host cannot rewrite (a SIEM, a ticket),
-// it lets `agentguard audit verify --anchor seq:hash` prove that nothing up
+// it lets `vanzik audit verify --anchor seq:hash` prove that nothing up
 // to seq was changed or removed afterwards, even by someone holding the key.
 type Anchor struct {
 	SegmentID string    `json:"segment_id"`
@@ -248,7 +248,7 @@ func (b *BufferedAsyncLogger) SealHead() (Anchor, bool) {
 }
 
 // publishAnchorLocked writes the chain head to the log (which reaches
-// journald, syslog or a SIEM) and to the agentguard_audit_seal_seq gauge,
+// journald, syslog or a SIEM) and to the vanzik_audit_seal_seq gauge,
 // unless nothing was sealed since the last anchor. Caller holds l.mu.
 func (l *FileLogger) publishAnchorLocked() {
 	s := l.seal
@@ -444,7 +444,7 @@ func (l *FileLogger) resumeSeal(path string) error {
 
 	if cp, err := ReadCheckpoint(path); err == nil && cp != nil && cp.LastSeq > 0 {
 		if t.seq < cp.LastSeq || (t.seq == cp.LastSeq && t.hash != cp.LastHash) {
-			log.Printf("WARNING audit: %s ends at seq %d (hash %s) but the replay checkpoint recorded seq %d (hash %s): entries may have been removed (possible truncation). Run 'agentguard audit verify'.",
+			log.Printf("WARNING audit: %s ends at seq %d (hash %s) but the replay checkpoint recorded seq %d (hash %s): entries may have been removed (possible truncation). Run 'vanzik audit verify'.",
 				path, t.seq, t.hash, cp.LastSeq, cp.LastHash)
 			metrics.IncAuditSealTailMismatch()
 		}

@@ -1,5 +1,5 @@
 // Package v040_to_v041 adds the schema-v2 `_meta` header to a pre-existing
-// v0.4.0 audit log. It is the first real migration shipped by AgentGuard and
+// v0.4.0 audit log. It is the first real migration shipped by Vanzik and
 // exists primarily to de-risk a rollback: the pre-migration bytes are
 // preserved at `<audit-log>.v040-backup` so an operator who downgrades to
 // v0.4.0 can mv the backup back over the live file and resume.
@@ -30,8 +30,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/migrate"
+	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/migrate"
 )
 
 // logOrDefault is the local analogue of env.logger() — the framework keeps
@@ -70,7 +70,7 @@ func (*Migration) FromVersion() string { return "1" }
 // ToVersion is the on-disk version produced by a successful run.
 func (*Migration) ToVersion() string { return fmt.Sprintf("%d", audit.CurrentSchemaVersion) }
 
-// Description is the one-line summary shown in `agentguard migrate --list`.
+// Description is the one-line summary shown in `vanzik migrate --list`.
 func (*Migration) Description() string {
 	return "Add schema-v2 _meta header to an existing audit log (preserves a .v040-backup rollback copy)"
 }

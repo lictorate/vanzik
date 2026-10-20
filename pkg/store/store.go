@@ -1,4 +1,4 @@
-// Package store is AgentGuard's durable, multi-tenant persistence tier —
+// Package store is Vanzik's durable, multi-tenant persistence tier —
 // the "cold path" behind the in-memory fast path. pkg/persist owns the
 // write-behind bridge between the two.
 //
@@ -20,8 +20,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/Caua-ferraz/AgentGuard/pkg/audit"
-	"github.com/Caua-ferraz/AgentGuard/pkg/policy"
+	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
 // ErrTenantRequired is returned by a mutating Store method when a record's

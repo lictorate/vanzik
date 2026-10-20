@@ -154,7 +154,7 @@ func TestBuildRefusalRich_OpenAIApproval(t *testing.T) {
 	if !strings.Contains(content, "ap_abc") {
 		t.Errorf("content missing approval id: %q", content)
 	}
-	if !strings.Contains(content, "_meta.dev.agentguard/approval_id") {
+	if !strings.Contains(content, "_meta.dev.vanzik/approval_id") {
 		t.Errorf("content missing round-trip hint: %q", content)
 	}
 }
@@ -333,9 +333,9 @@ func TestBuildRefusalMessage_NoRuleFallback(t *testing.T) {
 	if got == "" {
 		t.Errorf("empty refusal message")
 	}
-	// Should still mention denial / AgentGuard regardless of empty fields.
-	if !strings.Contains(got, "AgentGuard") {
-		t.Errorf("message missing AgentGuard prefix: %q", got)
+	// Should still mention denial / Vanzik regardless of empty fields.
+	if !strings.Contains(got, "Vanzik") {
+		t.Errorf("message missing Vanzik prefix: %q", got)
 	}
 	if !strings.Contains(got, "denied") {
 		t.Errorf("message should say denied: %q", got)
@@ -350,7 +350,7 @@ func TestBuildRefusalMessage_ApprovalIncludesAllFields(t *testing.T) {
 		ApprovalID:       "ap_1",
 		ApprovalURL:      "https://x.example/dashboard?id=ap_1",
 	})
-	for _, want := range []string{"paused", "human gate", "require_approval:shell:*", "ap_1", "https://x.example/dashboard?id=ap_1", "_meta.dev.agentguard/approval_id"} {
+	for _, want := range []string{"paused", "human gate", "require_approval:shell:*", "ap_1", "https://x.example/dashboard?id=ap_1", "_meta.dev.vanzik/approval_id"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("approval message missing %q: %q", want, got)
 		}

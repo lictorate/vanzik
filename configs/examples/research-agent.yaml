@@ -3,7 +3,7 @@
 # Webhook URLs and secrets in this file are placeholders.
 # Replace any https://example.invalid/... URL before deploying.
 # ============================================================
-# AgentGuard Policy: Research Agent
+# Vanzik Policy: Research Agent
 # Permissive read access, strict write controls.
 #
 # See docs/POLICY_REFERENCE.md for the full schema. Evaluation per scope
@@ -82,7 +82,7 @@ rules:
         paths: ["./research/**", "./output/**", "/tmp/**"]
     deny:
       # `~/**` is matched literally — `~` is NOT expanded to the home dir
-      # by AgentGuard. Agents passing an expanded path like `/home/alice/foo`
+      # by Vanzik. Agents passing an expanded path like `/home/alice/foo`
       # won't hit this rule; use `/home/**` or `/root/**` instead.
       - action: write
         paths: ["/etc/**", "~/**"]

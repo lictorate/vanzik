@@ -1,7 +1,7 @@
 """
-AgentGuard LLM API Proxy — CrewAI example.
+Vanzik LLM API Proxy — CrewAI example.
 
-Drives a real CrewAI Crew through the AgentGuard LLM API Proxy by
+Drives a real CrewAI Crew through the Vanzik LLM API Proxy by
 passing a CrewAI `LLM(...)` instance with `base_url=` set to the proxy.
 CrewAI delegates LLM calls to LiteLLM under the hood; LiteLLM honors
 the OpenAI-compatible base URL the same way the raw `openai` SDK does.
@@ -20,21 +20,21 @@ Setup:
                                                     # also reads
                                                     # OPENAI_BASE_URL
 
-Run AgentGuard side (two terminals):
+Run Vanzik side (two terminals):
 
   # Terminal 1
-  agentguard server \\
+  vanzik server \\
       --policy configs/default.yaml \\
       --dashboard \\
       --watch \\
-      --api-key "$AGENTGUARD_API_KEY"
+      --api-key "$VANZIK_API_KEY"
 
   # Terminal 2
-  agentguard-llm-proxy \\
+  vanzik-llm-proxy \\
       --listen 127.0.0.1:8081 \\
       --policy configs/default.yaml \\
       --guard-url http://127.0.0.1:8080 \\
-      --api-key "$AGENTGUARD_API_KEY"
+      --api-key "$VANZIK_API_KEY"
 
 Then run this script:
   python examples/crewai-agent-config.py
@@ -47,7 +47,7 @@ Expected behaviour:
     final answer as the refusal text.
   - The dashboard shows the decision live, transport chip
     `llm_api_proxy`. Filter the audit log:
-        agentguard audit --transport llm_api_proxy --limit 20
+        vanzik audit --transport llm_api_proxy --limit 20
 """
 
 from __future__ import annotations
@@ -135,7 +135,7 @@ def main() -> None:
     crew = Crew(agents=[file_lister], tasks=[inspect_task], verbose=True)
 
     # `kickoff()` runs the agent loop. Each tool call the agent emits
-    # passes through the AgentGuard proxy and is policy-gated; the
+    # passes through the Vanzik proxy and is policy-gated; the
     # final answer is whatever the agent reaches after the gated turns
     # complete.
     result = crew.kickoff()

@@ -238,7 +238,7 @@ func TestAudit_HappyStreamIsNotDoubleAudited(t *testing.T) {
 		"data: [DONE]\n\n"
 
 	got, spy := runStreamWithAudit(t, "openai", stream, 0)
-	if strings.Contains(got, "AgentGuard denied") {
+	if strings.Contains(got, "Vanzik denied") {
 		t.Fatalf("a healthy stream was refused: %q", got)
 	}
 	if rec := spy.recorded(); len(rec) != 0 {

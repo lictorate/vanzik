@@ -1,4 +1,6 @@
-# Binaries (anchor root-only — the unanchored form matched cmd/agentguard/ as a path component)
+# Binaries (anchor root-only — the unanchored form matched cmd/vanzik/ as a path component)
+/vanzik
+# ...and the binary a checkout from before the rename (2.0) may still have
 /agentguard
 *.exe
 *.dll

@@ -1,8 +1,8 @@
-module github.com/Caua-ferraz/AgentGuard
+module lictorate.com/vanzik/v2
 
 go 1.26.0
 
-// Pin the build toolchain to the patched stdlib release. Every AgentGuard
+// Pin the build toolchain to the patched stdlib release. Every Vanzik
 // vulnerability to date has come from the stdlib, not a module dependency, so
 // this line is the project's single most load-bearing security control — and
 // `go test ./...` will NOT tell you when it goes stale. Only govulncheck does.
@@ -18,7 +18,7 @@ go 1.26.0
 //   GO-2026-5026  x/net/idna   ASCII-only Punycode labels not rejected
 //   GO-2026-5942  net          panic parsing an invalid SVCB/HTTPS RR
 //   GO-2026-6091  html/template JS regexp context tracking
-// The first six were reachable from AgentGuard's own call graph on go1.26.5;
+// The first six were reachable from Vanzik's own call graph on go1.26.5;
 // all eight are fixed as of go1.26.6.
 //
 // go1.26.9 adds the fix for GO-2026-6617 (net/http: HTTP/2 server crash from
