@@ -23,7 +23,7 @@ type Report struct {
 	// GeneratedAt is when the report was made (UTC).
 	GeneratedAt time.Time `json:"generated_at"`
 	// VanzikVersion is the version of the binary that made the report,
-	// e.g. "1.4.0 (abc1234)".
+	// e.g. "2.0.0 (abc1234)".
 	VanzikVersion string `json:"vanzik_version"`
 	Period        Period `json:"period"`
 	Source        Source `json:"source"`

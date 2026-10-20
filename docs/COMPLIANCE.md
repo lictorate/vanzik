@@ -172,7 +172,7 @@ only if that ever stops being true. Times are RFC 3339 UTC.
 |---|---|
 | `format_version` | `1` |
 | `generated_at` | When the report was made |
-| `vanzik_version` | e.g. `"1.4.0 (abc1234)"` |
+| `vanzik_version` | e.g. `"2.0.0 (abc1234)"` |
 | `period.since`, `period.until` | The period; `since` inclusive, `until` exclusive |
 | `source.mode` | `"file"` or `"server"` |
 | `source.audit_log`, `source.files`, `source.bad_lines`, `source.read_errors` | Files mode: the live file, the files read (oldest first), lines that are not entries, files that end early |

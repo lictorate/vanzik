@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [2.0.0] — unreleased
+## [2.0.0] — 2026-10-20
 
 > **AgentGuard is now Vanzik.** 2.0.0 renames the project, and that is the whole of its breaking change: every name that said AgentGuard says Vanzik, with no alias for the old one. The policy schema, the `/v1/*` wire protocol, the audit log format and seal, the store and every command's flags are as in 1.4.0, so policies, audit logs and databases carry over unchanged.
 >
