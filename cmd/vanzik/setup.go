@@ -665,6 +665,13 @@ func (s *setup) printDetails() (bool, int) {
 		s.note("No key in the file: the gateway reads it from " + s.m.keyPath() + ".")
 	}
 	s.note("Cursor, Cline, Continue and Zed: https://github.com/lictorate/vanzik/tree/v" + version + "/examples")
+
+	// Wait here so the details stay on screen until the user is done with
+	// them, instead of scrolling up under the status and the menu.
+	s.ui.Printf("\n")
+	if _, err := s.ui.Select("Connection details", []tui.Option{{Label: "Back to the menu"}}, 0); errors.Is(err, tui.ErrQuit) {
+		return true, 0
+	}
 	return back()
 }
 
