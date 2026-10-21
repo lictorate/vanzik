@@ -117,7 +117,7 @@ jobs:
         with:
           persist-credentials: false
       - if: needs.release.outputs.mode == 'local'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: mirror
           path: mirror
@@ -142,7 +142,7 @@ jobs:
         with:
           persist-credentials: false
       - if: needs.release.outputs.mode == 'local'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: mirror
           path: mirror
@@ -173,7 +173,7 @@ jobs:
         with:
           persist-credentials: false
       - if: needs.release.outputs.mode == 'local'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: mirror
           path: mirror
