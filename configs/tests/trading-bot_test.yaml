@@ -6,18 +6,18 @@ policy: ../examples/trading-bot.yaml
 
 tests:
   # --- Network ---
-  # The policy's `domain: "*"` deny runs before its allow list, so every
-  # request that carries a domain is denied, the listed APIs included. The
-  # policy's header comment explains this; these cases pin it down.
-  - name: the catch-all deny also blocks a listed API
+  - name: a listed API is allowed
     request: {scope: network, domain: api.alpaca.markets, agent_id: bot}
-    expect: DENY
-    expect_rule: "deny:network:*"
+    expect: ALLOW
 
-  - name: an unlisted host is denied
+  - name: a listed API is allowed by URL alone
+    request: {scope: network, url: "https://api.alpaca.markets/v2/orders", agent_id: bot}
+    expect: ALLOW
+
+  - name: an unlisted host falls through to the default deny
     request: {scope: network, domain: api.example.com, agent_id: bot}
     expect: DENY
-    expect_reason_contains: "whitelisted financial APIs"
+    expect_reason_contains: "default deny"
 
   # --- Shell ---
   - name: a market data script is allowed
