@@ -339,7 +339,7 @@ When the dual-check fires, the gateway projects the tool-call arguments into the
 
 | Mapped scope | Argument projection |
 |---|---|
-| `filesystem` | `Path` ← first non-empty of `path`/`file_path`/`filepath`/`target_path`/`destination`/`src`/`dst`. `Action` ← inferred from tool-name verb (`read`/`write`/`delete`). |
+| `filesystem` | `Path` ← first non-empty of `path`/`file_path`/`filepath`/`target_path`/`destination`/`src`/`dst`. `Action` ← inferred from tool-name verb (`read`/`write`/`delete`). Search and tree tools (`search_files`, `directory_tree`) are reads. A `paths` array argument (e.g. `read_multiple_files`) gets one filesystem check per entry, and every one must allow. |
 | `network` | `URL` ← `url` arg. `Domain` ← the URL's host when there is a `url` arg (empty for a relative or malformed URL, so the call is denied); otherwise the `domain`/`host`/`hostname` arg. **(v1.2)** A `domain`/`host`/`hostname` arg no longer overrides the URL's host: the model writes the arguments and could pair an allow-listed domain with a URL on another host. |
 | `browser` | `URL` + `Domain` as for network; `Action` ← un-prefixed tool name. |
 | `shell` | `Command` ← first non-empty of `command`/`cmd`/`script`. Falls back to `<ns>:<tool>` + serialised `args`. |
