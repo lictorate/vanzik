@@ -3,6 +3,7 @@ package policy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -18,16 +19,22 @@ import (
 // has a separate branch for each and both must retain last-good.
 // lists counts ListPolicyTenants calls, which is one refresh pass, so the
 // auto-refresh tests can assert the ticker actually fires and actually stops.
+// gets counts GetPolicyYAML calls per tenant, for the negative-cache tests.
 type fakeSource struct {
 	mu       sync.Mutex
 	policies map[string][]byte
 	loadErrs map[string]error
 	lists    int
+	gets     map[string]int
 }
 
 func (f *fakeSource) GetPolicyYAML(_ context.Context, tenantID string) ([]byte, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.gets == nil {
+		f.gets = map[string]int{}
+	}
+	f.gets[tenantID]++
 	if err, bad := f.loadErrs[tenantID]; bad {
 		return nil, false, err
 	}
@@ -69,6 +76,13 @@ func (f *fakeSource) listCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.lists
+}
+
+// getCount reports how many times GetPolicyYAML was called for tenant.
+func (f *fakeSource) getCount(tenant string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.gets[tenant]
 }
 
 func shellAllow(name, pattern string) []byte {
@@ -450,4 +464,79 @@ func TestEngine_PerTenantConcurrent(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+// TestUnknownTenantDoesNotHitStoreTwice is the F28 regression test: with
+// auto-refresh running, an unregistered tenant id is remembered until the
+// next Refresh, so repeated checks against it read the store once.
+func TestUnknownTenantDoesNotHitStoreTwice(t *testing.T) {
+	base := NewStaticPolicyProvider(&Policy{Version: "1", Name: "local"})
+	src := &fakeSource{policies: map[string][]byte{"acme": shellAllow("acme", "deploy *")}}
+	p, err := NewMultiTenantProvider(base, src)
+	if err != nil {
+		t.Fatalf("NewMultiTenantProvider: %v", err)
+	}
+	defer p.Close()
+	defer p.StartAutoRefresh(time.Hour)()
+
+	for i := 0; i < 3; i++ {
+		if _, err := p.Get("ghost"); err != ErrTenantNotFound {
+			t.Fatalf("Get(ghost) #%d err = %v, want ErrTenantNotFound", i, err)
+		}
+	}
+	if n := src.getCount("ghost"); n != 1 {
+		t.Errorf("store reads for ghost = %d, want 1", n)
+	}
+
+	// Registering the tenant becomes visible at the next Refresh.
+	src.set("ghost", shellAllow("ghost", "ls *"))
+	if err := p.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if pol, err := p.Get("ghost"); err != nil || pol.Name != "ghost" {
+		t.Errorf("Get(ghost) after Refresh = %v, %v; want name=ghost", pol, err)
+	}
+}
+
+// TestUnknownTenantCacheBounded: the negative cache never grows past
+// maxUnknownTenants; it is emptied when full.
+func TestUnknownTenantCacheBounded(t *testing.T) {
+	base := NewStaticPolicyProvider(&Policy{Version: "1", Name: "local"})
+	p, err := NewMultiTenantProvider(base, &fakeSource{policies: map[string][]byte{}})
+	if err != nil {
+		t.Fatalf("NewMultiTenantProvider: %v", err)
+	}
+	defer p.Close()
+	defer p.StartAutoRefresh(time.Hour)()
+
+	for i := 0; i <= maxUnknownTenants; i++ {
+		_, _ = p.Get(fmt.Sprintf("ghost-%d", i))
+	}
+	p.mu.RLock()
+	n := len(p.unknown)
+	p.mu.RUnlock()
+	if n > maxUnknownTenants {
+		t.Errorf("negative cache holds %d ids, bound is %d", n, maxUnknownTenants)
+	}
+}
+
+// TestUnknownTenantNotCachedWithoutAutoRefresh: with no periodic Refresh a
+// cached miss would hide a tenant registered later until restart, so every
+// lookup still reads the store and onboarding stays immediate.
+func TestUnknownTenantNotCachedWithoutAutoRefresh(t *testing.T) {
+	base := NewStaticPolicyProvider(&Policy{Version: "1", Name: "local"})
+	src := &fakeSource{policies: map[string][]byte{}}
+	p, err := NewMultiTenantProvider(base, src)
+	if err != nil {
+		t.Fatalf("NewMultiTenantProvider: %v", err)
+	}
+	defer p.Close()
+
+	if _, err := p.Get("late"); err != ErrTenantNotFound {
+		t.Fatalf("Get(late) err = %v, want ErrTenantNotFound", err)
+	}
+	src.set("late", shellAllow("late", "ls *"))
+	if pol, err := p.Get("late"); err != nil || pol.Name != "late" {
+		t.Errorf("Get(late) after put = %v, %v; want name=late", pol, err)
+	}
 }

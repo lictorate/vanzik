@@ -139,12 +139,16 @@ criterion is met.
 - The report counts what the audit log recorded. An action that never
   reached Vanzik (an agent not wired to it, a tool outside the
   gateway) is not in it.
-- The audit log has an entry when an action is sent for approval, and
-  another only when the agent comes back with the approval id after a
-  person decided. It does not record the decision itself, who made it, or
-  a request that timed out. "No outcome on record" covers requests that
+- The audit log has an entry when an action is sent for approval, one
+  when a person approves or denies it (`matched_rule:
+  approval:resolved:<via>`, with how the call was authenticated and the
+  caller's address, not a named person), and another when the agent comes
+  back with the approval id. It does not record a request that timed out.
+  The report's Approved and Denied counts come from the entries written
+  when the agent comes back, so "No outcome on record" covers requests that
   timed out, were decided but not retried, were decided after the period,
-  or are still pending.
+  or are still pending. The resolution entries count in the decision
+  totals, and a deny's rule shows among the deny rules.
 - The policy SHA-256 is of the file when the report is made. The log does
   not record which version of the policy made each decision; keep the
   policy in version control and match the hash to a commit.
@@ -164,7 +168,7 @@ criterion is met.
 
 ## JSON shape
 
-`--output json` prints one object. Its shape is stable for 1.x: fields are
+`--output json` prints one object. Its shape is stable for 2.x: fields are
 only added, never renamed or removed. `format_version` (now `1`) changes
 only if that ever stops being true. Times are RFC 3339 UTC.
 

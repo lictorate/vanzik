@@ -784,6 +784,15 @@ func (s *Server) handleCheck(w http.ResponseWriter, r *http.Request) {
 					Reason:   err.Error(),
 					Rule:     "deny:ratelimit:" + req.Scope,
 				}
+				// on_deny covers rate-limit denies too, like every other DENY.
+				if s.cfg.Notifier != nil {
+					s.cfg.Notifier.Send(notify.Event{
+						Type:      "denied",
+						Timestamp: time.Now().UTC(),
+						Request:   req,
+						Result:    result,
+					})
+				}
 				s.logAndRespond(w, req, result, start, tenantID)
 				return
 			}
@@ -1144,6 +1153,37 @@ func writeResolveError(w http.ResponseWriter, err error) {
 	http.Error(w, err.Error(), http.StatusNotFound)
 }
 
+// logResolution writes the audit entry for a human approve/deny: the
+// original request, the decision, rule "approval:resolved:<via>", and the
+// peer address in the reason. pa is nil for an idempotent repeat, which
+// writes nothing, so each approval id gets one resolution entry.
+func (s *Server) logResolution(pa *PendingAction) {
+	if pa == nil {
+		return
+	}
+	entry := audit.Entry{
+		Timestamp: pa.ResolvedAt,
+		AgentID:   pa.Request.AgentID,
+		SessionID: pa.Request.SessionID,
+		Request:   pa.Request,
+		Result: policy.CheckResult{
+			SchemaVersion: SchemaVersionV1,
+			Decision:      policy.Decision(pa.Decision),
+			Reason:        fmt.Sprintf("approval %s resolved %s by human via %s from %s", pa.ID, pa.Decision, pa.ResolvedVia, pa.ResolvedFrom),
+			Rule:          "approval:resolved:" + pa.ResolvedVia,
+			ApprovalID:    pa.ID,
+		},
+		Transport: transportFromRequest(pa.Request),
+	}
+	// Same tenant normalization as logAndRespond: "local" is stored as "".
+	if pa.TenantID != "" && pa.TenantID != policy.LocalTenantID {
+		entry.TenantID = pa.TenantID
+	}
+	if err := s.cfg.Logger.Log(entry); err != nil {
+		log.Printf("Audit log error: %v", err)
+	}
+}
+
 // handleApprove approves a pending action.
 func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -1157,10 +1197,12 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	via, from := resolutionActor(r)
-	if err := s.approval.ResolveWithActor(id, policy.Allow, TenantIDFromContext(r.Context()), via, from); err != nil {
+	pa, err := s.approval.resolve(id, policy.Allow, TenantIDFromContext(r.Context()), via, from)
+	if err != nil {
 		writeResolveError(w, err)
 		return
 	}
+	s.logResolution(pa)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "approved", "id": id})
@@ -1179,10 +1221,12 @@ func (s *Server) handleDeny(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	via, from := resolutionActor(r)
-	if err := s.approval.ResolveWithActor(id, policy.Deny, TenantIDFromContext(r.Context()), via, from); err != nil {
+	pa, err := s.approval.resolve(id, policy.Deny, TenantIDFromContext(r.Context()), via, from)
+	if err != nil {
 		writeResolveError(w, err)
 		return
 	}
+	s.logResolution(pa)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "denied", "id": id})
@@ -1862,6 +1906,14 @@ func (q *ApprovalQueue) Resolve(id string, decision policy.Decision, tenantID st
 // OPPOSITE decision returns *ApprovalConflictError and mutates nothing.
 // via/from stamp how the resolution arrived (see PendingAction.ResolvedVia).
 func (q *ApprovalQueue) ResolveWithActor(id string, decision policy.Decision, tenantID, via, from string) error {
+	_, err := q.resolve(id, decision, tenantID, via, from)
+	return err
+}
+
+// resolve is ResolveWithActor that also returns a copy of the entry when
+// this call made the resolution, and nil for an idempotent repeat. The
+// HTTP handlers use it to write exactly one audit entry per resolution.
+func (q *ApprovalQueue) resolve(id string, decision policy.Decision, tenantID, via, from string) (*PendingAction, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -1869,14 +1921,14 @@ func (q *ApprovalQueue) ResolveWithActor(id string, decision policy.Decision, te
 	if !ok || !tenantsMatch(pa.TenantID, tenantID) {
 		// A mismatched tenant is reported as "not found" (not 403) so a tenant
 		// cannot probe for the existence of another tenant's approval IDs.
-		return fmt.Errorf("pending action %s not found", id)
+		return nil, fmt.Errorf("pending action %s not found", id)
 	}
 
 	if pa.Resolved {
 		if pa.Decision == string(decision) {
-			return nil // idempotent repeat; original stamp and timestamp stand
+			return nil, nil // idempotent repeat; original stamp and timestamp stand
 		}
-		return &ApprovalConflictError{ID: id, Existing: pa.Decision}
+		return nil, &ApprovalConflictError{ID: id, Existing: pa.Decision}
 	}
 
 	pa.Resolved = true
@@ -1897,7 +1949,8 @@ func (q *ApprovalQueue) ResolveWithActor(id string, decision policy.Decision, te
 		Result:    policy.CheckResult{Decision: decision, Reason: "manually " + strings.ToLower(string(decision))},
 	})
 
-	return nil
+	cp := *pa
+	return &cp, nil
 }
 
 // List returns the unresolved pending actions owned by tenantID. The legacy
@@ -2398,7 +2451,7 @@ var dashboardHTML = `<!DOCTYPE html>
     <div class="stat-card"><div class="label">Total Checks</div><div class="value" id="stat-total">0</div></div>
     <div class="stat-card allowed"><div class="label">Allowed</div><div class="value" id="stat-allowed">0</div></div>
     <div class="stat-card denied"><div class="label">Denied</div><div class="value" id="stat-denied">0</div></div>
-    <div class="stat-card pending"><div class="label">Pending Approval</div><div class="value" id="stat-approvals">0</div></div>
+    <div class="stat-card pending"><div class="label">Pending Approval</div><div class="value" id="stat-pending">0</div></div>
   </div>
   <div class="content" id="live-view">
     <div class="feed">
@@ -2515,15 +2568,16 @@ var dashboardHTML = `<!DOCTYPE html>
         document.getElementById('stat-total').textContent = s.total;
         document.getElementById('stat-allowed').textContent = s.allowed;
         document.getElementById('stat-denied').textContent = s.denied;
-        document.getElementById('stat-approvals').textContent = s.approvals;
       }).catch(() => {});
     }
     refreshStats();
     setInterval(refreshStats, 5000);
 
-    // Load pending
+    // Load pending. The "Pending Approval" card counts this list, not the
+    // lifetime /api/stats approvals total.
     function refreshPending() {
       agFetch('/api/pending').then(r => r.json()).then(items => {
+        document.getElementById('stat-pending').textContent = items ? items.length : 0;
         if (!items || items.length === 0) {
           pendingEl.innerHTML = '<div class="empty">None</div>';
           return;

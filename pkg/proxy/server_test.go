@@ -2945,3 +2945,19 @@ func TestMatchesOriginalRequest(t *testing.T) {
 		})
 	}
 }
+
+// TestDashboard_PendingCardCountsPendingList is the F77 regression test: the
+// "Pending Approval" card shows the length of /api/pending, not the
+// lifetime /api/stats approvals counter.
+func TestDashboard_PendingCardCountsPendingList(t *testing.T) {
+	card := `<div class="label">Pending Approval</div><div class="value" id="stat-pending">0</div>`
+	if !strings.Contains(dashboardHTML, card) {
+		t.Errorf("dashboardHTML lacks the pending card %q", card)
+	}
+	if !strings.Contains(dashboardHTML, "getElementById('stat-pending').textContent = items ? items.length : 0;") {
+		t.Error("pending card is not set from the /api/pending list length")
+	}
+	if strings.Contains(dashboardHTML, "s.approvals") {
+		t.Error("dashboard still renders the lifetime /api/stats approvals counter")
+	}
+}

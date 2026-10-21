@@ -4,13 +4,15 @@ This file is the single source of truth for features that are on the way out of 
 
 ## How this table is used
 
-- **feature** — a stable identifier, also used as the key passed to `deprecation.Warn(...)` and exposed via `vanzik_deprecations_used_total{feature="..."}`.
+- **feature** — a stable identifier, also used as the key passed to `deprecation.Warn(...)` and exposed via `vanzik_deprecations_used_total{feature="..."}` for features that call it.
 - **deprecated-in** — the release that started emitting the warning.
 - **removal-target** — the release where the feature becomes an error or is removed. Do not slip this silently; if the date moves, update this file and say why.
 - **migration-path** — what users should do instead. Must link to code, docs, or a config snippet.
 - **owner** — person or area responsible for following through on removal.
 
 Before the removal release ships, check `vanzik_deprecations_used_total` in scraped metrics. If anyone is still using the feature, extend the timeline explicitly in this file — do not remove silently.
+
+The two active entries below predate this convention: in 2.x neither `audit.migration.v040_to_v041` nor `audit.backup.v040` calls `deprecation.Warn`, so they log no warning and `vanzik_deprecations_used_total` stays at 0 for them whether or not they run. The metric cannot gate their removal; check for headerless v1 audit files and `.v040-backup` files instead.
 
 ## Active deprecations
 

@@ -63,9 +63,9 @@ Sections you'll see:
 
 | Section | Source | Purpose |
 |---|---|---|
-| **Stats bar** | `/api/stats` + SSE | `checks / allowed / denied / approvals / pending`. Updates live on each `check` event. |
+| **Stats bar** | `/api/stats`, `/api/pending` + SSE | Four cards: **Total Checks**, **Allowed**, **Denied** (from `/api/stats`, every 5 s and on each SSE event) and **Pending Approval** (the number of entries in `/api/pending`, refreshed on load, on each `REQUIRE_APPROVAL` or `resolved` event, and after a dashboard approve/deny). The lifetime approval-request count stays in `/api/stats` `approvals` but is not shown. |
 | **Pending Approvals** | `/api/pending` + SSE | Each entry shows scope, command/path/domain, agent, timestamp. Approve / Deny buttons. |
-| **Audit** | `/v1/audit?order=desc&limit=200` | Most recent decisions. No auto-refresh — reload the page for a newer slice. |
+| **Audit** | `/v1/audit?order=desc&limit=200` + SSE | Most recent decisions. SSE events are prepended to the feed live; only the historical slice is loaded once, so reload the page to re-read it. |
 | **LIVE badge** | EventSource state | Green when `EventSource.readyState === OPEN`. |
 | **Sessions** tab | `/v1/sessions`, `/v1/sessions/{id}` | **(v1.4)** Sessions and a replay of each. See [Sessions view](#sessions-view). |
 
@@ -139,7 +139,7 @@ proxy:
     ttl: "8h"
 ```
 
-Reload the policy (send SIGHUP or touch the file with `--watch`) and new logins honor the new TTL. Existing sessions keep their original expiry.
+Restart the server to apply a new TTL: it is read at startup, and a policy reload (`--watch`) does not change it. There is no SIGHUP handler, so SIGHUP stops the server rather than reloading it. Sessions are held in memory, so the restart also signs every dashboard user out.
 
 ---
 
@@ -162,7 +162,7 @@ User-controlled strings (commands, paths, reasons) are rendered via `textContent
 
 ## What the dashboard does NOT do
 
-- **It does not auto-refresh the audit tab.** SSE delivers real-time check events; audit listing requires a page reload for the full historical window.
+- **It does not re-read the audit history.** SSE events are prepended to the audit feed live; the historical slice loaded at page open needs a page reload to be fetched again.
 - **It does not let you edit policies.** Policy changes happen in YAML; the server reloads the file when it changes.
 - **It does not show `/metrics`.** Use Prometheus/Grafana.
 - **It does not provide user management.** There is one API key; everyone who has it has full access.

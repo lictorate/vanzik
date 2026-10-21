@@ -105,7 +105,7 @@ Content-Type: application/json
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `agent_id` | string | no (strongly recommended) | Keys per-agent overrides, rate-limit buckets, and audit filtering. Omitting it is not rejected — the policy just evaluates without per-agent context. |
-| `scope` | string | yes* | `shell`, `filesystem`, `network`, `browser`, `cost`, `data`, or any custom string. *Not enforced with a `400` — an empty scope matches no rules and falls through to default deny (`200`). |
+| `scope` | string | yes* | `shell`, `filesystem`, `network`, `browser`, `cost`, `data`, `mcp_tool`, or any custom string. *Not enforced with a `400` — an empty scope matches no rules and falls through to default deny (`200`). |
 | `command` | string | — | For `shell` scope (required to match `pattern`). |
 | `action` | string | — | For `filesystem` scope (required alongside `path`). |
 | `path` | string | — | For `filesystem`. Normalized with `filepath.Clean + ToSlash`. |
@@ -136,7 +136,7 @@ Body is limited to `MaxRequestBodyBytes` (default 1 MB; configurable via `proxy.
 | `decision` | always — `ALLOW`, `DENY`, or `REQUIRE_APPROVAL`. |
 | `reason` | always. |
 | `matched_rule` | always except the default-deny fall-through, where it is omitted. |
-| `approval_id` / `approval_url` | only when `decision == REQUIRE_APPROVAL`; omitted otherwise. |
+| `approval_id` / `approval_url` | `approval_url` only when `decision == REQUIRE_APPROVAL`. `approval_id` then too, and also on the `ALLOW` / `DENY` a replayed approval returns (`matched_rule` `allow:approved` / `deny:approved`); omitted otherwise. |
 
 ### Response headers
 
@@ -165,7 +165,7 @@ Rate-limit denials return `200` with `decision: "DENY"` and `matched_rule: "deny
 
 Tenant-aware mirrors live at `POST /v1/t/{tenant}/approve/{id}` and `POST /v1/t/{tenant}/deny/{id}`. Auth posture and request body are identical.
 
-Resolve a pending approval. Resolution is **write-once**: the first decision stands forever. Re-sending the *same* decision returns `200` (idempotent no-op, safe for retried requests); sending the *opposite* decision returns `409` with `{"error":"already resolved","id":"ap_…","status":"approved"|"denied"}` and mutates nothing. A wrong decision is corrected by re-running the action through `/v1/check` (fresh approval id) — never by editing history. Each resolution also records how it arrived (`resolved_via`: `bearer` / `session` / `open`, plus the peer host) for incident reconstruction.
+Resolve a pending approval. Resolution is **write-once**: the first decision stands forever. Re-sending the *same* decision returns `200` (idempotent no-op, safe for retried requests); sending the *opposite* decision returns `409` with `{"error":"already resolved","id":"ap_…","status":"approved"|"denied"}` and mutates nothing. A wrong decision is corrected by re-running the action through `/v1/check` (fresh approval id) — never by editing history. Each resolution also records how it arrived (`resolved_via`: `bearer` / `session` / `open`, plus the peer host) for incident reconstruction, and the first one writes an audit entry with `matched_rule: approval:resolved:<via>`.
 
 ### Request (Bearer)
 
@@ -254,11 +254,11 @@ Query the audit log.
 | `parent_session_id` | string | — | **(v1.4)** Exact match on `request.parent_session_id`: the calls of the sessions started by that session. |
 | `since` | RFC 3339 time | — | **(v1.4)** Entries at or after this time (inclusive). Any time zone; compared as an instant. In a query string a `+` means a space, so write a positive offset as `%2B` (`2026-10-14T11:00:00%2B02:00`); an unencoded `+` before the offset is still read as one. The same applies to every `since`/`until` below. |
 | `until` | RFC 3339 time | — | **(v1.4)** Entries before this time (exclusive). `until` before `since`, or a value that is not RFC 3339, → `400`. |
-| `transport` | string | — | Filter on the `Entry.Transport` audit field. Recognised values: `sdk`, `mcp_gateway`, `llm_api_proxy`, and the coding-agent hooks' `claude_code`, `cursor`, `gemini_cli`, `codex_cli`. Pre-v0.5 entries have no transport tag and are excluded when this filter is set. |
+| `transport` | string | — | Filter on the `Entry.Transport` audit field. Recognised values: `sdk`, `mcp_gateway`, `llm_api_proxy`, and the coding-agent hooks' `claude_code`, `cursor`, `gemini_cli`, `codex_cli`. Pre-v0.5 entries have no transport tag and count as `sdk`: `transport=sdk` matches them, any other value leaves them out. |
 
 ### Response
 
-Array of entries (JSON Lines rows as JSON objects). On a sealed log the entries also carry `seq`, `prev_hash` and `hash` ([FILE_FORMATS](FILE_FORMATS.md#current-on-disk-artifacts)):
+Array of entries (JSON Lines rows as JSON objects). A query that matches nothing returns `null`, not `[]`; treat both as an empty result. On a sealed log the entries also carry `seq`, `prev_hash` and `hash` ([FILE_FORMATS](FILE_FORMATS.md#current-on-disk-artifacts)):
 
 ```json
 [
@@ -554,7 +554,7 @@ Prometheus text exposition format. Unauthenticated. Full metric catalog in [`OBS
 
 ```bash
 curl -s http://localhost:8080/metrics | head
-# HELP vanzik_checks_total Total number of policy check requests
+# HELP vanzik_checks_total Total number of /v1/check requests processed.
 # TYPE vanzik_checks_total counter
 # vanzik_checks_total 12034
 # ...
@@ -723,10 +723,10 @@ g = Guard("http://localhost:8080", agent_id="my-agent", tenant_id="")  # → /v1
 import { Vanzik } from "@lictorate/vanzik";
 
 // Default — legacy /v1/... URLs.
-const g = new Vanzik({ baseUrl: "http://localhost:8080", agentId: "my-agent" });
+const local = new Vanzik({ baseUrl: "http://localhost:8080", agentId: "my-agent" });
 
 // Tenant-aware — /v1/t/acme/... URLs.
-const g = new Vanzik({
+const acme = new Vanzik({
   baseUrl: "http://localhost:8080",
   agentId: "my-agent",
   tenantId: "acme",
