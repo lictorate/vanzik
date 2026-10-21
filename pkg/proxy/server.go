@@ -2451,7 +2451,7 @@ var dashboardHTML = `<!DOCTYPE html>
     <div class="stat-card"><div class="label">Total Checks</div><div class="value" id="stat-total">0</div></div>
     <div class="stat-card allowed"><div class="label">Allowed</div><div class="value" id="stat-allowed">0</div></div>
     <div class="stat-card denied"><div class="label">Denied</div><div class="value" id="stat-denied">0</div></div>
-    <div class="stat-card pending"><div class="label">Pending Approval</div><div class="value" id="stat-approvals">0</div></div>
+    <div class="stat-card pending"><div class="label">Pending Approval</div><div class="value" id="stat-pending">0</div></div>
   </div>
   <div class="content" id="live-view">
     <div class="feed">
@@ -2568,15 +2568,16 @@ var dashboardHTML = `<!DOCTYPE html>
         document.getElementById('stat-total').textContent = s.total;
         document.getElementById('stat-allowed').textContent = s.allowed;
         document.getElementById('stat-denied').textContent = s.denied;
-        document.getElementById('stat-approvals').textContent = s.approvals;
       }).catch(() => {});
     }
     refreshStats();
     setInterval(refreshStats, 5000);
 
-    // Load pending
+    // Load pending. The "Pending Approval" card counts this list, not the
+    // lifetime /api/stats approvals total.
     function refreshPending() {
       agFetch('/api/pending').then(r => r.json()).then(items => {
+        document.getElementById('stat-pending').textContent = items ? items.length : 0;
         if (!items || items.length === 0) {
           pendingEl.innerHTML = '<div class="empty">None</div>';
           return;

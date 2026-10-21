@@ -63,7 +63,7 @@ Sections you'll see:
 
 | Section | Source | Purpose |
 |---|---|---|
-| **Stats bar** | `/api/stats` + SSE | `checks / allowed / denied / approvals / pending`. Updates live on each `check` event. |
+| **Stats bar** | `/api/stats`, `/api/pending` + SSE | Four cards: **Total Checks**, **Allowed**, **Denied** (from `/api/stats`, every 5 s and on each SSE event) and **Pending Approval** (the number of entries in `/api/pending`, refreshed on load, on each `REQUIRE_APPROVAL` or `resolved` event, and after a dashboard approve/deny). The lifetime approval-request count stays in `/api/stats` `approvals` but is not shown. |
 | **Pending Approvals** | `/api/pending` + SSE | Each entry shows scope, command/path/domain, agent, timestamp. Approve / Deny buttons. |
 | **Audit** | `/v1/audit?order=desc&limit=200` | Most recent decisions. No auto-refresh — reload the page for a newer slice. |
 | **LIVE badge** | EventSource state | Green when `EventSource.readyState === OPEN`. |
