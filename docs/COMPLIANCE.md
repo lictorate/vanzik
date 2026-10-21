@@ -168,7 +168,7 @@ criterion is met.
 
 ## JSON shape
 
-`--output json` prints one object. Its shape is stable for 1.x: fields are
+`--output json` prints one object. Its shape is stable for 2.x: fields are
 only added, never renamed or removed. `format_version` (now `1`) changes
 only if that ever stops being true. Times are RFC 3339 UTC.
 
