@@ -760,3 +760,63 @@ func TestHTTPPolicyClient_PlainDeny_NoLocalFallback(t *testing.T) {
 		t.Errorf("plain deny mode must not create the fallback file; stat err=%v", err)
 	}
 }
+
+func TestMappedActionRequests_OneCheckPerPath(t *testing.T) {
+	ars := mappedActionRequests(toolsCallReq("fs:read_multiple_files", map[string]interface{}{
+		"paths": []interface{}{"/tmp/a", "/etc/shadow", 7},
+	}), "filesystem")
+	var got []string
+	for _, ar := range ars {
+		if ar.Scope != "filesystem" || ar.Action != "read" {
+			t.Errorf("expected filesystem/read, got %s/%s", ar.Scope, ar.Action)
+		}
+		got = append(got, ar.Path)
+	}
+	if strings.Join(got, ",") != "/tmp/a,/etc/shadow," {
+		t.Errorf("expected one check per path (non-string → empty), got %q", got)
+	}
+
+	// A single path argument alongside the array is checked too.
+	ars = mappedActionRequests(toolsCallReq("fs:read_multiple_files", map[string]interface{}{
+		"path": "/tmp", "paths": []string{"/tmp/a"},
+	}), "filesystem")
+	if len(ars) != 2 || ars[0].Path != "/tmp" || ars[1].Path != "/tmp/a" {
+		t.Errorf("expected [/tmp /tmp/a], got %+v", ars)
+	}
+
+	// Other scopes ignore `paths`.
+	if ars := mappedActionRequests(toolsCallReq("x:run_command", map[string]interface{}{
+		"command": "ls", "paths": []interface{}{"/a", "/b"},
+	}), "shell"); len(ars) != 1 {
+		t.Errorf("expected one shell check, got %d", len(ars))
+	}
+}
+
+func TestHTTPPolicyClient_PathsArrayEveryPathMustAllow(t *testing.T) {
+	m := newMockGuardServer(t)
+	m.SetHandler(func(ar policy.ActionRequest) (int, policy.CheckResult, string) {
+		if ar.Scope == "filesystem" && strings.HasPrefix(ar.Path, "/etc/") {
+			return 200, policy.CheckResult{SchemaVersion: "v1", Decision: policy.Deny, Reason: "system path", Rule: "deny:filesystem:/etc/**"}, ""
+		}
+		return 200, policy.CheckResult{SchemaVersion: "v1", Decision: policy.Allow, Reason: "ok", Rule: "allow:mock"}, ""
+	})
+	pol := &policy.Policy{
+		Version: "1", Name: "x",
+		ToolScopeMap: []policy.ToolScopeMapping{{Pattern: "fs:*", Scope: "filesystem"}},
+	}
+	gate := newGateForTest(t, m, "strict", pol)
+
+	dec, err := gate.Check(context.Background(), toolsCallReq("fs:read_multiple_files", map[string]interface{}{
+		"paths": []interface{}{"/tmp/a", "/etc/shadow", "/tmp/b"},
+	}))
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if dec.Allow {
+		t.Fatalf("expected DENY for /etc/shadow among the paths, got %+v", dec)
+	}
+	// mcp_tool, /tmp/a, /etc/shadow — the check stops at the first denial.
+	if m.Calls() != 3 {
+		t.Errorf("expected 3 checks, got %d", m.Calls())
+	}
+}

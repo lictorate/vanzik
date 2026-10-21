@@ -256,3 +256,53 @@ func TestAT_FilesystemE2E_AllowAndDeny(t *testing.T) {
 		t.Errorf("audit log missing any DENY mcp_gateway entry (the dual-check filesystem deny)")
 	}
 }
+
+// TestAT_DefaultPolicy_FilesystemSearchTreeAndPaths runs the MCP
+// filesystem server's search, tree and multi-file tools through the
+// gate against a real central server loaded with configs/default.yaml.
+// default.yaml allows every fs:* tool at the mcp_tool layer and reads
+// under /tmp/** at the filesystem layer, so these must ALLOW; a
+// read_multiple_files that slips /etc/passwd in among /tmp files must
+// not.
+func TestAT_DefaultPolicy_FilesystemSearchTreeAndPaths(t *testing.T) {
+	pol, err := policy.LoadFromFile(filepath.Join("..", "..", "configs", "default.yaml"))
+	if err != nil {
+		t.Fatalf("load default.yaml: %v", err)
+	}
+	centralURL, _, _ := startCentralServer(t, pol)
+	gate := mcpgw.NewHTTPPolicyClient(&mcpgw.Config{
+		GuardURL:   centralURL,
+		APIKey:     "AT-e2e-secret",
+		TenantID:   "local",
+		FailMode:   "deny",
+		PolicyMode: "strict",
+	}, pol)
+
+	cases := []struct {
+		tool  string
+		args  map[string]interface{}
+		allow bool
+	}{
+		{"search_files", map[string]interface{}{"path": "/tmp", "pattern": "*.txt"}, true},
+		{"directory_tree", map[string]interface{}{"path": "/tmp"}, true},
+		{"read_multiple_files", map[string]interface{}{"paths": []interface{}{"/tmp/a.txt", "/tmp/b.txt"}}, true},
+		{"read_multiple_files", map[string]interface{}{"paths": []interface{}{"/tmp/a.txt", "/etc/passwd"}}, false},
+	}
+	for _, tc := range cases {
+		dec, err := gate.Check(context.Background(), &mcpgw.ToolsCallRequest{
+			Namespace: "fs",
+			ToolName:  tc.tool,
+			FullName:  "fs:" + tc.tool,
+			Arguments: tc.args,
+			TenantID:  "local",
+			AgentID:   "mcp-gateway:AT",
+			SessionID: "mcp-gateway:AT",
+		})
+		if err != nil {
+			t.Fatalf("fs:%s %v: %v", tc.tool, tc.args, err)
+		}
+		if dec.Allow != tc.allow {
+			t.Errorf("fs:%s %v: Allow=%v, want %v (rule %q, reason %q)", tc.tool, tc.args, dec.Allow, tc.allow, dec.Rule, dec.Reason)
+		}
+	}
+}
