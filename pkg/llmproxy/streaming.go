@@ -886,6 +886,26 @@ func (d dropDoneWriter) Write(p []byte) (int, error) {
 	return d.ResponseWriter.Write(p)
 }
 
+// dropAnthropicCloseWriter is the Anthropic sibling of dropDoneWriter:
+// it swallows a write that is exactly one `message_delta` or
+// `message_stop` event. The Anthropic loop switches to it after a
+// malformed-tool-call refusal, which ends with its own pair but keeps
+// reading upstream so later tool_use blocks are still gated. A synthetic
+// refusal is written in one Write of several events, so it never matches.
+type dropAnthropicCloseWriter struct {
+	http.ResponseWriter
+}
+
+func (d dropAnthropicCloseWriter) Write(p []byte) (int, error) {
+	if dataLine, hasData := extractAnthropicDataLine(p); hasData {
+		var env anthropicEventEnvelope
+		if json.Unmarshal(dataLine, &env) == nil && (env.Type == "message_delta" || env.Type == "message_stop") {
+			return len(p), nil
+		}
+	}
+	return d.ResponseWriter.Write(p)
+}
+
 // fallbackFailModeRule returns the rule string the streaming
 // orchestrator uses when the wired PolicyCheck returns an error WITHOUT
 // a populated Decision (e.g. test shims). Production code paths get
@@ -940,6 +960,9 @@ func (s *Server) runAnthropicStreamLoop(w http.ResponseWriter, flusher http.Flus
 				// unparseable input JSON. Deny + audit + reset, then keep
 				// gating the rest of the stream — see denyMalformedAnthropic.
 				s.denyMalformedAnthropic(w, flusher, r, acc, result.CompletedToolCalls)
+				// The refusal ended with its own message_delta and
+				// message_stop; the client must not see upstream's too.
+				w = dropAnthropicCloseWriter{w}
 
 			case result.ProtocolViolation:
 				// SECURITY: the upstream emitted a

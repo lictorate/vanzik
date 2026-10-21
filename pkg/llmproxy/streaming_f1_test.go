@@ -128,13 +128,14 @@ func TestStreaming_Anthropic_MalformedCompletion_FailsClosedAuditsAndResets(t *t
 	goodStart := `event: content_block_start` + "\n" + `data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_good","name":"bash","input":{}}}` + "\n\n"
 	goodDelta := `event: content_block_delta` + "\n" + `data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{}"}}` + "\n\n"
 	goodStop := `event: content_block_stop` + "\n" + `data: {"type":"content_block_stop","index":1}` + "\n\n"
+	msgDelta := `event: message_delta` + "\n" + `data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":12}}` + "\n\n"
 	msgStop := `event: message_stop` + "\n" + `data: {"type":"message_stop"}` + "\n\n"
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		f, _ := w.(http.Flusher)
-		_, _ = io.WriteString(w, badStart+badDelta+badStop+goodStart+goodDelta+goodStop+msgStop)
+		_, _ = io.WriteString(w, badStart+badDelta+badStop+goodStart+goodDelta+goodStop+msgDelta+msgStop)
 		if f != nil {
 			f.Flush()
 		}
@@ -168,6 +169,13 @@ func TestStreaming_Anthropic_MalformedCompletion_FailsClosedAuditsAndResets(t *t
 	// Fail-closed proof: buffered malformed tool_use MUST NOT leak.
 	if strings.Contains(got, "toolu_bad") {
 		t.Errorf("malformed tool_use id leaked into client output (not fail-closed): %q", got)
+	}
+	// The refusal carries its own message_delta and message_stop;
+	// upstream's must not follow them.
+	for _, typ := range []string{"message_delta", "message_stop"} {
+		if n := strings.Count(got, `"type":"`+typ+`"`); n != 1 {
+			t.Errorf("client saw %d %s events, want exactly 1: %q", n, typ, got)
+		}
 	}
 
 	// (b) audit + (c) reset/resume.
