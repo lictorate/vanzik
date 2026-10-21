@@ -142,7 +142,9 @@ To test a `require_prior` rule without a server, give the case `prior:` actions;
 
 ### Footgun: no audit history → condition fails
 
-If the `HistoryQuerier` is not wired (it is by default in `NewServer`), or the audit query returns an error, the condition is treated as **unsatisfied** and the rule does not match. This is fail-closed for `allow` rules and fail-open for `deny`/`require_approval` — review any condition-bearing rules with that in mind.
+If the `HistoryQuerier` is not wired (it is by default in `NewServer`), the condition is treated as **unsatisfied** and the rule does not match. This is fail-closed for `allow` rules and fail-open for `deny`/`require_approval` — review any condition-bearing rules with that in mind.
+
+If the history lookup returns an error (since v1.4), the stricter reading wins: a condition-gated `deny` or `require_approval` rule **fires**, and a condition-gated `allow` rule does not match. A condition that is definitely not met still makes the rule miss.
 
 ---
 
