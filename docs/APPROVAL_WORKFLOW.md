@@ -21,10 +21,10 @@ What happens from the moment a policy returns `REQUIRE_APPROVAL` to the moment t
   │                   │                           │
   │ 3. poll /v1/status/{id}  (every 2 s)          │
   │  ──────────────▶  │                           │
-  │  ◀─ resolved:false│                           │ 4. POST /v1/approve/{id}
+  │ ◀─ status:pending │                           │ 4. POST /v1/approve/{id}
   │  ──────────────▶  │ ◀─────────────────────────│  (Bearer or session+CSRF)
-  │  ◀─ resolved:true │ Resolve(ALLOW)            │
-  │       decision=ALLOW   broadcast "resolved"   │
+  │ ◀─ status:resolved│ Resolve(ALLOW)            │
+  │      decision:ALLOW    broadcast "resolved"   │
   │                   │                           │
   │ 5. re-run /v1/check (same params)             │
   │  ──────────────▶  │ → ALLOW (cost reserves,   │
@@ -70,8 +70,8 @@ The `approval_url` is built from `--base-url` (or `http://localhost:<port>` if u
 {
   "type": "approval_required",
   "timestamp": "2026-04-19T12:03:44Z",
-  "agent_id": "researcher-01",
   "request": {
+    "agent_id": "researcher-01",
     "scope": "shell",
     "command": "sudo apt upgrade"
   },
@@ -193,7 +193,7 @@ Useful for scripted approvals (e.g., a runbook step) or when the dashboard is un
 ```bash
 curl -X POST -H "Authorization: Bearer $KEY" \
   https://guardrails.example/v1/approve/ap_1a2b…
-# {"status":"approved"}
+# {"id":"ap_1a2b…","status":"approved"}
 ```
 
 See [`API.md`](API.md#post-v1approveid--post-v1denyid--tenant-aware-mirrors).
