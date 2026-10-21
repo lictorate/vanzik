@@ -469,9 +469,22 @@ agents:
             message: "shell access disabled for this agent"
 ```
 
-Merge semantics (`resolveRules` in `pkg/policy/engine.go`):
+Merge semantics (`resolveRules` in `pkg/policy/engine.go`): if the incoming request's `agent_id` matches a key under `agents:`, its `override` RuleSets combine with the base RuleSets **per scope**, as the agent's `override_mode` says:
 
-- If the incoming request's `agent_id` matches a key under `agents:`, its `override` RuleSets replace the base RuleSets **per scope**.
+- `override_mode: merge` (the default): the base `deny` and `require_approval` rules are kept and the override's are added after them; `allow` comes from the override alone. An agent can narrow what is allowed but can't drop a base deny: a base `deny: rm -rf *` still denies for an agent whose override allows `*`. The override's `rate_limit` and `limits` replace the base ones when set.
+- `override_mode: replace`: the override RuleSet replaces the base RuleSet for that scope entirely, base denies included. The shipped coding-agent blocks use it (see [CODING_AGENTS.md](CODING_AGENTS.md)).
+
+```yaml
+agents:
+  ci-bot:
+    override_mode: replace   # default: merge
+    override:
+      - scope: shell
+        allow: [{pattern: "make *"}]
+```
+
+In both modes:
+
 - Scopes that appear **only** in the override (not in the base `rules:`) are appended.
 - Scopes in the base that the override does **not** mention are unchanged.
 - If `agent_id` is empty or does not match any key, the base `rules:` apply unchanged.
