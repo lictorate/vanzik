@@ -13,9 +13,9 @@
 #
 # Evaluation order (see docs/POLICY_REFERENCE.md):
 #   rate-limit → deny → require_approval → allow → default DENY.
-# The FIRST match in deny/require_approval/allow wins. Put broad denies
-# BEFORE narrow allows — a narrow allow earlier won't save you from a
-# later deny, but a later allow won't override an earlier deny.
+# A deny always beats an allow (and require_approval beats allow),
+# whatever their order in the file. Order only matters within one list:
+# the FIRST matching rule in that list decides, and its message is shown.
 #
 # Pattern semantics (docs/POLICY_REFERENCE.md#wildcards):
 #   *   matches any characters INCLUDING "/"  (surprising for paths!)
