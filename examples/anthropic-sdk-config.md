@@ -119,12 +119,20 @@ routing that traffic around Vanzik: that bypasses enforcement entirely.
   emits a synthetic `text` block at the same `content_block` index
   starting with `Vanzik denied this action.`, followed by the
   reason and rule. The
-  `message_delta`'s `stop_reason` is rewritten to `end_turn` so the
-  SDK terminates the iteration cleanly.
+  `message_delta`'s `stop_reason` is rewritten to `end_turn` and
+  carries `usage`, so `messages.stream()` ends cleanly: the final
+  message has `stop_reason` `end_turn`, one text block and
+  `usage.output_tokens` 0 (verified with anthropic 1.17.0, for DENY and
+  approval refusals alike).
 - **REQUIRE_APPROVAL:** prompt for `sudo *` — the synthetic text
-  includes the approval URL and approval ID. Click approve on the
-  dashboard, then re-run the prompt with the approval-id round-trip
-  (see [`docs/APPROVAL_WORKFLOW.md`](../docs/APPROVAL_WORKFLOW.md)).
+  includes the approval URL and approval ID.
+  To resume after approval: (1) copy the id from the refusal's
+  `Approval ID: ap_…` line; (2) approve it on the dashboard or with
+  `POST /v1/approve/<id>`; (3) send the same request again with the
+  `X-Vanzik-Approval-ID` header, e.g. `client.messages.stream(..., extra_headers={"X-Vanzik-Approval-ID": approval_id})`. When the model repeats the
+  same tool call it comes back ALLOWed. The id works once, for that
+  action only; a retry without the header gets a new approval. See
+  [`docs/LLM_API_PROXY.md`](../docs/LLM_API_PROXY.md) § 11.3.
 
 ## Inspecting the audit log
 

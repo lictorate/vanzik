@@ -20,7 +20,10 @@ Cursor supports two scopes:
 
 A project-level file overrides the global file for that workspace, so a
 single `vanzik` server entry in `~/.cursor/mcp.json` is enough to gate
-every Cursor session.
+every Cursor session, as long as every path in it exists everywhere: the
+example's `--policy /etc/vanzik/default.yaml` does, while a
+`${workspaceFolder}/.vanzik/policy.yaml` path would need that file in
+every workspace (the gateway refuses to start without it).
 
 ## What this config does
 
@@ -30,7 +33,7 @@ Cursor (Composer / agent mode)
     ▼
 vanzik-mcp-gateway
     │
-    ├─stdio──► server-filesystem via npx (scoped to ${workspaceFolder})
+    ├─stdio──► server-filesystem via npx (scoped to ${workspaceFolder} and /tmp)
     ├─stdio──► mcp-server-fetch (uvx)
     ├─stdio──► github-mcp-server (docker)
     │
@@ -40,7 +43,7 @@ vanzik-mcp-gateway
 
 `${workspaceFolder}` is a Cursor variable that expands to the open
 project's root, so the filesystem upstream is automatically scoped to the
-current workspace. `${env:VAR}` reads the variable from Cursor's launching
+current workspace (plus `/tmp`, for the verification below). `${env:VAR}` reads the variable from Cursor's launching
 environment.
 
 ## Setup
@@ -63,21 +66,31 @@ config's `env` block; the gateway passes its environment to every
 upstream, and `docker run -e GITHUB_PERSONAL_ACCESS_TOKEN` forwards it
 into the container.
 
-1. **Install binaries** (Go 1.25+):
+1. **Install binaries** (Go 1.26+):
 
    ```bash
    go install lictorate.com/vanzik/v2/cmd/vanzik@latest
    go install lictorate.com/vanzik/v2/cmd/vanzik-mcp-gateway@latest
    ```
 
-2. **Drop a policy file in the project root:**
+2. **Pick a policy.** The config points `--policy` at
+   `/etc/vanzik/default.yaml`, the starter policy a root install of the
+   [one-line installer](../docs/SETUP.md#1-install) writes; the gateway
+   and the server must load the same file. After a user install the
+   starter is `~/.config/vanzik/default.yaml`: put its absolute path in
+   the config, since nothing expands `~` there. Installed with
+   `go install`? Copy `configs/default.yaml` from this repo into place:
 
    ```bash
-   mkdir -p .vanzik
-   cp /path/to/Vanzik/configs/default.yaml .vanzik/policy.yaml
+   sudo mkdir -p /etc/vanzik
+   sudo cp configs/default.yaml /etc/vanzik/default.yaml
    ```
 
-   Adjust `--policy` in the JSON if you put the file elsewhere.
+   For a policy that lives in one project instead, copy it to
+   `.vanzik/policy.yaml` there, use
+   `"--policy", "${workspaceFolder}/.vanzik/policy.yaml"` in that
+   project's `.cursor/mcp.json` only, and start the server with the same
+   file.
 
 3. **Export the API key** in the shell that starts Cursor:
 
@@ -85,14 +98,16 @@ into the container.
    export VANZIK_API_KEY="$(openssl rand -hex 32)"
    ```
 
-   On macOS, set this in `~/.zshrc` so Cursor (launched from Spotlight or
-   Finder) inherits it. On Windows, set it as a User Environment Variable.
+   Cursor launched from Finder, Spotlight or the Dock on macOS may not
+   see exports from `~/.zshrc`, so also put the key in the config's
+   `env` block (`"VANZIK_API_KEY": "<the key>"`). On Windows, set it as
+   a User Environment Variable or in the `env` block.
 
 4. **Run the central server** in a terminal:
 
    ```bash
    vanzik server \
-     --policy .vanzik/policy.yaml \
+     --policy /etc/vanzik/default.yaml \
      --dashboard \
      --watch \
      --api-key "$VANZIK_API_KEY"
@@ -106,7 +121,21 @@ into the container.
 
 In Cursor's chat (Composer):
 
-- "Read `package.json` from this workspace" → ALLOW (in default policy).
+- "Read `/tmp/hello.txt`" → ALLOW: the default policy allows reads under
+  `/tmp` (and `./workspace`).
+- "Read `package.json` from this workspace" → DENY under the default
+  policy, which doesn't know your project's path. To allow it, add the
+  workspace to the read `paths` of the existing `filesystem` block in
+  the policy the server loads:
+
+  ```yaml
+  - scope: filesystem
+    allow:
+      - action: read
+        paths: ["./workspace/**", "/tmp/**", "/Users/you/projects/myapp/**"]
+  ```
+
+  The server reloads the file on save; the same read is then ALLOWed.
 - "Read `/etc/passwd`" (or `C:\Windows\System32\drivers\etc\hosts` on
   Windows) → DENY, surfaced on the dashboard at
   <http://127.0.0.1:8080/dashboard>.
@@ -120,6 +149,10 @@ safe path is to set `VANZIK_API_KEY` in the `env` block (or
 inherited from Cursor's parent shell) and **omit** the `--api-key`
 flag entirely — the gateway picks up the env var automatically when
 the flag is absent.
+
+Today the gateway calls only `/v1/check`, which the server leaves open,
+so a missing or literal key doesn't stop it working. The key is still the
+bearer it sends on every call, so set the real one.
 
 ## Tenant ID
 

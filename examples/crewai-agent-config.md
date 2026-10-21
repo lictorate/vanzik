@@ -130,8 +130,14 @@ The proxy reloads its policy file on its own when you save it; so does `vanzik s
   assistant text and adapts its plan; the final crew result is the
   refusal text propagated through the agent's reasoning.
 - **REQUIRE_APPROVAL:** put the same pattern under `require_approval:`
-  instead. The refusal text includes the approval ID; approve it on
-  the dashboard, then re-run.
+  instead. The refusal text includes the approval ID.
+  To resume after approval: (1) copy the id from the refusal's
+  `Approval ID: ap_…` line; (2) approve it on the dashboard or with
+  `POST /v1/approve/<id>`; (3) send the same request again with the
+  `X-Vanzik-Approval-ID` header, from CrewAI's LiteLLM client. When the model repeats the
+  same tool call it comes back ALLOWed. The id works once, for that
+  action only; a retry without the header gets a new approval. See
+  [`docs/LLM_API_PROXY.md`](../docs/LLM_API_PROXY.md) § 11.3.
 
 ## Inspecting the audit log
 
@@ -139,10 +145,10 @@ The proxy reloads its policy file on its own when you save it; so does `vanzik s
 vanzik audit --transport llm_api_proxy --limit 20
 ```
 
-CrewAI agents often emit several tool calls per `kickoff()`. Filter
-by agent ID by passing `meta.agent_id` from the `X-Agent-Id` header
-(set in CrewAI's LiteLLM client headers if you want to attribute
-calls cleanly).
+CrewAI agents often emit several tool calls per `kickoff()`. To
+attribute them, send an `X-Agent-ID` header from CrewAI's LiteLLM
+client: the proxy uses it as the request's `agent_id` (without it,
+`llm-proxy`), so `vanzik audit --agent <id>` filters on it.
 
 ## Common gotchas
 
@@ -167,8 +173,10 @@ calls cleanly).
   delivered either, by design (agents that mix benign and risky
   calls in one turn should be refactored).
 - **Two API keys, two purposes.** `OPENAI_API_KEY` flows through the
-  proxy to OpenAI. `VANZIK_API_KEY` is the central server's
-  bearer for `/v1/check`. They are independent.
+  proxy to OpenAI. `VANZIK_API_KEY` is the central server's bearer,
+  which the proxy uses for the `POST /v1/audit` records of its own
+  refusals; `/v1/check` itself is open and needs no key. They are
+  independent.
 - **CrewAI's `verbose=True`.** The example sets `verbose=True` on
   both the agent and the crew so you can watch the tool calls fire
   in CrewAI's own logs alongside the Vanzik dashboard. Drop
@@ -177,7 +185,7 @@ calls cleanly).
 ## Anthropic models in CrewAI
 
 CrewAI/LiteLLM also supports Anthropic models. Set
-`model="anthropic/claude-3-5-sonnet-latest"` and
+`model="anthropic/claude-sonnet-5-5"` and
 `api_key=os.environ["ANTHROPIC_API_KEY"]`; LiteLLM will route to
 Anthropic. Point `base_url=` at the proxy without `/v1`
 (`http://127.0.0.1:8081`) — same as the

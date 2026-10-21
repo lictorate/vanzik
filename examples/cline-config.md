@@ -72,15 +72,28 @@ config's `env` block; the gateway passes its environment to every
 upstream, and `docker run -e GITHUB_PERSONAL_ACCESS_TOKEN` forwards it
 into the container.
 
-1. **Install binaries** (Go 1.25+):
+1. **Install binaries** (Go 1.26+):
 
    ```bash
    go install lictorate.com/vanzik/v2/cmd/vanzik@latest
    go install lictorate.com/vanzik/v2/cmd/vanzik-mcp-gateway@latest
    ```
 
-2. **Pick a policy file** and update `--policy` in the JSON. `configs/default.yaml`
-   from this repo is a sensible starting point.
+2. **Pick a policy.** The config points `--policy` at
+   `/etc/vanzik/default.yaml`, the starter policy a root install of the
+   [one-line installer](../docs/SETUP.md#1-install) writes. After a user
+   install the starter is `~/.config/vanzik/default.yaml`: put its
+   absolute path (for example `/home/you/.config/vanzik/default.yaml`)
+   in the config, since nothing expands `~` there. Installed with
+   `go install`? Copy `configs/default.yaml` from this repo into place:
+
+   ```bash
+   sudo mkdir -p /etc/vanzik
+   sudo cp configs/default.yaml /etc/vanzik/default.yaml
+   ```
+
+   With `--policy-mode strict` the gateway exits 1 when the file is
+   missing.
 
 3. **Export the API key** in the shell that launches VS Code:
 
@@ -88,7 +101,7 @@ into the container.
    export VANZIK_API_KEY="$(openssl rand -hex 32)"
    ```
 
-   On macOS, VS Code launched from Finder/Spotlight does not see your
+   On macOS, VS Code launched from Finder/Spotlight may not see your
    `~/.zshrc` exports. Either launch VS Code from a terminal (`code .`) or
    put `VANZIK_API_KEY` in your VS Code `terminal.integrated.env.*`
    settings, then mirror it into the `env` block of the config above.
@@ -97,7 +110,7 @@ into the container.
 
    ```bash
    vanzik server \
-     --policy /etc/vanzik/policy.yaml \
+     --policy /etc/vanzik/default.yaml \
      --dashboard \
      --watch \
      --api-key "$VANZIK_API_KEY"
@@ -124,10 +137,14 @@ Open the Cline chat in VS Code and ask:
 Do **not** pass `--api-key "$VANZIK_API_KEY"` as an `args` entry.
 Cline (like Claude Desktop) does **not** shell-expand `$VAR`
 references inside JSON `args` — the gateway would receive the literal
-string `$VANZIK_API_KEY` and authentication would fail. Instead,
+string `$VANZIK_API_KEY` and send it as the key. Instead,
 use the `env` block above to inject the key as an environment
 variable; the gateway picks up `VANZIK_API_KEY` automatically
 when the `--api-key` flag is absent.
+
+Today the gateway calls only `/v1/check`, which the server leaves open,
+so a missing or literal key doesn't stop it working. The key is still the
+bearer it sends on every call, so set the real one.
 
 ## Tenant ID
 

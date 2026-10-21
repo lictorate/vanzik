@@ -24,9 +24,9 @@ import (
 
 // expectedFlags are the long-form flags every example config must
 // reference at least once (any subset is fine — different IDEs may
-// reasonably configure different defaults). The set is the public
-// interface from cmd/vanzik-mcp-gateway/main.go via
-// pkg/mcpgw.ParseConfig.
+// reasonably configure different defaults). The set is a hand-kept copy
+// of gateway flags, not read from pkg/mcpgw.ParseConfig: add a flag here
+// when an example starts using one the gateway gained.
 var expectedFlags = []string{
 	"--upstream",
 	"--upstream-http",
@@ -102,7 +102,7 @@ func TestExamples_ClientConfigsParseAsJSON(t *testing.T) {
 			}
 
 			// At least the flag mentioned in the file must be in the
-			// gateway's flag set. We don't require ALL expected flags
+			// documented flag set above. We don't require ALL expected flags
 			// (some IDE configs reasonably omit --policy in fast mode);
 			// instead, we assert that every flag that DOES appear is
 			// one of the documented set.

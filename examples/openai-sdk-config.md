@@ -59,7 +59,7 @@ exists.
 
    ```bash
    git clone https://github.com/lictorate/vanzik.git
-   cd Vanzik
+   cd vanzik
    vanzik server \
        --policy configs/default.yaml \
        --dashboard \
@@ -107,9 +107,13 @@ exists.
 - **REQUIRE_APPROVAL:** ask for `sudo apt update` (the default policy
   routes `sudo *` to `require_approval`). Your script receives a
   synthetic assistant text including the approval ID and approval URL.
-  Click approve in the dashboard, then re-run the prompt — see
-  [`docs/APPROVAL_WORKFLOW.md`](../docs/APPROVAL_WORKFLOW.md) for the
-  approval-id round-trip details.
+  To resume after approval: (1) copy the id from the refusal's
+  `Approval ID: ap_…` line; (2) approve it on the dashboard or with
+  `POST /v1/approve/<id>`; (3) send the same request again with the
+  `X-Vanzik-Approval-ID` header, e.g. `client.chat.completions.create(..., extra_headers={"X-Vanzik-Approval-ID": approval_id})`. When the model repeats the
+  same tool call it comes back ALLOWed. The id works once, for that
+  action only; a retry without the header gets a new approval. See
+  [`docs/LLM_API_PROXY.md`](../docs/LLM_API_PROXY.md) § 11.3.
 
 ## Inspecting the audit log
 
@@ -130,8 +134,9 @@ Add `--decision DENY` or `--scope shell` to narrow further.
   `--fail-mode` controls behaviour (`deny` is the default).
 - **Two API keys, two purposes.** `OPENAI_API_KEY` flows through the
   proxy to OpenAI. `VANZIK_API_KEY` is the central server's
-  bearer for `/v1/check` (the proxy uses it on the side-channel call).
-  These are independent — losing one does not affect the other.
+  bearer; the proxy uses it for the `POST /v1/audit` records of its own
+  refusals, while `/v1/check` is open and needs no key. These are
+  independent — losing one does not affect the other.
 - **The proxy's optional `--proxy-api-key`** is a third, separate
   thing: a bearer the proxy itself enforces on inbound requests via
   the `X-Vanzik-Proxy-Auth` header. Unset by default; only set
