@@ -41,6 +41,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Go 1.26.10**, for GO-2026-6809 (crypto/x509: distrust compromised intermediate certificates). govulncheck finds it reachable from the server's `http.Server.ListenAndServe`.
 - Agent settings files saved with a UTF-8 byte order mark (as Notepad does) can be connected, disconnected and migrated; they were refused as invalid JSON.
 - **Approving or denying a pending approval now writes an audit entry**: decision ALLOW or DENY, `matched_rule: approval:resolved:<via>` (`bearer`, `session` or `open`), the approval id, and the caller's address in `reason`. Before, the decision reached the audit log only if the agent came back with the approval id, so an approval decided but never retried left no trace.
 - **`on_deny` notifications now fire for rate-limit denies too**, as the default policy's comment says. Before, a rate-limited request was denied and audited but sent no notification.
