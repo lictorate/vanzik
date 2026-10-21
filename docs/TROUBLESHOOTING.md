@@ -138,7 +138,7 @@ curl -s http://127.0.0.1:8080/metrics | grep notify_events_dropped_total
 
 **Fixes:**
 
-- Point the test `Guard(base_url=...)` at a running test server, or use `httpretty` / `responses` to stub `urllib`.
+- Point the test `Guard(base_url=...)` at a running test server, or stub the HTTP layer with the standard-library stub in [`SDK_PYTHON.md`](SDK_PYTHON.md) ("Option B"). `responses` can't intercept the SDK's calls: it only patches `requests`, and the SDK uses `urllib`.
 - For tests that need fail-open behavior, pass `fail_mode="allow"` explicitly (Python v0.4.1+). Do **not** flip this in production unless your threat model treats Vanzik as advisory — the `"deny"` default is what keeps agents safe when the proxy is down.
 
 ---
