@@ -163,7 +163,7 @@ If the history lookup returns an error (since v1.4), the stricter reading wins: 
 | `max_requests` | int | Tokens per bucket. First call initializes the bucket at `max_requests - 1` (one consumed for the allowed request). |
 | `window` | string | Go duration string (e.g., `"1s"`, `"30s"`, `"1m"`). On refill, `int(elapsed / window)` full periods advance the bucket and reset tokens to `max_requests`. |
 
-**Key is `<scope>:<agent_id>`.** Per-agent, per-scope.
+**Key is `<scope>:<tenant>:<agent_id>`.** Per-tenant, per-agent, per-scope; requests without an `agent_id` share one `anonymous` bucket per scope and tenant.
 
 **In-memory; per-instance on the default SQLite store.** Multi-replica deployments on SQLite do not share buckets — agents can burst past the nominal cap by hitting different pods. With the v1.0 PostgreSQL backend, replicas share consumption via background reconcile (bounded-overshoot: brief bursts can still exceed the cap by ≈ `reconcile-interval × peak rate` per extra replica). See [`docs/OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments).
 
