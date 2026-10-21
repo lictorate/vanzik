@@ -1,10 +1,10 @@
 package proxy
 
-// audit_record_test.go covers the /v1/audit ingest endpoint (handleAuditRecord),
-// the central side of the F1 audit-verdict fidelity fix (C3). A transport proxy
-// that manufactures its own fail-closed refusal POSTs the verdict the client
-// actually received here so the central audit log — the single source of truth —
-// records the DENY, not the engine verdict a fidelity-blind /v1/check would log.
+// audit_record_test.go covers the /v1/audit ingest endpoint (handleAuditRecord).
+// A transport proxy that manufactures its own fail-closed refusal POSTs the
+// verdict the client actually received here so the central audit log — the
+// single source of truth — records the DENY, not the engine verdict /v1/check
+// would log.
 
 import (
 	"encoding/json"

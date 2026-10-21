@@ -3,12 +3,12 @@ package policy
 // Compound shell commands.
 //
 // A shell rule's pattern is a glob over the whole command string, and a
-// single `*` matches every character, including shell operators. Before this
-// file, `allow: "ls *"` therefore also allowed `ls /tmp; rm -rf /`,
-// `ls $(rm -rf ~)` and `echo x > /etc/passwd`, and a newline-separated second
-// command was hidden by stripControl before matching.
+// single `*` matches every character, including shell operators. Matched
+// whole, `allow: "ls *"` would also allow `ls /tmp; rm -rf /`,
+// `ls $(rm -rf ~)` and `echo x > /etc/passwd`, and stripControl would hide a
+// newline-separated second command.
 //
-// For a command that contains any shell syntax, the engine now splits it into
+// So for a command that contains any shell syntax, the engine splits it into
 // the simple commands a POSIX shell would run and evaluates each one (see
 // Engine.checkCompoundShell). This file is the tokenizer. It is deliberately
 // conservative: anything it cannot split with confidence (heredocs, unbalanced

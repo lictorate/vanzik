@@ -75,16 +75,13 @@ func NewMultiTenantProvider(base PolicyProvider, source PolicySource) (*MultiTen
 // Called once at construction and may be re-invoked (e.g. by an admin endpoint
 // or a periodic ticker) to pick up tenant policy changes.
 //
-// Fault isolation: a load or parse error for ONE tenant no longer
-// aborts the whole refresh. Previously any single failure returned before the
-// cache swap, so one tenant's bad edit froze policy propagation for EVERY
-// tenant — a stale-everywhere failure whose only signal was the returned error.
-// Now a failing tenant keeps its previously cached policy (last-good, never a
+// Fault isolation: a load or parse error for ONE tenant does not abort the
+// refresh, so one tenant's bad edit cannot freeze policy propagation for
+// every tenant. A failing tenant keeps its last-good cached policy (never a
 // torn or empty entry) and every other tenant still updates. The accumulated
-// errors are still returned, so the construction-time call in
-// NewMultiTenantProvider continues to fail startup loudly on a bad policy
-// (unchanged behavior) while a periodic/admin refresh now degrades per-tenant
-// instead of cluster-wide.
+// errors are returned, so the construction-time call in
+// NewMultiTenantProvider fails startup loudly on a bad policy while a
+// periodic refresh degrades per-tenant.
 func (p *MultiTenantProvider) Refresh(ctx context.Context) error {
 	tenants, err := p.source.ListPolicyTenants(ctx)
 	if err != nil {
@@ -153,27 +150,18 @@ const minRefreshTimeout = 5 * time.Second
 // (or Close) is called. It returns a no-op stop when interval <= 0, and is
 // idempotent: a second call is ignored and returns a stop for the first.
 //
-// WHY THIS EXISTS. Refresh was written to be re-invoked "e.g. by an admin
-// endpoint or a periodic ticker" — and nothing ever did. The cache was built
-// once in NewMultiTenantProvider and never rebuilt, with two consequences:
+// Without it, a tenant policy updated in the store (`vanzik tenant put`)
+// never reaches a running server: Get serves the cached entry and Watch is a
+// no-op for non-local tenants. The lazy-load miss path in Get is still the
+// only way a tenant added since the last Refresh gets served, so treating a
+// miss as an immediate ErrTenantNotFound would break tenant onboarding.
 //
-//   - A non-local tenant's policy could be updated in the store (`vanzik
-//     tenant put`) and the running process would serve the boot-time copy
-//     forever. Get returns the cached entry, and Watch is a documented no-op
-//     for non-local tenants, so there was NO mechanism by which an updated
-//     tenant policy reached a running server short of a restart.
-//   - The lazy-load miss path in Get was therefore not a rare-race safety net
-//     but the ONLY way a tenant added after boot was ever served — which is
-//     why removing it (treating a miss as an immediate ErrTenantNotFound)
-//     would break tenant onboarding outright.
-//
-// HOT-PATH NOTE (CLAUDE.md §1). Get is on the /v1/check hot path and reads
-// p.cache under RLock. This adds a periodic writer to that same lock, so the
-// contention it introduces is bounded deliberately: the replacement map is
-// built entirely OUTSIDE the lock (see Refresh), and the write lock is held
-// for exactly one pointer assignment, once per interval. No store I/O, no
-// parsing, and no allocation happens under the lock. That is the same lock
-// discipline the construction-time Refresh already used.
+// HOT-PATH NOTE. Get is on the /v1/check hot path and reads p.cache under
+// RLock. This adds a periodic writer to that same lock, so the contention is
+// bounded deliberately: the replacement map is built entirely OUTSIDE the
+// lock (see Refresh), and the write lock is held for one pointer assignment
+// (plus clearing the negative cache), once per interval. No store I/O or
+// parsing happens under the lock.
 func (p *MultiTenantProvider) StartAutoRefresh(interval time.Duration) func() {
 	if interval <= 0 {
 		return func() {}
@@ -202,10 +190,9 @@ func (p *MultiTenantProvider) StartAutoRefresh(interval time.Duration) func() {
 					err := p.Refresh(ctx)
 					cancel()
 					if err != nil {
-						// B22 fault isolation means a per-tenant failure no
-						// longer aborts the swap: every healthy tenant still
-						// updated, and the failing ones kept last-good. Log
-						// rather than retry-storm.
+						// Per-tenant failures do not abort the swap: healthy
+						// tenants updated and failing ones kept last-good.
+						// Log rather than retry-storm.
 						log.Printf("WARNING: tenant policy refresh completed with errors: %v", err)
 					}
 				}

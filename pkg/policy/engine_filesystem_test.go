@@ -8,7 +8,6 @@ import (
 
 // TestFilesystemPathTraversal verifies that ".." sequences in request paths
 // cannot bypass deny rules by escaping an allowed directory prefix.
-// Regression test for B1: path traversal bypasses filesystem deny rules.
 func TestFilesystemPathTraversal(t *testing.T) {
 	pol := &Policy{
 		Version: "1",
@@ -36,7 +35,7 @@ func TestFilesystemPathTraversal(t *testing.T) {
 		path     string
 		expected Decision
 	}{
-		// B1 core case: traversal via allowed prefix + "../"
+		// Core case: traversal via allowed prefix + "../"
 		{
 			name:     "traversal via workspace prefix",
 			action:   "read",

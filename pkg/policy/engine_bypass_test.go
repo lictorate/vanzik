@@ -50,10 +50,10 @@ func TestGlobMatch_SegmentBoundaries(t *testing.T) {
 	}
 }
 
-// TestGlobSemantics locks in the v0.5 stable contract for `globMatch`
-// (closes R3 #11). It documents the asymmetry between path `**` and
-// domain `*` semantics so a future refactor that "fixes" one of them
-// breaks this test instead of silently breaking deployed policies.
+// TestGlobSemantics locks in the stable contract for `globMatch`. It
+// documents the asymmetry between path `**` and domain `*` semantics so a
+// refactor that "fixes" one of them breaks this test instead of silently
+// breaking deployed policies.
 //
 // See the block comment at globMatch in engine.go for the full contract.
 func TestGlobSemantics(t *testing.T) {
@@ -149,7 +149,7 @@ func TestSessionCost_ConcurrentCheckAndReserve(t *testing.T) {
 	}
 }
 
-// TestEstCostZeroBypass closes R3 #4: an agent that always reports
+// TestEstCostZeroBypass: an agent that always reports
 // est_cost=0 cannot escape max_per_session. Once a session has accumulated
 // real cost up to (or past) the limit, any subsequent check — including
 // est_cost=0 — must be denied. Exactly-at-cap is still allowed (the literal
@@ -348,7 +348,7 @@ rules:
 	}
 }
 
-// TestPolicyLoadValidatesDurations closes R3 #5 / R3 #15. Malformed durations
+// TestPolicyLoadValidatesDurations: malformed durations
 // or non-positive counts in rate-limit and condition.time_window must be
 // rejected at load time so `vanzik validate` actually validates.
 func TestPolicyLoadValidatesDurations(t *testing.T) {
@@ -422,11 +422,11 @@ rules:
 	}
 }
 
-// TestConditionalRule_TimeWindowOnly_BackwardCompat: v0.4.0 treated
-// conditions with only time_window (no require_prior) as no-ops — the rule
-// matched regardless. v0.4.1 keeps that behavior for backward compat and
-// emits a load-time warning instead of fail-closing. This test locks in the
-// backward-compat contract.
+// TestConditionalRule_TimeWindowOnly_BackwardCompat: in a Policy built in
+// process, a condition with only time_window (no require_prior) is a no-op
+// and the rule matches regardless. LoadFromFile rejects such conditions
+// (errorTimeWindowOnlyConditions); this pins the tolerant pass-through for
+// Policy literals.
 func TestConditionalRule_TimeWindowOnly_BackwardCompat(t *testing.T) {
 	pol := &Policy{
 		Version: "1",

@@ -308,8 +308,8 @@ func TestEngineCheck_CrossScopeIsolation(t *testing.T) {
 }
 
 // TestEngineUpdatePolicy exercises the engine's reaction to a provider-driven
-// policy swap. Engine.UpdatePolicy was removed in v0.5 — the provider's
-// Watch callback is the only path for runtime policy updates.
+// policy swap. The provider's Watch callback is the only path for runtime
+// policy updates.
 func TestEngineUpdatePolicy(t *testing.T) {
 	pol1 := &Policy{
 		Version: "1",
@@ -451,8 +451,8 @@ notifications:
 
 // TestLoadFromFile_TunablesDefaults: a policy without any `proxy:` /
 // `notifications.dispatch_timeout` keys must load clean and every resolver
-// must return the documented default. Locks the v0.4.0-compatible default
-// surface so a future refactor does not silently change it.
+// must return the documented default. Locks the default surface so a
+// refactor does not silently change it.
 func TestLoadFromFile_TunablesDefaults(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/policy.yaml"

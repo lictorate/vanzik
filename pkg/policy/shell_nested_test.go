@@ -7,7 +7,7 @@ import (
 )
 
 // Regression tests for the commands a nested shell, an eval or a wrapper
-// runs (v1.4). shell_segments_test.go covers the splitter itself.
+// runs. shell_segments_test.go covers the splitter itself.
 
 // checkShell runs each command through eng and compares the decision, and
 // the rule when one is given.
@@ -115,7 +115,7 @@ func TestParseShell_DeepEvalNestingStaysSmall(t *testing.T) {
 }
 
 // Under an allowlist that allows eval and the tools, the common
-// `eval "$(tool init)"` lines run, as they did before v1.4.
+// `eval "$(tool init)"` lines run.
 func TestCheck_EvalOfASubstitutionUnderAnAllowlist(t *testing.T) {
 	eng := NewEngineFromPolicy(&Policy{Version: "1", Name: "evals", Rules: []RuleSet{{
 		Scope: "shell",
@@ -599,9 +599,9 @@ func TestIsCompoundShell_OrdinaryCommandsDoNotAllocate(t *testing.T) {
 	}
 }
 
-// A whole-line approval used to end the check, so a deny rule that matched
-// a part of the line was never tried. Now the other checks run, and a deny
-// rule wins; a part that no rule allows is left to the person approving.
+// A whole-line approval doesn't end the check: the other checks run, and a
+// deny rule that matches a part of the line wins; a part that no rule
+// allows is left to the person approving.
 func TestCheck_WholeLineApprovalDoesNotHideADeny(t *testing.T) {
 	eng := NewEngineFromPolicy(&Policy{Version: "1", Name: "line", Rules: []RuleSet{
 		{
@@ -634,8 +634,8 @@ func TestCheck_WholeLineApprovalDoesNotHideADeny(t *testing.T) {
 
 // A script inside bash -c that uses syntax the splitter doesn't read
 // (arithmetic, a heredoc, case … esac) goes to a person instead of being
-// denied: under the allow-everything coding-agent blocks, v1.3 allowed
-// these. A command line that can't be split at the top level is still
+// denied, since the allow-everything coding-agent blocks are meant to let
+// these run. A command line that can't be split at the top level is still
 // denied, and so is the outer command under an allowlist that lacks it.
 func TestCheck_UnparseableNestedScriptAsks(t *testing.T) {
 	const ask = "require_approval:shell:unparseable_script"
@@ -662,9 +662,9 @@ func TestCheck_UnparseableNestedScriptAsks(t *testing.T) {
 	})
 }
 
-// Whole-string rules such as `curl * | *sh` only matched when the pipeline
-// was the whole command line. Each pipeline is now matched on its own,
-// without its commands' wrappers.
+// Whole-string rules such as `curl * | *sh` are matched against each
+// pipeline on its own, without its commands' wrappers, not only when the
+// pipeline is the whole command line.
 func TestCheck_WholeStringRulesSeeEachPipeline(t *testing.T) {
 	eng := NewEngineFromPolicy(&Policy{Version: "1", Name: "pipes", Rules: []RuleSet{{
 		Scope:           "shell",

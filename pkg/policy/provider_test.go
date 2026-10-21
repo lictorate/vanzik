@@ -298,14 +298,11 @@ func TestNewEngine_NilProviderRejected(t *testing.T) {
 	}
 }
 
-// TestFilePolicyProvider_WatchCallbackPanicDoesNotKillWatcher is a
-// regression test for R-Code H1 (audit-fixup F2). Before the fix, a
-// panic inside a Watch callback (e.g. the wired gate.SetPolicy hitting
-// a nil-deref on a malformed policy update) propagated up the file
-// watcher's goroutine, killing it silently. Subsequent policy edits
-// were then dropped on the floor with no operator signal. The fix
-// wraps every callback dispatch in safeCallback (defer / recover +
-// log).
+// TestFilePolicyProvider_WatchCallbackPanicDoesNotKillWatcher: a panic
+// inside a Watch callback (e.g. a nil-deref on a malformed policy update)
+// must not kill the file watcher's goroutine, which would silently drop
+// every later policy edit. safeCallback wraps every callback dispatch
+// (defer / recover + log).
 //
 // We register a Watch callback that panics on first invocation, then
 // modify the policy file twice. The second modification's callback

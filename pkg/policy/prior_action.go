@@ -9,23 +9,21 @@ import (
 // PriorActionQuerier answers a require_prior condition directly, scoped to a
 // tenant.
 //
-// It exists alongside HistoryQuerier rather than replacing it because
-// HistoryQuerier is frozen v1.0 surface (CLAUDE.md §4) and cannot grow a
-// parameter. Everything wrong with the old interface is fixed here:
+// It exists alongside HistoryQuerier because HistoryQuerier is public API
+// and cannot grow a parameter. Compared with it:
 //
-//   - The tenant is a required parameter. HistoryQuerier had nowhere to put
-//     one, so the shipped adapter left the audit filter's TenantID empty and
-//     both backends read that as "all tenants" — one tenant's history could
-//     satisfy another's condition.
-//   - It returns a bool, not a slice. The old shape built an unbounded
-//     []HistoryEntry per call, on the hot path, only for the caller to loop
-//     over it and throw it away.
-//   - Pattern matching moves to the implementation, which can index for it
+//   - The tenant is a required parameter. HistoryQuerier has none, so its
+//     audit adapter leaves the filter's TenantID empty and both backends read
+//     that as "all tenants" — one tenant's history can satisfy another's
+//     condition.
+//   - It returns a bool, not an unbounded []HistoryEntry built per call on
+//     the hot path only to be looped over and discarded.
+//   - Pattern matching lives in the implementation, which can index for it
 //     instead of scanning.
 //
 // PriorActionIndex is the in-tree implementation. An embedder may supply its
-// own; if it supplies only a HistoryQuerier, Engine falls back to the legacy
-// path and says so loudly (see Engine.checkRequirePrior).
+// own; if it supplies only a HistoryQuerier, Engine falls back to that and
+// says so loudly (see Engine.checkRequirePrior).
 type PriorActionQuerier interface {
 	// HasPriorAllow reports whether an action matching pattern was ALLOWed for
 	// (tenantID, agentID, scope) at or after since.
@@ -34,9 +32,7 @@ type PriorActionQuerier interface {
 
 // SetPriorActionQuerier installs the tenant-scoped querier used to evaluate
 // require_prior conditions. It takes precedence over any HistoryQuerier set
-// via SetHistoryQuerier.
-//
-// Additive: existing callers that wire only SetHistoryQuerier keep working.
+// via SetHistoryQuerier; callers that wire only SetHistoryQuerier still work.
 func (e *Engine) SetPriorActionQuerier(q PriorActionQuerier) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

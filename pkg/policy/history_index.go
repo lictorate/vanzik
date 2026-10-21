@@ -12,28 +12,23 @@ import (
 //
 // WHY AN INDEX AND NOT A HISTORY BUFFER.
 //
-// The previous implementation answered that question by querying the audit
-// log: FileLogger.Query opened the file and JSON-parsed every line, and it did
-// so while Engine.Check held e.mu — synchronous, unbounded disk I/O on a path
-// budgeted at 3ms p99 (B1). It also dropped the tenant on the way in, and both
-// audit backends read an empty tenant filter as "all tenants", so one tenant's
-// history could satisfy another tenant's condition (B27).
-//
-// Keeping the history in memory would fix the I/O but not the shape: any
-// buffer still has to be SCANNED to answer the question. So this stores the
-// derived predicate rather than the history —
+// Answering from the audit log (FileLogger.Query JSON-parses every line)
+// while Engine.Check holds e.mu is synchronous, unbounded disk I/O on a path
+// budgeted at 3ms p99. An in-memory history buffer fixes the I/O but still
+// has to be SCANNED. So this stores the derived predicate rather than the
+// history —
 //
 //	{tenant, agent, scope} -> {action or command -> newest ALLOW timestamp}
 //
 // which makes the common case an O(1) map hit with no allocation, puts the
-// tenant in the key by construction (B27 cannot recur without deleting a
-// struct field), and discards everything checkRequirePrior never reads.
-// Ordering is irrelevant to the predicate, and EstCost was dead weight.
+// tenant in the key by construction (one tenant's history cannot satisfy
+// another's condition without deleting a struct field), and discards
+// everything checkRequirePrior never reads (ordering, EstCost).
 //
 // BOUNDEDNESS. The keys are client-chosen strings (agent_id, tool names), so
 // this map has exactly the shape that made ratelimit's bucket map
-// unbounded. It therefore ships with a TTL and hard caps from day one, and
-// the sweep runs off the request path.
+// unbounded. It therefore has a TTL and hard caps, and the sweep runs off
+// the request path.
 type PriorActionIndex struct {
 	mu sync.RWMutex
 	// entries maps a (tenant, agent, scope) triple to the newest ALLOW time
@@ -142,7 +137,7 @@ func (idx *PriorActionIndex) Record(tenantID, agentID, scope, action, command st
 // HasPriorAllow reports whether an ALLOW matching pattern was recorded for
 // (tenantID, agentID, scope) at or after since.
 //
-// Semantics are pinned to the audit-scan implementation this replaces: the
+// Semantics match the HistoryQuerier fallback in checkRequirePrior: the
 // pattern matches when it equals, or globs against, either the recorded action
 // or the recorded command.
 func (idx *PriorActionIndex) HasPriorAllow(tenantID, agentID, scope, pattern string, since time.Time) (bool, error) {

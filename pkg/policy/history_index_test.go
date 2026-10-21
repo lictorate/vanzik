@@ -1,12 +1,12 @@
 package policy
 
-// Tests for the require_prior evaluation path (audit B27 + B1).
+// Tests for the require_prior evaluation path.
 //
 // The headline test is TestCheck_RequirePriorIsTenantScoped: it drives the
 // production Engine.Check and asserts that one tenant's history cannot satisfy
-// another tenant's condition. Nothing in the tree asserted that before — the
-// only HistoryQuerier test double implemented the same tenant-less signature
-// as production, so the mock reproduced the blind spot instead of exposing it.
+// another tenant's condition. A HistoryQuerier test double can't show this:
+// it has the same tenant-less signature as production, so it reproduces the
+// blind spot instead of exposing it.
 
 import (
 	"errors"
@@ -45,14 +45,11 @@ func priorPolicy(t *testing.T, requirePrior string) *Policy {
 	}
 }
 
-// TestCheck_RequirePriorIsTenantScoped is the B27 regression test.
-//
-// Before the fix, the tenant never reached the history lookup: HistoryQuerier
-// had no tenant parameter, the adapter left the audit filter's TenantID empty,
-// and BOTH audit backends read an empty tenant as "all tenants". So tenant-b
-// performing `read x` would satisfy tenant-a's require_prior on the same
-// agent_id and scope — a cross-tenant fail-open, and a direct breach of
-// CLAUDE.md invariant #3.
+// TestCheck_RequirePriorIsTenantScoped: tenant-b performing `read x` must not
+// satisfy tenant-a's require_prior on the same agent_id and scope. Through
+// HistoryQuerier it would: it has no tenant parameter, the adapter leaves the
+// audit filter's TenantID empty, and BOTH audit backends read an empty tenant
+// as "all tenants" — a cross-tenant fail-open.
 //
 // An agent_id collision across tenants is the precondition, and it is not
 // exotic: agent ids are client-chosen and default-ish values collide readily.
@@ -163,9 +160,9 @@ func TestCheck_RequirePriorScopeAndAgentScoped(t *testing.T) {
 
 // ----- index unit behaviour -----
 
-// TestPriorActionIndex_ExactAndGlob pins the matching semantics against the
-// audit-scan implementation this replaced: the pattern matches when it equals
-// or globs against either the recorded action or the recorded command.
+// TestPriorActionIndex_ExactAndGlob pins the matching semantics, which match
+// the HistoryQuerier fallback: the pattern matches when it equals or globs
+// against either the recorded action or the recorded command.
 func TestPriorActionIndex_ExactAndGlob(t *testing.T) {
 	now := time.Now()
 	since := now.Add(-time.Hour)
@@ -257,7 +254,7 @@ func TestPriorActionIndex_KeepsNewestTimestamp(t *testing.T) {
 }
 
 // TestPriorActionIndex_SweepEvictsExpired: the index is keyed by client-chosen
-// strings, so it must not grow without bound (the lesson of audit B3).
+// strings, so it must not grow without bound.
 func TestPriorActionIndex_SweepEvictsExpired(t *testing.T) {
 	now := time.Now()
 	idx := NewPriorActionIndex(time.Hour)
@@ -278,9 +275,8 @@ func TestPriorActionIndex_SweepEvictsExpired(t *testing.T) {
 	}
 }
 
-// TestPriorActionIndex_BoundedByMaxKeys proves the cap actually binds. B3
-// shipped a MaxBuckets that bounded nothing, because eviction could free zero
-// and the insert happened anyway; this asserts the opposite.
+// TestPriorActionIndex_BoundedByMaxKeys proves the cap actually binds: a cap
+// whose eviction can free nothing and then inserts anyway bounds nothing.
 func TestPriorActionIndex_BoundedByMaxKeys(t *testing.T) {
 	now := time.Now()
 	idx := NewPriorActionIndex(time.Hour)
@@ -368,8 +364,8 @@ func kindGatedPolicy(kind string) *Policy {
 
 // TestCheck_PriorLookupErrorIsStrictForEveryRuleKind: when the history lookup
 // fails, the engine cannot tell whether the prior action happened, so it takes
-// the stricter reading for the rule's kind. Before v1.4 an error read as "not
-// met" everywhere, so a gated deny rule silently stopped firing (fail open).
+// the stricter reading for the rule's kind. Reading an error as "not met"
+// everywhere would make a gated deny rule silently stop firing (fail open).
 func TestCheck_PriorLookupErrorIsStrictForEveryRuleKind(t *testing.T) {
 	backends := map[string]func(*Engine){
 		"PriorActionQuerier": func(e *Engine) { e.SetPriorActionQuerier(erroringQuerier{err: errors.New("backend down")}) },
@@ -481,14 +477,12 @@ func (e explodingHistory) RecentActions(string, string, time.Time) ([]HistoryEnt
 	return nil, nil
 }
 
-// TestCheck_NoAuditScanWhenIndexWired is the B1 regression test.
-//
-// B1 was not "the query is slow", it was "Engine.Check performs unbounded
-// synchronous disk I/O while holding e.mu": FileLogger.Query opened the audit
-// file and JSON-parsed every line, with the defaults putting that at up to
-// ~100 MiB, on a path budgeted at 3ms p99. It could also block on the audit
-// logger's own mutex mid-rotation, stalling every concurrent Check behind a
-// gzip.
+// TestCheck_NoAuditScanWhenIndexWired: with the index wired, Engine.Check
+// must not touch the audit log. The audit-scan path does unbounded
+// synchronous disk I/O while holding e.mu — FileLogger.Query JSON-parses
+// every line, up to ~100 MiB with the defaults, on a path budgeted at 3ms
+// p99 — and can block on the audit logger's own mutex mid-rotation,
+// stalling every concurrent Check behind a gzip.
 //
 // Asserting a latency number here would be flaky. Asserting that the call
 // never happens is exact — so this wires a HistoryQuerier that fails on
@@ -515,8 +509,8 @@ func TestCheck_NoAuditScanWhenIndexWired(t *testing.T) {
 }
 
 // TestCheck_PriorQuerierWinsOverLegacy: when both are wired the tenant-scoped
-// querier is authoritative, so installing the index actually closes B27 rather
-// than merely adding a second opinion.
+// querier is authoritative, so installing the index actually enforces tenant
+// scoping rather than merely adding a second opinion.
 func TestCheck_PriorQuerierWinsOverLegacy(t *testing.T) {
 	eng := NewEngineFromPolicy(priorPolicy(t, "read *"))
 	// Legacy says yes (tenant-blind); the index has nothing for this tenant.

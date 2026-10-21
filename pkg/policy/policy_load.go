@@ -54,10 +54,9 @@ func parsePolicyBytesWithWarnings(data []byte) (*Policy, []string, error) {
 	}
 
 	// Validate every rule-level rate_limit and condition.time_window
-	// duration at load time. Lazy parsing on the request path silently
-	// fell through on bad input, so a typo like `window: "1minute"`
-	// produced a no-op rule. window=0 (panic in the limiter) is also
-	// rejected here.
+	// duration at load time: the request path skips a window it cannot
+	// parse, so a typo like `window: "1minute"` would make a no-op rule,
+	// and window=0 would panic the limiter.
 	if err := validateRuleDurationsAndCounts(&pol); err != nil {
 		return nil, nil, err
 	}

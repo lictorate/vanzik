@@ -671,8 +671,8 @@ func TestHandleAuditQuery_LimitAndOffset(t *testing.T) {
 	})
 }
 
-// TestHandleAuditQuery_CustomDefaultAndMaxLimit verifies that the Phase-4
-// audit limit overrides drive both the "no ?limit supplied" default and the
+// TestHandleAuditQuery_CustomDefaultAndMaxLimit verifies that the
+// policy-supplied audit limit overrides drive both the "no ?limit supplied" default and the
 // "limit above ceiling" clamp. Uses an explicit default below the row count
 // so the default-path effect is visible, and a ceiling well below the
 // package default so the clamp path is observable without writing 1000 rows.
@@ -991,10 +991,10 @@ func TestNewServer_HasHTTPTimeouts(t *testing.T) {
 
 // --- CORS middleware ---
 
-// Backward compat (v0.4.1): empty AllowedOrigin means permissive-localhost —
-// accept http://localhost:* and http://127.0.0.1:*, reject everything else.
-// This mirrors pre-v0.4.0 behavior and is safe because the dashboard no
-// longer embeds the API key and session cookies are SameSite=Strict.
+// Empty AllowedOrigin means permissive-localhost — accept
+// http://localhost:* and http://127.0.0.1:*, reject everything else. Safe
+// because the dashboard does not embed the API key and session cookies are
+// SameSite=Strict.
 func TestCORS_EmptyAllowedOrigin_PermissiveLocalhost(t *testing.T) {
 	handler := withCORS("")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -1575,10 +1575,9 @@ func TestSessionCostSweeper_Lifecycle(t *testing.T) {
 
 	// Seed a stale entry and wait for at least two sweep ticks.
 	engine.RecordCost("s", 1.00)
-	// Backdate lastUpdated via a second RecordCost that advances time -- but we
-	// can't reach the unexported field from here. Instead, rely on the ticker:
-	// after a couple of intervals the fresh entry stays (it's not older than
-	// TTL), but we just validate the goroutine runs and Shutdown unblocks it.
+	// lastUpdated is unexported, so the entry can't be backdated from here;
+	// this only checks that the goroutine runs (the fresh entry survives)
+	// and that Shutdown unblocks it.
 	time.Sleep(20 * time.Millisecond)
 
 	// Shutdown must close sweeperDone without panicking.
@@ -1785,8 +1784,8 @@ func fileSize(path string) (int64, error) {
 	return info.Size(), nil
 }
 
-// TestRecoverMiddleware closes R3 #J. A handler panic must be caught so the
-// server returns 500 rather than tearing down the listener. The synthetic
+// TestRecoverMiddleware: a handler panic must be caught so the server
+// returns 500 rather than tearing down the listener. The synthetic
 // handler is mounted via the same recoverPanic + withCORS + withLogging
 // chain that real handlers use.
 func TestRecoverMiddleware(t *testing.T) {
@@ -1824,14 +1823,14 @@ func TestRecoverMiddleware(t *testing.T) {
 	resp.Body.Close()
 }
 
-// TestRecoverMiddleware_DoesNotAppendToCommittedBody is the B20 regression test
-// for this package's panic path.
+// TestRecoverMiddleware_DoesNotAppendToCommittedBody: once a response is
+// committed, a panic must not append an error envelope.
 //
 // The reachable case is the dashboard SSE stream (handleEventStream): it holds
 // the connection open and flushes events for its lifetime, so any panic after
 // the first event lands on an already-committed response. net/http drops the
 // second WriteHeader as superfluous but still writes the body after it, so the
-// client used to receive `<partial SSE stream>{"error":"internal server
+// client would receive `<partial SSE stream>{"error":"internal server
 // error"}` concatenated. Once committed, the only correct move is silence.
 func TestRecoverMiddleware_DoesNotAppendToCommittedBody(t *testing.T) {
 	const committed = "event: check\ndata: {\"decision\":\"ALLOW\"}\n\n"
@@ -1883,9 +1882,9 @@ func TestRecoverMiddleware_PreservesFlusher(t *testing.T) {
 	}
 }
 
-// TestRateLimitDoubleCount closes R3 #21. A rate-limited request must
-// increment ChecksTotal and DeniedTotal exactly once each (not twice as
-// in v0.4.x where IncRateLimited and IncDecision both bumped them).
+// TestRateLimitDoubleCount: a rate-limited request must increment
+// ChecksTotal and DeniedTotal exactly once each; IncRateLimited counts it
+// separately and must not bump them a second time.
 //
 // We construct a proxy server with a 1-rps rate limit, fire two requests in
 // rapid succession (the second is rate-limited), and assert the metric
@@ -1958,8 +1957,8 @@ func TestRateLimitDoubleCount(t *testing.T) {
 // --- Transport tag ---
 //
 // The MCP Gateway and the LLM API Proxy stamp meta["transport"] on
-// every /v1/check call. The server defaults unset transport to "sdk"
-// so SDK callers don't need to change. The audit entry, the SSE event
+// every /v1/check call. The server defaults unset transport to "sdk",
+// which is what SDK callers are. The audit entry, the SSE event
 // broadcast, and /v1/audit's transport= filter all read from the same
 // source.
 
@@ -1982,8 +1981,7 @@ func readLatestAuditEntry(t *testing.T, srv *Server) audit.Entry {
 func TestHandleCheck_DefaultsTransportToSDK(t *testing.T) {
 	srv := newTestServer(t)
 
-	// SDK callers don't currently emit meta["transport"]; they
-	// implicitly identify as "sdk".
+	// SDK callers omit meta["transport"]; they identify as "sdk".
 	body := `{"scope":"shell","command":"ls -la","agent_id":"sdk-bot"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/check", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -2183,8 +2181,8 @@ func TestDashboard_RenderTransportChip(t *testing.T) {
 		// on the constant name rather than the chip-class string
 		// because the latter appears verbatim in CSS too.
 		"KNOWN_TRANSPORTS",
-		// The fallback that protects pre-v0.5 audit entries from
-		// rendering as the literal word "undefined".
+		// The fallback that keeps audit entries without a transport
+		// from rendering as the literal word "undefined".
 		"entry.transport || 'sdk'",
 	}
 	for _, marker := range required {
@@ -2215,8 +2213,8 @@ func TestDashboard_EveryKnownTransportHasAChip(t *testing.T) {
 }
 
 // TestHandleCheck_TransportPassesThroughUnknownValues confirms a
-// caller stamping a value the server doesn't recognise (e.g. a
-// future "azure_ai_proxy") is preserved verbatim on the entry.
+// caller stamping a value the server doesn't recognise (e.g.
+// "azure_ai_proxy") is preserved verbatim on the entry.
 // Validation is intentionally NOT done at the proxy layer — the
 // dashboard renders unknown values with a neutral chip class.
 func TestHandleCheck_TransportPassesThroughUnknownValues(t *testing.T) {
@@ -2238,8 +2236,8 @@ func TestHandleCheck_TransportPassesThroughUnknownValues(t *testing.T) {
 	}
 }
 
-// TestTransportFromRequest_UnitTable covers the helper directly so
-// future refactors don't accidentally drop the SDK default.
+// TestTransportFromRequest_UnitTable covers the helper directly so a
+// refactor can't silently drop the SDK default.
 func TestTransportFromRequest_UnitTable(t *testing.T) {
 	cases := []struct {
 		name string
@@ -2263,7 +2261,7 @@ func TestTransportFromRequest_UnitTable(t *testing.T) {
 	}
 }
 
-// --- /v1/check approval-id round-trip (A19b) ---
+// --- /v1/check approval-id round-trip ---
 //
 // When a model retries a tool call after a human resolved the
 // approval on the dashboard, the gateway propagates the original
@@ -2440,7 +2438,7 @@ func TestHandleCheck_ApprovalIDUnknown_FallsThrough(t *testing.T) {
 func TestHandleCheck_ApprovalIDEmpty_FallsThrough(t *testing.T) {
 	srv := newTestServer(t)
 
-	// Body has no approval_id at all (legacy SDK shape). Confirms the
+	// Body has no approval_id at all. Confirms the
 	// short-circuit doesn't accidentally fire when the field is empty.
 	body := `{"scope":"shell","command":"ls -la"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/check", strings.NewReader(body))
@@ -2574,19 +2572,18 @@ func TestHandleCheck_ApprovalIDResolved_PreservesTransport(t *testing.T) {
 	}
 }
 
-// --- /v1/check approval-id REPLAY guard (B1) ---
+// --- /v1/check approval-id REPLAY guard ---
 //
 // /v1/check is intentionally unauthenticated; approval ids leak through
 // audit logs, SSE feeds, webhook payloads, and refusal text echoed to
 // the model. Without request-shape binding, anyone who learns an
 // approved id can replay it against ANY action and short-circuit to
-// ALLOW. The fix (matchesOriginalRequest) compares operationally-
-// meaningful fields between the retry and the original PendingAction
-// and falls through to fresh Engine.Check on mismatch.
+// ALLOW. matchesOriginalRequest compares operationally-meaningful
+// fields between the retry and the original PendingAction and falls
+// through to fresh Engine.Check on mismatch.
 //
-// The tests below pin one mismatch dimension each, plus a sanity
-// regression test for the legitimate-retry path. See V05 audit B1
-// (R-Sec H1, R-Stub C3).
+// The tests below pin one mismatch dimension each, plus the
+// legitimate-retry path.
 
 // newReplayTestServer builds a test server with a richer policy than
 // newTestServer's default — adds filesystem and network rules with
@@ -2809,8 +2806,8 @@ func TestHandleCheck_ApprovalIDValidRetry_SameRequestStillShortCircuits(t *testi
 	srv := newReplayTestServer(t)
 
 	// Approve and immediately retry with the SAME shape. The legitimate
-	// retry path must continue to short-circuit (this is the whole
-	// reason A19b exists; the B1 fix must not break it).
+	// retry path must still short-circuit; replay binding must not break
+	// it.
 	approvalID := seedReplayApproval(t, srv,
 		`{"scope":"shell","command":"sudo apt install vim","agent_id":"agent_a"}`)
 
@@ -2892,9 +2889,8 @@ func TestHandleCheck_ApprovalIDReplay_LogsMismatchSignal(t *testing.T) {
 }
 
 // TestMatchesOriginalRequest is a focused unit test of the helper's
-// truth table. Keeps the field-comparison contract from drifting: if a
-// future contributor adds a new ActionRequest field that should be
-// authorising, this test should be extended in the same commit.
+// truth table. Keeps the field-comparison contract from drifting: a new
+// authorising ActionRequest field must be added here in the same commit.
 func TestMatchesOriginalRequest(t *testing.T) {
 	base := policy.ActionRequest{
 		AgentID: "agent_a",
@@ -2946,9 +2942,9 @@ func TestMatchesOriginalRequest(t *testing.T) {
 	}
 }
 
-// TestDashboard_PendingCardCountsPendingList is the F77 regression test: the
-// "Pending Approval" card shows the length of /api/pending, not the
-// lifetime /api/stats approvals counter.
+// TestDashboard_PendingCardCountsPendingList: the "Pending Approval" card
+// shows the length of /api/pending, not the lifetime /api/stats approvals
+// counter.
 func TestDashboard_PendingCardCountsPendingList(t *testing.T) {
 	card := `<div class="label">Pending Approval</div><div class="value" id="stat-pending">0</div>`
 	if !strings.Contains(dashboardHTML, card) {

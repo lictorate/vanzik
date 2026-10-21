@@ -8,10 +8,10 @@ import (
 )
 
 // A request body is at most 1 MiB, so a command can be a 1 MiB chain of
-// wrappers. Each wrapper level used to join and keep every word after it,
-// so such a chain took seconds and gigabytes: past the hook's timeout,
-// which fails open by default. It must be decided quickly and with memory
-// in proportion to its size.
+// wrappers. If each wrapper level joined and kept every word after it, such
+// a chain would take seconds and gigabytes: past the hook's timeout, which
+// fails open by default. It must be decided quickly and with memory in
+// proportion to its size.
 func TestCheck_LongWrapperChainsStayCheap(t *testing.T) {
 	eng := NewEngineFromPolicy(&Policy{Version: "1", Name: "chains", Rules: []RuleSet{{
 		Scope:           "shell",

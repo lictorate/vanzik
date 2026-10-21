@@ -15,8 +15,8 @@ import (
 // would create a cycle for this white-box test).
 //
 // loadErrs injects a per-tenant GetPolicyYAML error so the refresh fault-
-// isolation tests can distinguish a LOAD failure from a PARSE failure — B22
-// has a separate branch for each and both must retain last-good.
+// isolation tests can distinguish a LOAD failure from a PARSE failure —
+// Refresh has a separate branch for each and both must retain last-good.
 // lists counts ListPolicyTenants calls, which is one refresh pass, so the
 // auto-refresh tests can assert the ticker actually fires and actually stops.
 // gets counts GetPolicyYAML calls per tenant, for the negative-cache tests.
@@ -126,8 +126,8 @@ func TestMultiTenantProvider_GetAndRefresh(t *testing.T) {
 	}
 
 	// A malformed tenant policy is reported but must not tear down the live
-	// cache. (Pre-B22 this aborted the whole refresh before the swap; see
-	// TestMultiTenantProvider_RefreshFaultIsolation for the propagation half.)
+	// cache. (See TestMultiTenantProvider_RefreshFaultIsolation for the
+	// propagation half.)
 	src.set("broken", []byte("not: valid: policy: missing version"))
 	if err := p.Refresh(context.Background()); err == nil {
 		t.Error("Refresh with a broken tenant policy should error")
@@ -137,12 +137,10 @@ func TestMultiTenantProvider_GetAndRefresh(t *testing.T) {
 	}
 }
 
-// TestMultiTenantProvider_RefreshFaultIsolation is the B22 regression test.
-//
-// Before the fix, ANY tenant's parse or load failure returned from Refresh
-// BEFORE the cache swap, so one tenant's bad edit froze policy propagation for
-// every other tenant. The assertion that matters is not "the error is
-// returned" (it always was) but "everyone else still updated".
+// TestMultiTenantProvider_RefreshFaultIsolation: one tenant's parse or load
+// failure must not freeze policy propagation for every other tenant. The
+// assertion that matters is not "the error is returned" but "everyone else
+// still updated".
 func TestMultiTenantProvider_RefreshFaultIsolation(t *testing.T) {
 	base := NewStaticPolicyProvider(&Policy{Version: "1", Name: "local"})
 	src := &fakeSource{policies: map[string][]byte{
@@ -169,7 +167,7 @@ func TestMultiTenantProvider_RefreshFaultIsolation(t *testing.T) {
 		t.Errorf("Refresh error should name the failing tenant, got %v", err)
 	}
 
-	// The point of B22: the healthy tenants' edits landed anyway.
+	// The point: the healthy tenants' edits landed anyway.
 	for tenant, want := range map[string]string{"acme": "acme-v2", "globex": "globex-v2"} {
 		pol, gErr := p.Get(tenant)
 		if gErr != nil {
@@ -182,7 +180,7 @@ func TestMultiTenantProvider_RefreshFaultIsolation(t *testing.T) {
 }
 
 // TestMultiTenantProvider_RefreshKeepsLastGoodOnFailure covers the other half
-// of B22: a tenant that fails must keep serving its PREVIOUS policy rather than
+// of fault isolation: a tenant that fails must keep serving its PREVIOUS policy rather than
 // vanishing from the swapped-in map. Exercised for both failure branches — a
 // load error and a parse error.
 func TestMultiTenantProvider_RefreshKeepsLastGoodOnFailure(t *testing.T) {
@@ -228,12 +226,10 @@ func TestMultiTenantProvider_RefreshKeepsLastGoodOnFailure(t *testing.T) {
 	}
 }
 
-// TestMultiTenantProvider_AutoRefreshPropagatesUpdates is the regression test
-// for the gap found in review: Refresh had exactly one caller — the constructor
-// — so the tenant cache was whatever the process loaded at boot. A policy
-// updated in the store for an ALREADY-CACHED tenant could never reach a running
-// server, because Get returns the cached entry and Watch is a no-op for
-// non-local tenants.
+// TestMultiTenantProvider_AutoRefreshPropagatesUpdates: a policy updated in
+// the store for an ALREADY-CACHED tenant must reach a running server. Get
+// returns the cached entry and Watch is a no-op for non-local tenants, so
+// only the auto-refresh ticker can deliver it.
 func TestMultiTenantProvider_AutoRefreshPropagatesUpdates(t *testing.T) {
 	base := NewStaticPolicyProvider(&Policy{Version: "1", Name: "local"})
 	src := &fakeSource{policies: map[string][]byte{
@@ -369,8 +365,8 @@ func TestMultiTenantProvider_AutoRefreshDisabled(t *testing.T) {
 	stop() // must not panic on a nil stop channel
 }
 
-// TestEngine_PerTenantPolicyEvaluation is the core correctness test for the
-// v0.6 multi-tenant fix: the same request gets DIFFERENT decisions under
+// TestEngine_PerTenantPolicyEvaluation is the core multi-tenant correctness
+// test: the same request gets DIFFERENT decisions under
 // different tenants, because the engine evaluates each tenant's OWN policy.
 func TestEngine_PerTenantPolicyEvaluation(t *testing.T) {
 	base := NewStaticPolicyProvider(&Policy{
@@ -466,7 +462,7 @@ func TestEngine_PerTenantConcurrent(t *testing.T) {
 	wg.Wait()
 }
 
-// TestUnknownTenantDoesNotHitStoreTwice is the F28 regression test: with
+// TestUnknownTenantDoesNotHitStoreTwice: with
 // auto-refresh running, an unregistered tenant id is remembered until the
 // next Refresh, so repeated checks against it read the store once.
 func TestUnknownTenantDoesNotHitStoreTwice(t *testing.T) {

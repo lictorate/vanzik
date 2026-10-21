@@ -17,11 +17,11 @@ import (
 	"time"
 )
 
-// TestEngineCheck_P99LatencyGate is the v1.0 CI hot-path latency gate.
+// TestEngineCheck_P99LatencyGate is the CI hot-path latency gate.
 //
 // It exercises Engine.Check on the local tenant with the persistence
-// machinery active and FAILS if p99 exceeds the <3ms budget from CLAUDE.md
-// ("Latency is God"). "Persistence ON" at the engine level means:
+// machinery active and FAILS if p99 exceeds the <3ms hot-path budget.
+// "Persistence ON" at the engine level means:
 //
 //   - cost-scoped checks take the engine write lock and mutate the
 //     session-cost accumulator (the mutable runtime state that persistence
@@ -45,7 +45,7 @@ import (
 // system-timer tick, ~0.5ms here), a sub-µs op reads 0, which would silently
 // degenerate the gate to "p99=0.000ms". To stay legible everywhere, the sampler
 // keeps calling Check until the clock advances and records the mean-per-call for
-// that span (adaptive sampler ported from the v1.0 persist integration gate), so
+// that span (same adaptive sampler as the persist integration gate), so
 // the reported p99 is always non-zero and the gate never quietly no-ops.
 func TestEngineCheck_P99LatencyGate(t *testing.T) {
 	eng := NewEngineFromPolicy(&Policy{
@@ -91,8 +91,8 @@ func TestEngineCheck_P99LatencyGate(t *testing.T) {
 		eng.Check(shellReq, LocalTenantID)
 	}
 
-	// Adaptive, coarse-clock-safe sampler (ported from the v1.0 persist
-	// integration gate). On a fine clock each span is one Check, so this is a
+	// Adaptive, coarse-clock-safe sampler (same as the persist integration
+	// gate). On a fine clock each span is one Check, so this is a
 	// true per-call p99 at ns precision; on a coarse clock the span groups
 	// enough Checks for the monotonic clock to advance and records the
 	// mean-per-Check. Every 4th call mixes in the cost path so the engine write
@@ -150,7 +150,7 @@ func TestEngineCheck_P99LatencyGate(t *testing.T) {
 	t.Logf("Engine.Check p99 gate (persistence active): p50=%.3fµs p99=%.3fµs max=%.3fµs (samples=%d, calls=%d, snapshots=%d)",
 		us(p50), us(p99), us(maxS), len(samples), totalCalls, atomic.LoadInt64(&snapshots))
 
-	// Hot-path budget (CLAUDE.md §1): p99 < 3ms. Persistence is write-behind, so
+	// Hot-path budget: p99 < 3ms. Persistence is write-behind, so
 	// the active background snapshotter must not appear on this path.
 	const budget = 3 * time.Millisecond
 	if p99 >= budget {

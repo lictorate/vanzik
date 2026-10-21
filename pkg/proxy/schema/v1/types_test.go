@@ -1,5 +1,5 @@
 // Tests for the v1 wire-protocol schema package. These tests are the
-// Go side of the cross-language contract test (R1 F7 in the audit). The
+// Go side of the cross-language contract test. The
 // Python equivalent lives at plugins/python/tests/test_wire_format.py
 // and the TypeScript equivalent at
 // plugins/typescript/src/__tests__/wire_format.test.ts. All three load
@@ -33,7 +33,7 @@ func TestActionRequest_RoundTrip(t *testing.T) {
 		SessionID:     "sess-1",
 		EstCost:       0.25,
 		Meta:          map[string]string{"k": "v", "k2": "v2"},
-		// Optional since v1.4.
+		// Optional.
 		ParentSessionID: "sess-0",
 	}
 
@@ -53,8 +53,7 @@ func TestActionRequest_RoundTrip(t *testing.T) {
 }
 
 // TestCheckResult_RoundTrip asserts that a CheckResult survives a
-// marshal/unmarshal cycle, including the schema_version field added
-// for v0.5.
+// marshal/unmarshal cycle, including the schema_version field.
 func TestCheckResult_RoundTrip(t *testing.T) {
 	original := CheckResult{
 		SchemaVersion: Version,
@@ -84,7 +83,7 @@ func TestCheckResult_RoundTrip(t *testing.T) {
 // behavior: a request with schema_version omitted decodes to an empty
 // SchemaVersion field, and the proxy is responsible for defaulting it
 // to "v1" before further processing. This locks in the contract that
-// v0.4.x clients (which do not emit schema_version) keep working.
+// clients that do not emit schema_version keep working.
 func TestActionRequest_DefaultsSchemaVersion(t *testing.T) {
 	body := []byte(`{"scope":"shell","command":"ls"}`)
 

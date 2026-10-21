@@ -27,9 +27,9 @@ const (
 //
 // SchemaVersion identifies the wire-format version. The proxy always emits
 // "v1" at response time; clients may use it to negotiate forward-
-// compatibility. The `omitempty` tag is kept so test fixtures that decode
-// the response and assert on the JSON shape stay byte-stable. The full
-// schema is documented in pkg/proxy/schema/v1/schema.json.
+// compatibility. `omitempty` keeps test fixtures that decode the response
+// and assert on the JSON shape byte-stable. The full schema is
+// pkg/proxy/schema/v1/schema.json.
 type CheckResult struct {
 	SchemaVersion string   `json:"schema_version,omitempty"`
 	Decision      Decision `json:"decision"`
@@ -57,32 +57,15 @@ type Policy struct {
 	// matcher as rule patterns); the gateway's --policy-mode strict
 	// (default) fires a second Engine.Check against the mapped scope per
 	// tool call so existing filesystem/network/shell rules apply to MCP
-	// traffic without duplication. See docs/MCP_GATEWAY.md § 4.4 and
+	// traffic without duplication. First match wins, so put more-specific
+	// patterns first. See docs/MCP_GATEWAY.md § 4.4.4 and
 	// docs/POLICY_REFERENCE.md#mcp_tool-scope.
-	//
-	// Order matters: first match wins. Operators put more-specific
-	// patterns before broader ones.
-	//
-	// Example:
-	//
-	//   tool_scope_map:
-	//     - pattern: "fs:read_file"
-	//       scope: filesystem
-	//     - pattern: "fs:*"
-	//       scope: filesystem
-	//     - pattern: "github:*"
-	//       scope: network
-	//     - pattern: "*:execute_*"
-	//       scope: shell
 	ToolScopeMap []ToolScopeMapping `yaml:"tool_scope_map,omitempty" json:"tool_scope_map,omitempty"`
 }
 
-// ToolScopeMapping is one entry in Policy.ToolScopeMap. The list form
-// (rather than an inline map) is chosen so YAML iteration order is
-// deterministic — the gateway's first-match-wins resolution depends on
-// it. Operators write a few extra lines per entry; the gateway
-// guarantees the same scope for the same tool name on every host
-// regardless of YAML library quirks.
+// ToolScopeMapping is one entry in Policy.ToolScopeMap. A list rather than
+// an inline map so iteration order is deterministic: first-match-wins
+// resolution depends on it.
 type ToolScopeMapping struct {
 	Pattern string `yaml:"pattern" json:"pattern"`
 	Scope   string `yaml:"scope" json:"scope"`
@@ -224,11 +207,10 @@ type NotifyTarget struct {
 	Timeout string `yaml:"timeout,omitempty"`
 }
 
-// LoadFromFile reads and parses a policy YAML file. The file is read,
-// parsed, and validated by the same code path that PolicyProvider.Validate
-// invokes for raw bytes — only the os.ReadFile step is unique to this
-// function. Validation errors include the YAML path so operators can find
-// the failing field without grepping.
+// LoadFromFile reads, parses and validates a policy YAML file through the
+// same code path PolicyProvider.Validate uses for raw bytes, logging any
+// load warnings. Validation errors include the YAML path of the failing
+// field.
 func LoadFromFile(path string) (*Policy, error) {
 	pol, warnings, err := LoadFromFileWithWarnings(path)
 	if err != nil {
@@ -245,10 +227,9 @@ func LoadFromFile(path string) (*Policy, error) {
 // rule written as "evil.com" must also match a request domain "EVIL.com".
 // The request side is folded in normalizeRequest on every Check; folding the
 // rule side here (instead of per-request in matchRule) keeps the hot path
-// free of a rule-side allocation. Domain patterns may contain wildcards
-// (e.g. "*.EVIL.com"); lower-casing them is safe because domains are
-// case-insensitive. Only Domain is folded — Path and Command patterns stay
-// case-sensitive.
+// free of a rule-side allocation. Lower-casing wildcard patterns
+// ("*.EVIL.com") is equally safe. Only Domain is folded — Path and Command
+// patterns stay case-sensitive.
 //
 // Covers both base rulesets and per-agent override rulesets. Slices share
 // their backing arrays through the copied map value, so writing through the
@@ -325,7 +306,6 @@ func lintPathPatterns(pol *Policy) []string {
 // validateFilesystemPaths rejects filesystem rule patterns containing ".."
 // after normalization. This prevents policy authors from accidentally
 // writing traversal-prone patterns like "./workspace/../../etc/**".
-// Factored out of LoadFromFile so PolicyProvider.Validate can reuse it.
 func validateFilesystemPaths(pol *Policy) error {
 	for _, rs := range pol.Rules {
 		if rs.Scope != "filesystem" {
@@ -533,10 +513,8 @@ func errorTimeWindowOnlyConditions(pol *Policy) error {
 // must parse with time.ParseDuration and be strictly positive when present;
 // byte and row limits must be strictly positive when present; audit MaxLimit,
 // if set, must be >= audit DefaultLimit (including the case where one is set
-// explicitly and the other relies on its default).
-//
-// Called from LoadFromFile after schema-level parsing. Errors returned here
-// include the YAML path so operators can fix the right key without greping.
+// explicitly and the other relies on its default). Errors include the YAML
+// path.
 func validateTunables(pol *Policy) error {
 	if s := pol.Proxy.Session.TTL; s != "" {
 		d, err := time.ParseDuration(s)
@@ -716,19 +694,18 @@ type sessionCostEntry struct {
 }
 
 // sessionCostKey partitions the cost accumulator by (tenant, session) so two
-// tenants that happen to reuse the same session_id never share a budget
-// A struct key is collision-free regardless of what
-// characters tenant/session IDs contain — unlike a concatenated string key.
+// tenants that happen to reuse the same session_id never share a budget. A
+// struct key is collision-free regardless of what characters tenant/session
+// IDs contain — unlike a concatenated string key.
 type sessionCostKey struct {
 	tenant  string
 	session string
 }
 
-// Engine evaluates actions against a policy. The policy itself is owned
-// by a PolicyProvider (file-backed, static, or a future database-backed
-// impl), not by the Engine. Engine caches the latest *Policy for the local
-// tenant via a Watch subscription so that Check() does not pay a provider
-// lookup on every request.
+// Engine evaluates actions against a policy. The policy itself is owned by
+// a PolicyProvider, not by the Engine. Engine caches the latest *Policy for
+// the local tenant via a Watch subscription so that Check() does not pay a
+// provider lookup on every request.
 //
 // Caching strategy: the cached pointer is refreshed whenever the provider
 // fires its watch callback (for FilePolicyProvider, on every successful
@@ -741,8 +718,8 @@ type Engine struct {
 	policy    *Policy // cached snapshot for LocalTenantID; refreshed by watchStop
 	watchStop func()
 	history   HistoryQuerier
-	// priorQuerier is the tenant-scoped replacement for history. When set it
-	// wins; history remains only as the legacy fallback.
+	// priorQuerier is the tenant-scoped source for require_prior; when set it
+	// wins over history.
 	priorQuerier PriorActionQuerier
 	sessionCosts map[sessionCostKey]sessionCostEntry // (tenant, session_id) -> entry
 
@@ -820,10 +797,8 @@ func (e *Engine) onPolicyChange(newPol *Policy) {
 	e.mu.Lock()
 	e.policy = newPol
 	e.mu.Unlock()
-	// Stamp the load timestamp outside the engine lock so a slow health
-	// probe never serializes against Check. The value is monotonic-ish
-	// (wall clock) — operators querying it get RFC 3339 timestamps for
-	// human display, not for distributed-systems ordering.
+	// Stamp outside the engine lock so a slow health probe never serializes
+	// against Check. Wall clock, for display only, not for ordering.
 	e.noteLoad()
 }
 
@@ -866,23 +841,15 @@ func (e *Engine) SetHistoryQuerier(h HistoryQuerier) {
 	e.history = h
 }
 
-// RecordCost adds the cost of a completed action to the local tenant's
-// session accumulator. Called by the proxy after a check returns ALLOW for a
-// cost-scoped request.
-//
-// Note: callers should prefer CheckAndReserve in Check() when possible, which
-// updates the accumulator atomically with the Allow decision. RecordCost is
-// retained for backfill or out-of-band accounting.
-//
-// Backward-compat: this single-tenant signature is preserved for embedders;
-// it resolves to LocalTenantID. Tenant-aware out-of-band accounting uses
-// recordCost directly (the Store syncer will expose this when needed).
+// RecordCost adds cost to the local tenant's session accumulator, for
+// backfill or out-of-band accounting. Check already reserves the cost of a
+// cost-scoped ALLOW atomically with the decision; calling RecordCost for
+// the same action would double-count.
 func (e *Engine) RecordCost(sessionID string, cost float64) {
 	e.recordCost(LocalTenantID, sessionID, cost)
 }
 
-// recordCost is the tenant-aware accumulator increment shared by RecordCost
-// (local) and any future tenant-scoped caller.
+// recordCost is the tenant-aware accumulator increment behind RecordCost.
 func (e *Engine) recordCost(tenantID, sessionID string, cost float64) {
 	if sessionID == "" || cost <= 0 {
 		return
@@ -898,7 +865,7 @@ func (e *Engine) recordCost(tenantID, sessionID string, cost float64) {
 
 // RefundCost subtracts from the local tenant's session accumulator. Used if a
 // reserved cost is rolled back (e.g. a downstream action failed after the
-// policy allowed it). Preserved single-tenant signature → LocalTenantID.
+// policy allowed it).
 func (e *Engine) RefundCost(sessionID string, cost float64) {
 	if sessionID == "" || cost <= 0 {
 		return
@@ -916,7 +883,7 @@ func (e *Engine) RefundCost(sessionID string, cost float64) {
 }
 
 // SessionCost returns the accumulated cost for a session under the local
-// tenant (for testing). Preserved single-tenant signature → LocalTenantID.
+// tenant (for testing).
 func (e *Engine) SessionCost(sessionID string) float64 {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -988,8 +955,8 @@ func (e *Engine) RestoreCosts(snaps []CostSnapshot) {
 // costApplyChunk bounds how many CostDelta entries ApplyCostDeltas processes
 // under a single write-lock acquisition. checkCost also takes e.mu for write;
 // holding it for a whole O(n) reconcile pass would serialize cost-scoped checks
-// behind reconcile and threaten the hot-path budget (CLAUDE.md §1). We acquire,
-// apply K, release, repeat.
+// behind reconcile and threaten the hot-path budget. We acquire, apply K,
+// release, repeat.
 const costApplyChunk = 128
 
 // CostDelta is a background adjustment to one (tenant, session) cost
@@ -1008,7 +975,7 @@ type CostDelta struct {
 // of multi-node cost reconciliation and runs ONLY on the background syncer
 // goroutine — never on the /v1/check hot path.
 //
-// Semantics (CLAUDE.md §1/§3/§4 safe):
+// Semantics:
 //   - Partitioned by (tenant, session): a delta for tenant A can never move
 //     tenant B's budget (the same zero-trust key used by checkCost).
 //   - Chunked locking: at most costApplyChunk (K≈128) entries per lock hold, so
@@ -1061,9 +1028,7 @@ func (e *Engine) Policy() *Policy {
 // ErrTenantNotFound when the tenant is unknown.
 //
 // Used by /v1/health and the /v1/t/{tenant}/health endpoint to validate
-// the requested tenant before composing the response. The hot path
-// (Engine.Check) goes through the existing dispatch logic and remains
-// unchanged.
+// the requested tenant before composing the response.
 func (e *Engine) PolicyForTenant(tenantID string) (*Policy, error) {
 	if tenantID == "" || tenantID == LocalTenantID {
 		e.mu.RLock()
@@ -1099,34 +1064,24 @@ type ActionRequest struct {
 	EstCost       float64           `json:"est_cost,omitempty"`
 	Meta          map[string]string `json:"meta,omitempty"`
 
-	// ApprovalID, when set, instructs the central server's handleCheck
-	// to look up the approval queue before running policy. If a matching
-	// entry exists and is resolved, the server short-circuits with the
-	// human's resolved decision rather than re-evaluating policy from
-	// scratch. This is what makes the "approve once, model proceeds" UX
-	// work: when a model retries a tool call after a human clicks
-	// approve on the dashboard, the gateway propagates the original
-	// approval_id (carried through MCP `_meta.dev.vanzik/approval_id`)
-	// and the server honors the human's decision instead of producing a
-	// fresh REQUIRE_APPROVAL entry.
+	// ApprovalID, when set, makes the server's handleCheck consult the
+	// approval queue before running policy: a resolved entry short-circuits
+	// to the human's decision instead of a fresh REQUIRE_APPROVAL. On a
+	// retry after a dashboard approval the gateway propagates it from MCP
+	// `_meta.dev.vanzik/approval_id`. Empty → fresh evaluation.
 	//
-	// Empty / unset → server evaluates fresh (legacy behavior; back-
-	// compat for SDK callers and any client that strips _meta).
-	//
-	// Wire-protocol note: the field is `omitempty` so existing v1
-	// clients that never set it serialize byte-for-byte identically to
-	// pre-A19b traffic. Engine.Check itself does NOT inspect this field —
-	// the lookup short-circuit lives in pkg/proxy.handleCheck so the
-	// approval queue (a server-side construct) is not dragged into the
-	// pure policy package.
+	// `omitempty` keeps v1 clients that never set it byte-identical on the
+	// wire. Engine.Check does NOT inspect this field: the short-circuit
+	// lives in pkg/proxy.handleCheck so the approval queue stays out of
+	// the policy package.
 	ApprovalID string `json:"approval_id,omitempty"`
 
 	// ParentSessionID names the session that started this one: an
 	// orchestrator's session for a sub-agent's calls. Policy ignores it;
 	// it is recorded in the audit log so GET /v1/sessions can show which
 	// sessions belong together. omitempty keeps requests without it, and
-	// the audit lines written for them, byte-identical to before it
-	// existed (sealed logs still verify).
+	// the audit lines written for them, byte-identical, so sealed logs
+	// still verify.
 	ParentSessionID string `json:"parent_session_id,omitempty"`
 
 	// domainPort is the port the request named, in its domain field
@@ -1144,18 +1099,15 @@ type ActionRequest struct {
 // ("" and "local" are accepted) is always valid; an unknown tenant
 // returns a synthetic DENY with Rule="deny:tenant:not_found".
 //
-// Bad-tenant is surfaced as a CheckResult Deny rather than an error
-// because the existing handleCheck flow already routes Deny through the
-// audit + notify + response path; introducing a separate error channel
-// would force every caller to add bespoke fallback logic for a case the
-// CheckResult schema already covers. Future providers that need to
-// distinguish "tenant unknown" from "tenant denied" can do so via
-// Rule="deny:tenant:not_found" (the canonical sentinel).
+// Bad-tenant is a Deny rather than an error so it flows through
+// handleCheck's audit + notify + response path like any other Deny;
+// Rule="deny:tenant:not_found" is the canonical sentinel for "tenant
+// unknown".
 //
 // For cost-scoped requests that are ALLOWed, the session accumulator is
 // incremented atomically under the same write lock as the decision, so
 // concurrent checks on the same session_id cannot collectively exceed the
-// configured max_per_session limit (TOCTOU fix).
+// configured max_per_session limit (no TOCTOU window).
 func (e *Engine) Check(req ActionRequest, tenantID string) CheckResult {
 	if tenantID == "" {
 		tenantID = LocalTenantID
@@ -1275,14 +1227,10 @@ func (e *Engine) evalScope(rules []RuleSet, req ActionRequest, tenantID string, 
 			return e.checkCost(rs, req, tenantID), true
 		}
 
-		// Data scope: gates form inputs, browser data exfiltration, and
-		// any other "value-bearing" action where the operator wants to
-		// apply PII / credential rules independently of the broader
-		// browser/network scopes. No scope-specific custom logic here —
-		// matching uses the standard Pattern (against req.Command, which
-		// carries the redacted form value), Domain (against req.URL /
-		// req.Domain), and Action (against req.Action — typically
-		// "form_input"). Default-deny applies when no rule matches.
+		// Data scope (form inputs, browser data exfiltration) has no
+		// scope-specific logic: standard Pattern (req.Command carries the
+		// redacted form value), Domain and Action ("form_input") matching
+		// below, then default deny.
 		//
 		// TODO(#data-pii): regex / classifier-based PII patterns
 		// (SSN, credit-card numbers, AWS keys) baked into a built-in
@@ -1613,7 +1561,6 @@ func resolveRules(pol *Policy, agentID string) []RuleSet {
 		return pol.Rules
 	}
 
-	// Build a map of overridden scopes
 	overridden := make(map[string]RuleSet, len(agentCfg.Override))
 	for _, rs := range agentCfg.Override {
 		overridden[rs.Scope] = rs
@@ -1624,7 +1571,6 @@ func resolveRules(pol *Policy, agentID string) []RuleSet {
 		mode = OverrideModeMerge
 	}
 
-	// Merge: combine overrides with base per the resolved mode.
 	var merged []RuleSet
 	seen := make(map[string]bool)
 
@@ -1813,8 +1759,7 @@ func normalizeRequest(req ActionRequest) ActionRequest {
 	req.Domain = strings.ToLower(stripControl(req.Domain))
 	req.URL = stripControl(req.URL)
 	// A request that carries only a URL is matched by its host, as the
-	// policy reference documents; before, domain rules never matched it and
-	// every url-only network/browser check fell through to default deny.
+	// policy reference documents.
 	if req.Domain == "" && req.URL != "" {
 		req.Domain, req.domainPort = urlHost(req.URL)
 	} else {
@@ -2004,9 +1949,8 @@ func matchRule(rule Rule, req ActionRequest) bool {
 
 // globMatch performs glob pattern matching supporting * and **.
 //
-// Pattern semantics — STABLE CONTRACT (documenting the
-// asymmetry between path and domain matching; the rules below ARE the
-// specification — there is no other document to consult):
+// Pattern semantics — STABLE CONTRACT; the rules below are the
+// specification:
 //
 //  1. Path patterns are segment-aware ONLY when they contain `**`:
 //     - A pattern containing `**` is split on `/`. Each segment except `**`
@@ -2023,9 +1967,9 @@ func matchRule(rule Rule, req ActionRequest) bool {
 //     segment-aware. It is matched with whole-string wildcardMatch (case 3),
 //     whose single `*` is greedy across `/`. So `/workspace/*` matches
 //     `/workspace/a/b/secret.env`, not just direct children of
-//     `/workspace`. This is the code's actual behavior; if you want to
-//     limit a `*` to a single segment, there is no such spelling — use an
-//     explicit deeper pattern, and use `**` when recursion is intended.
+//     `/workspace`. There is no spelling that limits a `*` to a single
+//     segment — use an explicit deeper pattern, and use `**` when
+//     recursion is intended.
 //     Policy load emits a non-fatal lint warning for such patterns (see
 //     lintPathPatterns).
 //
@@ -2040,13 +1984,10 @@ func matchRule(rule Rule, req ActionRequest) bool {
 //     - Same as domain: wildcardMatch. `*` is greedy across `/`, spaces,
 //     and dots.
 //
-// The asymmetry between (1) and (2) is intentional and documented:
-//   - Path `**` is segment-aware (designed for filesystem trees) and
-//     matches zero or more segments.
-//   - Domain `*` is character-aware (designed for hostname allowlists)
-//     and requires at least one char.
-//
-// If you find this asymmetry confusing, prefer explicit literals:
+// The asymmetry between (1) and (2) is intentional: path `**` is
+// segment-aware and matches zero or more segments; domain `*` is
+// character-aware and requires at least one char. Explicit literals
+// sidestep it:
 //   - For "everything under /etc but not /etc itself": use both
 //     `/etc/**` and a separate explicit deny on `/etc`.
 //   - For "foo.com and any subdomain": list both `foo.com` and `*.foo.com`.
@@ -2201,10 +2142,10 @@ const (
 //  1. PriorActionQuerier (preferred) — tenant-scoped, O(1) for a literal
 //     pattern, no allocation, no I/O. Neither cross-tenant nor
 //     synchronous: no audit-log scan runs under e.mu.
-//  2. HistoryQuerier (legacy fallback) — kept because the interface is frozen
-//     v1.0 surface and an embedder may have wired only this one. It carries no
-//     tenant, so it is announced once at WARNING level rather than silently
-//     answering a tenant-scoped question with cross-tenant data.
+//  2. HistoryQuerier (fallback) — public API, and an embedder may have wired
+//     only this one. It carries no tenant, so it is announced once at
+//     WARNING level rather than silently answering a tenant-scoped question
+//     with cross-tenant data.
 //
 // Returns conditionNotMet when neither is configured: with no history source
 // there is no prior action (this is what offline `vanzik check` sees).

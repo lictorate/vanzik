@@ -1,32 +1,27 @@
 package proxy
 
-// at_b1_adversarial_test.go — AT (Test Wrangler) audit-fixup verification.
+// Adversarial approval-id replay tests for matchesOriginalRequest, the
+// guard before resolvedApprovalToResult short-circuits on req.ApprovalID.
+// server_test.go covers the seven compared fields (AgentID, Scope, Command,
+// Path, Domain, URL, Action) and the legitimate retry; these cover what an
+// attacker would probe next:
 //
-// F3 closed audit blocker B1 by adding matchesOriginalRequest as a guard
-// before resolvedApprovalToResult short-circuits on req.ApprovalID. F3's
-// own tests cover the seven compared fields (AgentID, Scope, Command,
-// Path, Domain, URL, Action) and the legitimate-retry sanity. AT adds
-// six adversarial scenarios that an attacker would naturally probe:
-//
-//   1. Tenant ID — does cross-tenant replay short-circuit? (As of v0.6,
-//      ApprovalQueue.Lookup/Resolve are tenant-scoped: the tenant travels in
-//      the /v1/t/{tenant}/... path, and a foreign tenant's id resolves to
-//      "not found" — see TestApprovalQueueTenantIsolation.)
+//   1. Tenant ID — ApprovalQueue.Lookup/Resolve are tenant-scoped: the
+//      tenant travels in the /v1/t/{tenant}/... path, and a foreign tenant's
+//      id resolves to "not found" (see TestApprovalQueueTenantIsolation).
 //   2. Case sensitivity — agent_id "AGENT_A" vs "agent_a"; should NOT match.
 //   3. Trailing whitespace — command "ls -la " vs "ls -la"; should NOT match.
 //   4. Meta vs top-level approval_id — only top-level honored by proxy
 //      (gateways set both; proxy itself does not auto-promote Meta).
-//   5. Resolved-DENIED replay — fresh policy evaluation runs (no security
-//      issue per se because mismatch falls through to fresh policy).
-//   6. Pending replay — A19b's pending-still-pending path co-exists with
-//      F3's mismatch validation: same pending id, matching shape returns
-//      REQUIRE_APPROVAL with the same id; mismatched shape falls through.
+//   5. Resolved-DENIED replay — a mismatched shape falls through to fresh
+//      policy evaluation, as for ALLOW.
+//   6. Pending replay — same pending id: a matching shape returns
+//      REQUIRE_APPROVAL with the same id; a mismatched shape falls through.
 //
 // Every test drives the production handleCheck via httptest with the
 // real Engine — no SUT mocks. Each test asserts observable behavior
-// (rule string, decision, metric counter, response body) tied to the
-// fix; any of these would fail if F3's matchesOriginalRequest were
-// reverted.
+// (rule string, decision, metric counter, response body) that would
+// change without matchesOriginalRequest.
 
 import (
 	"context"
@@ -69,8 +64,8 @@ func driveCheckViaMux(t *testing.T, srv *Server, method, path, body string) (pol
 // one of the fields matchesOriginalRequest compares — replay validation is
 // purely shape-based.
 //
-// ActionRequest carries no tenant field (R-Arch A2/A3 — tenant is plumbed
-// through the URL path + context, not the wire shape), so two requests that
+// ActionRequest carries no tenant field (the tenant is plumbed through the
+// URL path + context, not the wire shape), so two requests that
 // differ only by which route carried them are indistinguishable to
 // matchesOriginalRequest.
 //
@@ -258,10 +253,10 @@ func TestAT_B1_Adversarial_MetaApprovalID_LiteralVsTopLevel(t *testing.T) {
 // policy decision is what the caller sees — not the cached DENY.
 //
 // Edge case: if the policy was edited between the original deny and
-// the retry, the retry could legitimately resolve to ALLOW. AT
-// confirms that's the intended semantics — fall-through, not "deny
-// any request that has ever been denied". Caching the DENY would be
-// safer-on-default but breaks legitimate policy-edit retry flows.
+// the retry, the retry could legitimately resolve to ALLOW. That is the
+// intended semantics — fall-through, not "deny any request that has ever
+// been denied". Caching the DENY would be safer-on-default but breaks
+// legitimate policy-edit retry flows.
 func TestAT_B1_Adversarial_ResolvedDeniedReplay(t *testing.T) {
 	srv := newReplayTestServer(t)
 
@@ -316,11 +311,11 @@ func TestAT_B1_Adversarial_ResolvedDeniedReplay(t *testing.T) {
 }
 
 // TestAT_B1_Adversarial_PendingReplay asserts the still-pending
-// approval path interacts correctly with F3's mismatch guard. A19b's
-// design: a retry with a matching-shape pending approval id returns
-// REQUIRE_APPROVAL with the SAME id (so polling clients keep waiting
-// rather than spawning a duplicate queue entry). After F3, mismatched
-// shape on a pending id must fall through to fresh policy.
+// approval path interacts correctly with the mismatch guard: a retry with
+// a matching-shape pending approval id returns REQUIRE_APPROVAL with the
+// SAME id (so polling clients keep waiting rather than spawning a
+// duplicate queue entry), and a mismatched shape on a pending id falls
+// through to fresh policy.
 func TestAT_B1_Adversarial_PendingReplay(t *testing.T) {
 	srv := newReplayTestServer(t)
 
@@ -351,8 +346,7 @@ func TestAT_B1_Adversarial_PendingReplay(t *testing.T) {
 	}
 
 	// Matching-shape retry: must short-circuit to require_approval:pending
-	// with the SAME id (A19b's design — closes "duplicate queue entry on
-	// retry while pending" leak).
+	// with the SAME id, not a duplicate queue entry.
 	bodyMatch := fmt.Sprintf(
 		`{"scope":"shell","command":"sudo apt install vim","agent_id":"agent_a","approval_id":%q}`,
 		approvalID,

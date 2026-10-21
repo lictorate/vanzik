@@ -13,8 +13,6 @@ package proxy
 // every per-request store: Engine.Check (policy + cost accumulator), the
 // rate limiter (bucket key "scope:tenant:agent"), the ApprovalQueue
 // (Lookup/Resolve/List/SSE), and the audit query (QueryFilter.TenantID).
-// Legacy /v1/... routes resolve to the "local" tenant, so single-tenant
-// deployments are unchanged.
 //
 // Durability of that tenant-keyed state is a separate concern, handled
 // off the hot path: pkg/store persists it to SQLite/Postgres and
@@ -29,10 +27,8 @@ import (
 	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
-// tenantCtxKeyT is the unexported context-key type for the tenant ID. Using
-// a typed key keeps the value out of the context.WithValue type-safety
-// gotchas (a string key would collide with any caller that happens to use
-// the same string).
+// tenantCtxKeyT is the unexported context-key type for the tenant ID; a
+// string key would collide with any caller that uses the same string.
 type tenantCtxKeyT struct{}
 
 var tenantCtxKey = tenantCtxKeyT{}
@@ -70,24 +66,21 @@ func effectiveTenant(t string) string {
 func tenantsMatch(a, b string) bool { return effectiveTenant(a) == effectiveTenant(b) }
 
 // withTenant is the route middleware applied to every /v1/t/{tenant}/...
-// route. It extracts the tenant via r.PathValue("tenant") (Go 1.22+
-// wildcard syntax), validates it against the engine's PolicyProvider,
-// stamps it on the request context, and forwards to the wrapped handler.
+// route. It extracts the tenant via r.PathValue("tenant"), validates it
+// against the engine's PolicyProvider, stamps it on the request context,
+// and forwards to the wrapped handler.
 //
 // Validation policy:
-//   - Empty tenant — coerced to LocalTenantID. The mux never actually
-//     produces an empty match for `{tenant}` (Go 1.22+ requires the
-//     segment to be non-empty), but defensive coercion keeps the
-//     behavior predictable if a future router rewrite changes that.
+//   - Empty tenant — coerced to LocalTenantID. The mux never produces an
+//     empty `{tenant}` match; the coercion is defensive.
 //   - tenant == LocalTenantID — fast-path: skip the provider lookup so
 //     the hot path stays equivalent to the legacy URL family.
 //   - Any other tenant — consult Engine.PolicyForTenant. ErrTenantNotFound
 //     surfaces as 404 + structured JSON body. Any other error is
 //     surfaced as 500 (provider infrastructure issue).
 //
-// The 404 body shape matches the /v1/t/{tenant}/health 404 (added by
-// A10), so SDKs and operators see a single error envelope across every
-// tenant-aware endpoint.
+// The 404 body shape matches the /v1/t/{tenant}/health 404, so SDKs and
+// operators see a single error envelope across every tenant-aware endpoint.
 func (s *Server) withTenant(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenant := r.PathValue("tenant")

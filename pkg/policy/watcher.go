@@ -16,7 +16,7 @@ import (
 // be initialised (e.g. inotify exhaustion, unsupported filesystem). fsnotify
 // is preferred because it reacts immediately to atomic-replace edits; polling
 // is bounded-latency but imposes real wall-clock delay between `kubectl
-// apply` and the Guard noticing the new policy.
+// apply` and the server noticing the new policy.
 const DefaultPollInterval = 2 * time.Second
 
 // FileWatcher watches a policy file for changes and triggers a callback.
@@ -143,13 +143,9 @@ func (w *FileWatcher) poll() {
 // can fix it and the next event/tick picks up the good version.
 //
 // modTime tracks the last *successfully processed* version. It is NOT
-// updated on parse failure: doing so used to "consume" the failed
-// mtime, so a follow-up good save that happened to be timestamped
-// earlier than the failed mtime (e.g. after a test bumped mtime into
-// the future to force advancement) was silently skipped. Updating
-// only on success means a bad save can be repaired by any subsequent
-// write — the next event sees the current mtime is still > the last
-// good one and re-attempts parse.
+// updated on parse failure, so a bad save can be repaired by any later
+// write, even one timestamped earlier than the failed save: the next event
+// sees an mtime still > the last good one and re-attempts parse.
 func (w *FileWatcher) reload() {
 	info, err := os.Stat(w.path)
 	if err != nil {
@@ -171,13 +167,9 @@ func (w *FileWatcher) reload() {
 	w.mu.Lock()
 	w.modTime = info.ModTime()
 	w.mu.Unlock()
-	// Wrap the user callback in safeCallback so a panic does not kill
-	// the watcher goroutine. In production the callback is
-	// FilePolicyProvider.onPolicyChange which fans out to each
-	// registered Watch consumer; safeCallback is also used inside
-	// onPolicyChange so a single misbehaving consumer cannot starve
-	// the rest. Defending here belt-and-braces guards direct
-	// WatchFile callers (tests, future providers).
+	// safeCallback keeps a panicking callback from killing the watcher
+	// goroutine. FilePolicyProvider.onPolicyChange also wraps each
+	// consumer; this guards direct WatchFile callers.
 	safeCallback(w.callback, pol)
 }
 
