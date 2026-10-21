@@ -46,6 +46,11 @@ tests:
     request: {scope: cost, est_cost: 100, session_id: day1, agent_id: bot}
     expect: ALLOW
 
+  - name: a trade between the alert threshold and the per-action limit needs approval
+    request: {scope: cost, est_cost: 400, session_id: day1, agent_id: bot}
+    expect: REQUIRE_APPROVAL
+    expect_rule: "require_approval:cost:alert_threshold"
+
   - name: a trade over the per-action limit is denied
     request: {scope: cost, est_cost: 750, session_id: day1, agent_id: bot}
     expect: DENY

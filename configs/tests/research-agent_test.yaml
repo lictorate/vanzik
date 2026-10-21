@@ -100,6 +100,11 @@ tests:
     expect: ALLOW
     expect_rule: "allow:cost:within_limits"
 
+  - name: an action between the alert threshold and the per-action limit needs approval
+    request: {scope: cost, est_cost: 0.20, session_id: s1, agent_id: researcher}
+    expect: REQUIRE_APPROVAL
+    expect_rule: "require_approval:cost:alert_threshold"
+
   - name: an action over the per-action limit is denied
     request: {scope: cost, est_cost: 0.50, session_id: s1, agent_id: researcher}
     expect: DENY

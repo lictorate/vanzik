@@ -120,7 +120,7 @@ rules:
     limits:
       max_per_action: "$0.25"
       max_per_session: "$15.00"
-      alert_threshold: "$10.00"
+      alert_threshold: "$0.15"   # must be below max_per_action, which is checked first
 
 notifications:
   approval_required:

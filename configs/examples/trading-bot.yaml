@@ -47,7 +47,7 @@ rules:
     limits:
       max_per_action: "$500"
       max_per_session: "$5000"
-      alert_threshold: "$2000"
+      alert_threshold: "$250"   # must be below max_per_action, which is checked first
 
   # --- Filesystem: Log access only ---
   - scope: filesystem
