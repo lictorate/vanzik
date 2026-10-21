@@ -107,16 +107,17 @@ is the proxy's credential for the central server's `/v1/check`.
 The proxy is **dumb on auth**: it forwards `Authorization`,
 `x-api-key` (Anthropic), `OpenAI-Organization`, `OpenAI-Project`, and
 all other request headers to the upstream **verbatim** — except
-hop-by-hop headers and the proxy's own `X-Vanzik-Proxy-Auth` (§ 8.1),
-which are dropped. The proxy
+hop-by-hop headers, the proxy's own `X-Vanzik-Proxy-Auth` (§ 8.1) and
+`X-Vanzik-Approval-ID` (§ 11.3), which are dropped. The proxy
 never reads the user's bearer token; the upstream is responsible for
 auth. The `Authorization` header for the **central guard server** is a
 separate concern (see § 3.2) — the proxy adds it on the
 `/v1/check` side channel only, never on the upstream-forwarded request.
 
-`User-Agent` is rewritten to include a `vanzik-llm-proxy/<version>`
-suffix so server-side logs at OpenAI/Anthropic can identify
-proxied traffic. Spec-compliant: `User-Agent` is mutable per RFC 7231.
+`User-Agent` is rewritten to start with `vanzik-llm-proxy/<version>`,
+followed by the client's original User-Agent when it sent one
+(`vanzik-llm-proxy/2.0.0 openai-python/1.x`), so server-side logs at
+OpenAI/Anthropic can identify proxied traffic. Spec-compliant: `User-Agent` is mutable per RFC 7231.
 
 The `Host` header is rewritten to the upstream's authority. Cookie
 headers (rare for LLM APIs) are forwarded unchanged.
@@ -161,9 +162,9 @@ Two paths:
 
 ### 3.3 Pass-through endpoints
 
-`/v1/embeddings` and `/v1/models` are forwarded with one audit entry
-(`scope: "network"`, `transport: "llm_api_proxy"`) but **no policy
-check** — there are no tool calls in the response. This is honest
+`/v1/embeddings` and `/v1/models` are forwarded as-is, with **no
+policy check and no audit entry** — there are no tool calls in the
+response, so nothing reaches `/v1/check`. This is honest
 about coverage: the proxy is for tool-call gating, not for blocking
 the agent from talking to the model.
 
@@ -177,29 +178,30 @@ policy YAML, mirroring the MCP gateway approach (§ 4.4 of
 
 ### 4.1 Built-in defaults
 
-```go
-var defaultLLMToolScopeMap = []toolScopePattern{
-    // exact / glob name              scope         path-arg          url-arg     action
-    {"bash",                          "shell",      "",               "",         ""},
-    {"run_command",                   "shell",      "",               "",         ""},
-    {"execute_command",               "shell",      "",               "",         ""},
-    {"shell",                         "shell",      "",               "",         ""},
-    {"read_file",                     "filesystem", "path,file_path", "",         "read"},
-    {"write_file",                    "filesystem", "path,file_path", "",         "write"},
-    {"edit_file",                     "filesystem", "path,file_path", "",         "write"},
-    {"delete_file",                   "filesystem", "path,file_path", "",         "delete"},
-    {"list_directory",                "filesystem", "path,file_path", "",         "read"},
-    {"glob",                          "filesystem", "path",           "",         "read"},
-    {"grep",                          "filesystem", "path",           "",         "read"},
-    {"web_search",                    "network",    "",               "url,query","search"},
-    {"fetch_url",                     "network",    "",               "url",      "fetch"},
-    {"http_request",                  "network",    "",               "url",      ""},
-    {"playwright_*",                  "browser",    "",               "url",      ""},
-    {"browser_*",                     "browser",    "",               "url",      ""},
-    {"navigate",                      "browser",    "",               "url",      "navigate"},
-    {"click",                         "browser",    "",               "",         "click"},
-}
-```
+`DefaultLLMToolScopeMap` in
+[`pkg/llmproxy/scope_map.go`](../pkg/llmproxy/scope_map.go) is a
+`[]policy.ToolScopeMapping{Pattern, Scope}` list: a tool name (exact,
+case-sensitive, or a `prefix_*` glob) and the scope it gates under.
+It has 47 entries:
+
+| Scope | Patterns |
+|---|---|
+| `shell` | `Bash`, `PowerShell`, `bash`, `sh`, `shell`, `run_command`, `execute_command`, `cmd`, `system`, `exec` |
+| `filesystem` | `Read`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `Glob`, `Grep`, `read_file`, `write_file`, `list_directory`, `list_files`, `file_read`, `file_write`, `edit_file`, `delete_file`, `create_directory`, `ls`, `cat`, `find`, `glob` |
+| `network` | `WebFetch`, `web_search`, `fetch_url`, `http_request`, `http_get`, `http_post`, `search`, `fetch`, `url_request` |
+| `browser` | `playwright_*`, `browser_*`, `chrome_*`, `firefox_*`, `selenium_*`, `navigate`, `click`, `screenshot` |
+
+The capitalised names are Claude Code's built-in tools. A mapping
+carries no argument names: which arguments feed the check is fixed per
+scope (`pkg/llmproxy/gate.go`):
+
+| Scope | `command` | Other fields |
+|---|---|---|
+| `shell` | the `command` / `cmd` / `script` / `code` argument; else the tool name | — |
+| `filesystem` | `<tool_name> <path>` | `path` from `path`, `file_path`, `notebook_path`, `filepath`, `target`, `target_path`, `filename`, `file`, `destination`, `src` or `dst`; `action` inferred from the tool name (read / write / delete …) |
+| `network` | `<tool_name> <url>` | `url` from `url`, `uri`, `endpoint` or `target_url`; `domain` from that URL's host, else a `domain` / `host` / `hostname` argument |
+| `browser` | `<tool_name> <url>` | `url` and `domain` as for `network`; `action` is the tool name |
+| `unmapped` | the tool name | — |
 
 ### 4.2 Policy-YAML override
 
@@ -221,8 +223,8 @@ semantics as the MCP gateway.
 ### 4.3 Unmapped tools
 
 A tool name that matches **no** built-in or policy entry is dispatched
-as `scope: "unmapped"` with the tool name in `command` and the
-arguments in `meta["arguments_json"]` (redacted).
+as `scope: "unmapped"` with the tool name in `command` and each
+top-level argument as a redacted `meta["arg_<key>"]` entry.
 
 Operators MUST configure an `unmapped` scope rule to control behaviour:
 
@@ -235,20 +237,6 @@ Operators MUST configure an `unmapped` scope rule to control behaviour:
 If no `unmapped` rule exists, the engine's standard fall-through
 default-deny applies — fail-closed by design. A tool the policy
 author has not seen is, by Vanzik's policy contract, denied.
-
-### 4.4 Multiple-arg scope upgrades
-
-Some tools take both `path` and `url` (e.g., a `download_to_file`
-tool). The mapping resolves to the **most-specific scope inferred from
-arguments** at check time:
-
-- `path` present → `filesystem`,
-- `url` present → `network`,
-- both present → **two checks** dispatched (filesystem AND network); both
-  must allow.
-
-This mirrors the MCP gateway's dual-check pattern but applied to a
-single tool definition rather than a wrapping `mcp_tool` scope.
 
 ---
 
@@ -372,22 +360,13 @@ Critical observations:
 
 ### 5.3 Pause/resume mechanism (both providers)
 
-Per-request state held in a `streamGater` struct:
-
-```go
-type streamGater struct {
-    provider       string                       // "openai" | "anthropic"
-    accumulator    map[int]*toolCallAccumulator // keyed by index
-    bufferedBytes  []byte                       // raw upstream SSE bytes pending flush
-    bufferedSize   int64                        // running size, capped by --max-buffer-bytes
-    flushedHeader  bool                         // have we sent the SSE response headers downstream
-    clientWriter   http.ResponseWriter
-    flusher        http.Flusher
-    upstreamReader io.ReadCloser
-    guard          *guardClient                 // /v1/check side channel
-    auditTransport string                       // "llm_api_proxy"
-}
-```
+Per-request state lives in a provider accumulator
+(`OpenAIToolCallAccumulator` in `openai_parser.go`,
+`AnthropicAccumulator` in `anthropic_parser.go`): the tool call being
+assembled, the raw upstream events held back until it is gated, and
+their running size, capped by `--max-buffer-bytes`. The read/gate/flush
+loop is `runOpenAIStreamLoop` / `runAnthropicStreamLoop` in
+`streaming.go`. The pseudocode below shows the logic, not the code.
 
 Algorithm (OpenAI):
 
@@ -553,11 +532,13 @@ trail** with the DENY the client actually received, via the same
 `/v1/audit` ingest path the malformed-tool-call refusal uses — so it
 arrives tagged `transport: llm_api_proxy` under that stable rule string,
 which is the signal to alert on. The proxy also increments
-`vanzik_llmproxy_undecodable_tool_call_total{provider}`, but that
-lives in the proxy's process-local registry and **has no scrape
-endpoint** (see [`OBSERVABILITY.md`](OBSERVABILITY.md)), so it is useful
-only to in-process embedders today. Alert on the audit rule, not the
-counter.
+`vanzik_llmproxy_undecodable_tool_call_total{provider}`, but it counts
+in the proxy process, which **serves no `/metrics`** (see
+[`OBSERVABILITY.md`](OBSERVABILITY.md)). The central server's
+`/metrics` does list all six `vanzik_llmproxy_*` series (the two
+binaries share one metrics registry), but nothing there increments
+them, so they always read 0. Don't alert on any of them; alert on the
+audit rule.
 
 Two details worth knowing:
 
@@ -667,10 +648,15 @@ gating a single tool call. Rationale:
 - Typical tool argument JSON is 50–500 bytes.
 - Pathological cases (large file contents passed as a tool argument,
   e.g., a `write_file` with a multi-megabyte payload) hit this cap.
-- Above the cap, the proxy emits a synthetic refusal: "tool call too
-  large to gate (> N bytes); rejected by Vanzik". Operators see a
-  metric (`vanzik_llmproxy_buffer_overflow_total`) and can raise the
-  limit if their use case needs it.
+- Above the cap, the proxy emits a synthetic refusal under the rule
+  `deny:llm_api_proxy:buffer_overflow`. Its text starts "Vanzik refused
+  this tool call: its accumulated arguments exceeded the gating buffer
+  cap.", gives the reason "tool call arguments exceed gating buffer",
+  and names the `--max-buffer-bytes` flag. The proxy counts it in
+  `vanzik_llmproxy_buffer_overflow_total` (process-local, like every
+  `vanzik_llmproxy_*` series; see *Undecodable non-streaming bodies*
+  in § 5.4); operators can raise the limit if their use case
+  needs it.
 
 Why 1 MiB:
 
@@ -684,7 +670,7 @@ Why 1 MiB:
 ## 6. Concurrency model
 
 - Standard Go `http.Handler` per-request goroutine isolation.
-- Each request gets its own `streamGater` struct → its own buffer,
+- Each request gets its own accumulator → its own buffer,
   parser state, and accumulator. **No shared mutable state** between
   requests.
 - The upstream HTTP client is shared (with a per-host connection pool
@@ -714,21 +700,23 @@ One audit entry per **tool call** (not per stream, not per delta).
   "schema_version": "v1",
   "transport": "llm_api_proxy",
   "timestamp": "2026-05-06T12:34:56.789Z",
-  "session_id": "<derived from x-session-id header or chatcmpl id>",
+  "session_id": "<from x-session-id header; empty when absent>",
   "agent_id": "<from x-agent-id header, or 'llm-proxy'>",
   "request": {
     "scope": "filesystem",
     "parent_session_id": "<from x-vanzik-parent-session header; omitted when absent>",
-    "command": "read_file",
+    "command": "read_file /tmp/x",
     "path": "/tmp/x",
     "action": "read",
     "meta": {
-      "arguments_json": "{\"path\":\"/tmp/x\"}",
-      "tool_call_id": "call_abc",
+      "arg_path": "/tmp/x",
+      "mapped_scope": "filesystem",
       "model": "gpt-4",
       "provider": "openai",
       "stream": "true",
-      "upstream_status": "200"
+      "tool_call_id": "call_abc",
+      "tool_name": "read_file",
+      "transport": "llm_api_proxy"
     }
   },
   "result": {
@@ -740,11 +728,15 @@ One audit entry per **tool call** (not per stream, not per delta).
 }
 ```
 
-`Meta["arguments_json"]` is redacted via `pkg/notify.DefaultRedactor`.
+Each top-level tool argument becomes a `meta["arg_<key>"]` entry,
+redacted via `pkg/notify.DefaultRedactor`; `command` is redacted the
+same way. `stream` is present only for streaming responses, and
+`approval_id` is added when the request carried
+`X-Vanzik-Approval-ID`.
 
 For an unmapped scope: `request.scope = "unmapped"`,
-`request.command = "<tool_name>"`, `meta["arguments_json"]` carries
-the raw (redacted) arguments.
+`request.command = "<tool_name>"`, and the arguments are the same
+redacted `arg_<key>` entries.
 
 Dashboard chip: `transport: "llm_api_proxy"` (color: purple — distinct
 from `mcp_gateway` blue and `sdk` green).
@@ -811,9 +803,9 @@ stream. Operators can tune the limits in policy YAML
 | Buffer-overflow                    | synthetic refusal at `--max-buffer-bytes`; metric increments                                          |
 | Concurrency                        | 100 concurrent streams, no cross-request state leakage                                                |
 | Cancellation                       | client disconnect cancels upstream + /v1/check                                                        |
-| Pass-through endpoints             | /v1/embeddings, /v1/models forwarded with one audit entry                                             |
+| Pass-through endpoints             | /v1/embeddings, /v1/models forwarded without a policy check or audit entry                            |
 | Unmapped tool                      | `scope: "unmapped"`; default-deny when no rule configured                                             |
-| Real upstream                      | OpenAI dev key + tiny model, run a multi-tool agent loop end-to-end                                   |
+| Upstream                           | scripted fake upstreams (Go `httptest`, Python mocks in `plugins/python/tests/integration`); no provider key in CI |
 
 ---
 
@@ -882,9 +874,9 @@ Once the proxy is running and your code points at it:
    `configs/default.yaml`, ask the model to `ls /tmp` via a
    `bash`-named tool. The dashboard logs `ALLOW`; the SDK receives
    the original streamed tool-call deltas byte-identically.
-4. **A DENY rule rewrites the stream.** Add a `deny` rule for
-   `rm -rf *` under `scope: shell` (or use the bundled one). Prompt
-   the model to `rm -rf /etc`. The dashboard logs `DENY`; your code
+4. **A DENY rule rewrites the stream.** The bundled policy denies
+   `dd if=/dev/*` under `scope: shell`. Prompt the model to run
+   `dd if=/dev/zero of=/dev/sda`. The dashboard logs `DENY`; your code
    receives a synthetic assistant text starting with
    `Vanzik denied this action.` instead of any tool-call deltas.
 
@@ -941,7 +933,7 @@ in full (capped by `--max-buffer-bytes`) and gated before forwarding.
 Concurrent calls are safe — per-request parser state is isolated (§ 6).
 
 **Custom tool names need a `tool_scope_map:` entry.** Vanzik
-ships a default mapping for ~17 common tool names (see
+ships a default mapping for 47 common tool names (§ 4.1; see
 [`pkg/llmproxy/scope_map.go`](../pkg/llmproxy/scope_map.go)).
 Anything else dispatches as `scope: unmapped`, which the engine
 treats as default-deny unless an `unmapped` rule exists. For custom
