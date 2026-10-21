@@ -105,7 +105,7 @@ Content-Type: application/json
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `agent_id` | string | no (strongly recommended) | Keys per-agent overrides, rate-limit buckets, and audit filtering. Omitting it is not rejected — the policy just evaluates without per-agent context. |
-| `scope` | string | yes* | `shell`, `filesystem`, `network`, `browser`, `cost`, `data`, or any custom string. *Not enforced with a `400` — an empty scope matches no rules and falls through to default deny (`200`). |
+| `scope` | string | yes* | `shell`, `filesystem`, `network`, `browser`, `cost`, `data`, `mcp_tool`, or any custom string. *Not enforced with a `400` — an empty scope matches no rules and falls through to default deny (`200`). |
 | `command` | string | — | For `shell` scope (required to match `pattern`). |
 | `action` | string | — | For `filesystem` scope (required alongside `path`). |
 | `path` | string | — | For `filesystem`. Normalized with `filepath.Clean + ToSlash`. |
@@ -136,7 +136,7 @@ Body is limited to `MaxRequestBodyBytes` (default 1 MB; configurable via `proxy.
 | `decision` | always — `ALLOW`, `DENY`, or `REQUIRE_APPROVAL`. |
 | `reason` | always. |
 | `matched_rule` | always except the default-deny fall-through, where it is omitted. |
-| `approval_id` / `approval_url` | only when `decision == REQUIRE_APPROVAL`; omitted otherwise. |
+| `approval_id` / `approval_url` | `approval_url` only when `decision == REQUIRE_APPROVAL`. `approval_id` then too, and also on the `ALLOW` / `DENY` a replayed approval returns (`matched_rule` `allow:approved` / `deny:approved`); omitted otherwise. |
 
 ### Response headers
 
@@ -254,11 +254,11 @@ Query the audit log.
 | `parent_session_id` | string | — | **(v1.4)** Exact match on `request.parent_session_id`: the calls of the sessions started by that session. |
 | `since` | RFC 3339 time | — | **(v1.4)** Entries at or after this time (inclusive). Any time zone; compared as an instant. In a query string a `+` means a space, so write a positive offset as `%2B` (`2026-10-14T11:00:00%2B02:00`); an unencoded `+` before the offset is still read as one. The same applies to every `since`/`until` below. |
 | `until` | RFC 3339 time | — | **(v1.4)** Entries before this time (exclusive). `until` before `since`, or a value that is not RFC 3339, → `400`. |
-| `transport` | string | — | Filter on the `Entry.Transport` audit field. Recognised values: `sdk`, `mcp_gateway`, `llm_api_proxy`, and the coding-agent hooks' `claude_code`, `cursor`, `gemini_cli`, `codex_cli`. Pre-v0.5 entries have no transport tag and are excluded when this filter is set. |
+| `transport` | string | — | Filter on the `Entry.Transport` audit field. Recognised values: `sdk`, `mcp_gateway`, `llm_api_proxy`, and the coding-agent hooks' `claude_code`, `cursor`, `gemini_cli`, `codex_cli`. Pre-v0.5 entries have no transport tag and count as `sdk`: `transport=sdk` matches them, any other value leaves them out. |
 
 ### Response
 
-Array of entries (JSON Lines rows as JSON objects). On a sealed log the entries also carry `seq`, `prev_hash` and `hash` ([FILE_FORMATS](FILE_FORMATS.md#current-on-disk-artifacts)):
+Array of entries (JSON Lines rows as JSON objects). A query that matches nothing returns `null`, not `[]`; treat both as an empty result. On a sealed log the entries also carry `seq`, `prev_hash` and `hash` ([FILE_FORMATS](FILE_FORMATS.md#current-on-disk-artifacts)):
 
 ```json
 [
@@ -554,7 +554,7 @@ Prometheus text exposition format. Unauthenticated. Full metric catalog in [`OBS
 
 ```bash
 curl -s http://localhost:8080/metrics | head
-# HELP vanzik_checks_total Total number of policy check requests
+# HELP vanzik_checks_total Total number of /v1/check requests processed.
 # TYPE vanzik_checks_total counter
 # vanzik_checks_total 12034
 # ...
