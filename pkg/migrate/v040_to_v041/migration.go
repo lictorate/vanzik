@@ -7,6 +7,8 @@
 // Detect condition: audit file exists, is non-empty, and its first line is
 // NOT a meta envelope (i.e. the file is a legacy headerless JSONL written by
 // v0.4.0). Fresh installs and already-migrated v2 files both return false.
+// A first line that is neither a meta envelope nor an audit entry (JSON with
+// `timestamp` and `request`) is an error, so startup refuses the file.
 //
 // Safety model:
 //   - Migration streams the original bytes into a temp file prefixed by a
@@ -22,6 +24,8 @@
 package v040_to_v041
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -76,7 +80,8 @@ func (*Migration) Description() string {
 }
 
 // Detect returns true when the audit file exists, is non-empty, and has no
-// `_meta` line — i.e. it is a legacy v0.4.0 file.
+// `_meta` line — i.e. it is a legacy v0.4.0 file. It returns an error when
+// the first line is neither a `_meta` line nor an audit entry.
 func (*Migration) Detect(ctx context.Context, env migrate.Env) (bool, error) {
 	if env.AuditLogPath == "" {
 		return false, nil
@@ -95,9 +100,52 @@ func (*Migration) Detect(ctx context.Context, env migrate.Env) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("read meta: %w", err)
 	}
-	// ReadMeta returns (nil, nil) for a headerless legacy file; that is
-	// exactly the state this migration fixes.
-	return meta == nil, nil
+	if meta != nil {
+		return false, nil
+	}
+	// ReadMeta returns (nil, nil) for any first line that is not a meta
+	// envelope. Only a v0.4.0 entry is ours to migrate: anything else is a
+	// corrupt header or not an audit log at all, and startup must refuse it
+	// rather than prepend a header to it.
+	if err := checkEntryShape(env.AuditLogPath); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// checkEntryShape fails unless the first non-empty line of path is a JSON
+// object with the `timestamp` and `request` fields every audit.Entry
+// carries.
+func checkEntryShape(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open audit log: %w", err)
+	}
+	defer f.Close()
+
+	br := bufio.NewReader(f)
+	for {
+		line, readErr := br.ReadBytes('\n')
+		if readErr != nil && readErr != io.EOF {
+			return fmt.Errorf("read audit log: %w", readErr)
+		}
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) > 0 {
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(trimmed, &fields); err != nil {
+				return fmt.Errorf("audit log %s: first line has no _meta header and is not an audit entry: %w", path, err)
+			}
+			_, hasTS := fields["timestamp"]
+			_, hasReq := fields["request"]
+			if !hasTS || !hasReq {
+				return fmt.Errorf("audit log %s: first line has no _meta header and is not an audit entry (no timestamp and request fields)", path)
+			}
+			return nil
+		}
+		if readErr == io.EOF {
+			return nil
+		}
+	}
 }
 
 // Migrate rewrites the audit file in place with a `_meta` header at the top,
