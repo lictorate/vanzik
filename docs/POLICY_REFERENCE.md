@@ -200,7 +200,7 @@ Applies only when `scope: cost`. The incoming request must carry a numeric `est_
 
 ### Caveats
 
-- `sessionCosts` is in-memory only. Restart loses all session totals.
+- Session totals survive a restart when the server runs with `--persist` (the default): the cost accumulators are saved to and restored from the store. With `--persist=false` they are in memory only, and a restart loses them.
 - `--session-cost-ttl` evicts idle sessions so the map does not grow forever. Default `0` = never.
 - `Engine.RecordCost` / `RefundCost` exist for out-of-band accounting but are still **not** wired into the HTTP request path as of v0.5.1 — call them from custom Go embeddings if you need pre-reserved cost accounting outside of `/v1/check`.
 
