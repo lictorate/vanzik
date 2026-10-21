@@ -67,6 +67,35 @@ func TestDetect_AlreadyV2(t *testing.T) {
 	}
 }
 
+// TestDetectRejectsNonEntryJSON: a first line that parses as JSON but is
+// neither a _meta header nor an audit entry must make Detect fail, so
+// startup refuses the file instead of migrating it. The file stays as it was.
+func TestDetectRejectsNonEntryJSON(t *testing.T) {
+	m := &Migration{}
+	for _, body := range []string{
+		"{\"foo\":1}\n",
+		"{\"timestamp\":\"2025-01-01T00:00:00Z\"}\n",
+		"not json at all\n",
+		"\n" + `{"request":{"scope":"shell","command":"ls"}}` + "\n",
+	} {
+		env := envFor(t, body)
+		need, err := m.Detect(context.Background(), env)
+		if err == nil {
+			t.Errorf("Detect(%q) = %v, nil; want an error", body, need)
+		}
+		if need {
+			t.Errorf("Detect(%q) must not report a migration", body)
+		}
+		got, rerr := os.ReadFile(env.AuditLogPath)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		if string(got) != body {
+			t.Errorf("Detect(%q) changed the file to %q", body, got)
+		}
+	}
+}
+
 // TestDetect_MissingFile: a fresh install (no audit file yet) is not an
 // error and must not return true.
 func TestDetect_MissingFile(t *testing.T) {
