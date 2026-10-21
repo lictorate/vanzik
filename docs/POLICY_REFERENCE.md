@@ -104,9 +104,11 @@ Minimum example:
       paths: ["./workspace/**", "/tmp/**"]
   deny:
     - action: write
-      paths: ["/etc/**", "/usr/**", "~/.ssh/**"]
+      paths: ["/etc/**", "/usr/**", "**/.ssh/**"]
       message: "system paths are read-only"
 ```
+
+The engine does not expand `~`: a rule path `~/.ssh/**` only matches a request path that literally starts with `~`, never `/home/alice/.ssh/id_rsa`. Use `**/.ssh/**` (any `.ssh` directory) or spell out the home directory.
 
 ---
 
