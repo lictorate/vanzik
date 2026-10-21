@@ -6,7 +6,7 @@ Get Vanzik running on your machine in under 5 minutes.
 
 | Tool | Version | Check |
 |------|---------|-------|
-| Go (only to build from source or `go install`) | 1.25+ | `go version` |
+| Go (only to build from source or `go install`) | 1.26+ | `go version` |
 | Git (only to build from source) | any | `git --version` |
 | Python (optional, for the SDK) | 3.10+ | `python --version` |
 | Node.js (optional, for the TS SDK) | 20+ | `node --version` |
@@ -46,7 +46,7 @@ irm https://github.com/lictorate/vanzik/releases/latest/download/install.ps1 | i
 
 | Variable | Effect |
 |---|---|
-| `VANZIK_VERSION` | Install this version (e.g. `1.2.0`) instead of the latest |
+| `VANZIK_VERSION` | Install this version (e.g. `2.0.0`) instead of the latest. Only 2.x versions can be installed: 1.x releases were AgentGuard, with `agentguard_*` archives |
 | `VANZIK_INSTALL_DIR` | Install the binaries here |
 | `VANZIK_DOWNLOAD_URL` | Download the release files from this base URL (a mirror, or an internal server for air-gapped hosts) |
 | `VANZIK_NO_MODIFY_PATH=1` | Windows only: leave the user PATH unchanged |
@@ -59,7 +59,7 @@ If you'd rather run the server yourself, the commands below work without the lea
 
 #### Update
 
-Run `vanzik setup` and choose **Update**: it downloads the new release, checks it against `checksums.txt`, swaps the binaries and restarts the server. Or run the same install command again. It replaces the three binaries, keeps your policy, and says what changed: `Updated Vanzik 1.2.0 -> 1.3.0`, `Reinstalled Vanzik 1.3.0 (it was already on this version)`, or — when `VANZIK_VERSION` pins an older release — `Downgraded Vanzik 1.3.0 -> 1.2.0` followed by a warning. The `vanzik` CLI prints a one-line notice with the right command when a newer release is out (`server` never checks; see [`CLI.md`](CLI.md#update-notice-on-startup-v051)).
+Run `vanzik setup` and choose **Update**: it downloads the new release, checks it against `checksums.txt`, swaps the binaries and restarts the server. Or run the same install command again. It replaces the three binaries, keeps your policy, and says what changed: `Updated Vanzik <current> -> <latest>`, `Reinstalled Vanzik <version> (it was already on this version)`, or — when `VANZIK_VERSION` pins an older release — `Downgraded Vanzik <current> -> <older>` followed by a warning. The `vanzik` CLI prints a one-line notice with the right command when a newer release is out (`server` never checks; see [`CLI.md`](CLI.md#update-notice-on-startup-v051)).
 
 #### Uninstall
 
@@ -83,7 +83,7 @@ For the container image, stop and remove the container; `docker volume rm vanzik
 
 ```bash
 git clone https://github.com/lictorate/vanzik.git
-cd Vanzik
+cd vanzik
 
 # Central server (always needed)
 go build -o vanzik ./cmd/vanzik
@@ -150,7 +150,7 @@ curl -X POST http://localhost:8080/v1/check \
   -H "Content-Type: application/json" \
   -d '{"scope": "shell", "command": "sudo apt install vim", "agent_id": "test"}'
 
-# Filesystem scope — DENIED because /etc is not in the allow list
+# Filesystem scope — DENIED by the system-directories write deny ("Writing to system directories is blocked")
 curl -X POST http://localhost:8080/v1/check \
   -H "Content-Type: application/json" \
   -d '{"scope": "filesystem", "action": "write", "path": "/etc/passwd", "agent_id": "test"}'
@@ -241,7 +241,7 @@ npm install @lictorate/vanzik
 cd plugins/typescript
 npm ci
 npm run build
-cd /path/to/your-project && npm install /path/to/Vanzik/plugins/typescript
+cd /path/to/your-project && npm install /path/to/vanzik/plugins/typescript
 ```
 
 ### Usage
@@ -300,7 +300,7 @@ list.
 
 ### Wire-level enforcement points
 
-Two additional binaries enforce at the wire. Both need `--guard-url` pointing at `vanzik server`, and both read `VANZIK_API_KEY` for authenticated server calls.
+Two additional binaries enforce at the wire. Both reach `vanzik server` at `--guard-url`, which defaults to `$VANZIK_URL`, else `http://127.0.0.1:8080`, and both read `VANZIK_API_KEY` for authenticated server calls.
 
 - **`vanzik-mcp-gateway`** — sits between an MCP client and one or more MCP servers. Quickstart with copy-paste configs: [`QUICKSTART_MCP.md`](QUICKSTART_MCP.md). Reference: [`MCP_GATEWAY.md`](MCP_GATEWAY.md).
 - **`vanzik-llm-proxy`** — sits between OpenAI / Anthropic SDK code and the providers. Quickstart: [`QUICKSTART_LLM_PROXY.md`](QUICKSTART_LLM_PROXY.md). Reference: [`LLM_API_PROXY.md`](LLM_API_PROXY.md).
@@ -353,7 +353,7 @@ reload:
 
 ```bash
 vanzik server --policy configs/default.yaml --watch
-# 2026/09/23 21:59:11 Policy reloaded: default-sandbox (56 rules)
+# 2026/09/23 21:59:11 Policy reloaded: default-sandbox (61 rules)
 ```
 
 ### Everything else in the policy file
@@ -369,7 +369,7 @@ examples for each lives in
 
 ## Running Tests
 
-The fastest path is `make test-all`, which runs all four suites (Go, policy YAML validation, Python SDK, TypeScript SDK) in sequence and prints a PASS / FAIL / SKIP summary. Missing toolchains (no `python`, no `npm`) report SKIP cleanly so Go-only contributors aren't penalised. See [`CONTRIBUTING.md`](CONTRIBUTING.md#running-the-full-test-suite).
+The fastest path is `make test-all`, which runs all four suites (Go, policy YAML validation, Python SDK, TypeScript SDK) in sequence and prints a PASS / FAIL / SKIP summary. An invalid policy or a failing `configs/tests` case fails the policy suite, and the Python suite installs the same extras as CI (`.[dev,langchain,crewai,mcp,openai-agents]`). Missing toolchains (no `python`, no `npm`) report SKIP cleanly so Go-only contributors aren't penalised. The script exits 0 if no suite failed and 1 if any did. See [`CONTRIBUTING.md`](CONTRIBUTING.md#running-the-full-test-suite).
 
 ```bash
 make test-all                   # everything
@@ -385,12 +385,12 @@ Per-suite manual invocations:
 go test -v -race -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out
 
-# Policy YAML validation (every example)
+# Policy YAML validation (configs/default.yaml and every configs/examples/*.yaml; builds ./vanzik)
 make validate
 
 # Python SDK tests (adapter unit tests need framework extras)
 cd plugins/python
-pip install -e ".[dev,langchain,crewai,mcp]"
+pip install -e ".[dev,langchain,crewai,mcp,openai-agents]"
 pytest -v --cov=vanzik
 
 # TypeScript SDK tests
@@ -401,6 +401,8 @@ cd plugins/typescript && npm install && npm run build && npm test
 
 ## Project Structure
 
+The main directories and files; the lists below are not exhaustive (`pkg/` also holds `depaudit`, `deprecation`, `internal`, `metrics`, `persist`, `report` and `store`, and the Python adapters include `openai_agents.py` and the shared `_common.py`).
+
 ```
 vanzik/
 ├── cmd/
@@ -408,9 +410,9 @@ vanzik/
 │   │   ├── main.go
 │   │   ├── check_cmd.go
 │   │   └── update_check.go
-│   ├── vanzik-mcp-gateway/      # v0.5 MCP Gateway binary
+│   ├── vanzik-mcp-gateway/      # MCP Gateway binary
 │   │   └── main.go
-│   └── vanzik-llm-proxy/        # v0.5 LLM API Proxy binary
+│   └── vanzik-llm-proxy/        # LLM API Proxy binary
 │       └── main.go
 ├── pkg/
 │   ├── policy/                      # Policy engine (YAML parsing, rule evaluation, providers)

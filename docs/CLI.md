@@ -49,7 +49,7 @@ Run 'vanzik help <command>' (or 'vanzik <command> -h') for its flags.
 Every command's help (`vanzik help <command>`) has examples and says what its exit codes mean; the full list also shows the environment variables and a link to this page for the installed version.
 
 Global conventions:
-- `vanzik serve` is the same command as `vanzik server` and keeps working for the whole 1.x line ([`COMPATIBILITY.md`](COMPATIBILITY.md#frozen-surface-4--cli-flags--subcommands)).
+- `vanzik serve` is the same command as `vanzik server` and keeps working for the whole 2.x line ([`COMPATIBILITY.md`](COMPATIBILITY.md#frozen-surface-4--cli-flags--subcommands)).
 - Flags can go before or after positional arguments: `vanzik approve <id> --url <url>` and `vanzik approve --url <url> <id>` are the same. A `--` ends the flags; everything after it is an argument.
 - `vanzik help`, `-h` and `--help` print help on stdout and exit `0`; so do `vanzik help <command>` and `vanzik <command> -h`. A mistyped command or flag gets a suggestion: `vanzik: unknown command "--serve". Did you mean 'vanzik server'?`
 - `--api-key` on `server` and on the client subcommands (`approve`, `deny`, `status`, `audit`) falls back to the `VANZIK_API_KEY` env var; `--url` on the client subcommands falls back to `VANZIK_URL`; `--policy` on `server`, `validate`, `check` and `test` is found automatically when not given (see [Policy file](#policy-file)).
@@ -145,7 +145,7 @@ Start the Vanzik server. This is the only subcommand that runs a long-lived proc
 | `--notify-spool <path>` | *(empty)* | *(v0.7)* JSONL spool file for notification events that overflow the dispatch queue — spooled events are redelivered by a recovery loop (including leftovers from a previous process) instead of dropped. Empty disables (drop-on-full). |
 | `--debug-pprof` | off | Expose Go pprof handlers on a **separate localhost-only** listener (`--debug-pprof-port`). Off by default; enable for performance investigations only. Tunnel via `kubectl port-forward` / `ssh -L` to access remotely — this listener never binds beyond `127.0.0.1`. |
 | `--debug-pprof-port <int>` | `6060` | Port for the localhost-only pprof listener. Ignored unless `--debug-pprof`. |
-| `--persist` | `true` | **(v0.6)** Persist runtime state (approvals, rate-limit buckets, cost accumulators) to a durable store so it survives restarts. Zero-config: auto-creates `vanzik.db` (SQLite). Set `false` for pure in-memory (pre-v0.6 behavior). The store is **never** on the `/v1/check` hot path — a background syncer flushes snapshots on a ≥1 s tick and hydrates memory on boot. See [Persistence & multi-tenancy](#persistence--multi-tenancy-v06). |
+| `--persist` | `true` | **(v0.6)** Persist runtime state (approvals, rate-limit buckets, cost accumulators) to a durable store so it survives restarts. Zero-config: auto-creates `vanzik.db` (SQLite). Set `false` for pure in-memory (pre-v0.6 behavior). The store is **never** on the `/v1/check` hot path — a background syncer flushes snapshots on a ≥1 s tick and hydrates memory on boot. The one exception is tenant lookup on `/v1/t/<tenant>/…` routes: a tenant not yet in the in-memory cache is read from the store on its first lookup, and an unregistered tenant id costs at most one store read per `--tenant-policy-refresh-interval` (one per lookup when the interval is 0). See [Persistence & multi-tenancy](#persistence--multi-tenancy-v06). |
 | `--store-dsn <dsn>` | *(empty)* | **(v0.6)** Durable store location. Empty ⇒ zero-config SQLite at `<data-dir>/vanzik.db`; a SQLite file path is also accepted. **(v1.0)** A `postgres://` / `postgresql://` DSN selects the PostgreSQL backend — required for [multi-node deployments](OPERATIONS.md#multi-instance-deployments). Ignored when `--persist=false`. |
 | `--data-dir <path>` | `.` | **(v0.6)** Directory for the zero-config SQLite database (`vanzik.db` + its `-wal`/`-shm` sidecars). Ignored when `--store-dsn` is set or `--persist=false`. |
 | `--node-id <id>` | *(hostname)* | **(v1.0)** This replica's identity in the shared PostgreSQL store. Must be distinct per replica (two processes on one host need explicit values; in Kubernetes pass the pod name). No effect on the SQLite backend. |
@@ -175,7 +175,7 @@ By default `server` is **stateful**: runtime state survives a restart. On a clea
 - **hydrates** the in-memory approval queue, rate-limit buckets, and cost accumulators from the store on boot, then
 - **write-behind syncs** them back on a background ticker (≥ 1 s) and on graceful shutdown.
 
-The store is a *cold-path* component — it is never read or written on the `/v1/check` request path, so the <3 ms p99 budget is unaffected. Disable with `--persist=false` for the legacy pure-in-memory behavior.
+The store is a *cold-path* component — it is never read or written on the `/v1/check` request path, so the <3 ms p99 budget is unaffected. The one exception is tenant lookup on `/v1/t/<tenant>/…` routes: a tenant not yet in the in-memory cache is read from the store on its first lookup, and an unregistered tenant id costs at most one store read per `--tenant-policy-refresh-interval` (one per lookup when the interval is 0). Disable with `--persist=false` for the legacy pure-in-memory behavior.
 
 **Multi-node (v1.0).** With `--store-dsn postgres://…`, every replica shares the same durable tier and additionally reconciles its in-memory state with the other nodes every `--reconcile-interval` (default 2s), identified by `--node-id`. Memory stays authoritative per node — reconciliation is background-only, so distributed rate/cost limiting is bounded-overshoot rather than globally strict, and cross-node approval staleness is at most one interval. Semantics and sizing guidance: [`OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments).
 
@@ -221,7 +221,7 @@ vanzik server \
 
 Load a policy file and report rule count / scope count. Give the file as an argument (`vanzik validate policy.yaml`) or with `--policy`; with neither, it validates the file the server would load (see [Policy file](#policy-file)). Exits `1` on parse error, load-time validation failure (e.g., `..` in a filesystem path), or missing required fields (`version`, `name`).
 
-Non-fatal warnings go to stderr as `WARN: …` lines and don't change the exit code unless you pass `--strict`: a scope that appears in more than one block (the blocks are merged), a scope name one or two edits away from a built-in one (`shel` → "did you mean `shell`?"), and a path pattern whose single `*` crosses `/`. See [POLICY_REFERENCE § Load-time validation](POLICY_REFERENCE.md#load-time-validation).
+Non-fatal warnings go to stderr as `WARN: …` lines and don't change the exit code unless you pass `--strict`: a scope that appears in more than one block (the blocks are merged), a scope name one or two edits away from a built-in one (`shel` → "did you mean `shell`?"), a path pattern whose single `*` crosses `/`, and a rule that has `paths` but no `action` (its paths never match, so it allows or denies nothing): `WARN: policy: rules[0](filesystem).deny[0] has paths but no action, so its paths never match; add an action (read, write or delete) to the rule.` The location varies (`rules[i](<scope>).<list>[j]` or `agents.<id>.override[i](<scope>).<list>[j]`), and the warning fires for a path rule in any scope. See [POLICY_REFERENCE § Load-time validation](POLICY_REFERENCE.md#load-time-validation).
 
 | Flag | Default | Description |
 |---|---|---|
@@ -230,10 +230,11 @@ Non-fatal warnings go to stderr as `WARN: …` lines and don't change the exit c
 
 ```bash
 vanzik validate configs/examples/trading-bot.yaml
-# VALID: trading-bot-policy — 14 rules across 4 scopes
+# VALID: trading-bot-policy — 13 rules across 4 scopes
 
 vanzik validate /tmp/broken.yaml
-# INVALID: yaml: unmarshal errors: line 4: cannot unmarshal !!int into string
+# INVALID: parsing policy YAML: yaml: unmarshal errors:
+#   line 6: cannot unmarshal !!seq into string
 
 vanzik validate /tmp/typo.yaml --strict
 # WARN: policy: rules[1] scope "shel" is not a built-in scope — did you mean "shell"? …
@@ -243,7 +244,7 @@ vanzik validate /tmp/typo.yaml --strict
 Use in CI:
 
 ```bash
-for f in configs/*.yaml configs/examples/*.yaml; do
+for f in configs/default.yaml configs/examples/*.yaml; do
   vanzik validate --strict "$f" || exit 1
 done
 ```
@@ -434,7 +435,7 @@ vanzik test configs/tests
 # configs/tests/default_test.yaml (policy configs/default.yaml)
 #   PASS  plain ls is allowed
 #   ...
-# PASS: 115 case(s) passed
+# PASS: 162 case(s) passed
 
 vanzik test --run 'claude-code' configs/tests
 
@@ -513,24 +514,24 @@ Query `/v1/audit` for recent decisions. All filters are optional and AND-combine
 | `--agent <id>` | *(none)* | Filter by exact `agent_id`. |
 | `--decision <D>` | *(none)* | `ALLOW`, `DENY`, or `REQUIRE_APPROVAL`. |
 | `--scope <name>` | *(none)* | `shell`, `filesystem`, `network`, `browser`, `cost`, `data`, `mcp_tool`. |
-| `--transport <name>` | *(none)* | Filter by audit `transport` tag: `sdk`, `mcp_gateway`, `llm_api_proxy`, or a coding-agent hook's `claude_code`, `cursor`, `gemini_cli`, `codex_cli`. Pre-v0.5 entries are excluded when set. |
+| `--transport <name>` | *(none)* | Filter by audit `transport` tag: `sdk`, `mcp_gateway`, `llm_api_proxy`, or a coding-agent hook's `claude_code`, `cursor`, `gemini_cli`, `codex_cli`. Pre-v0.5 entries have no transport tag and count as `sdk`: `transport=sdk` matches them, any other value leaves them out. |
 | `--session <id>` | *(none)* | **(v1.4)** Filter by exact `session_id`. |
 | `--parent-session <id>` | *(none)* | **(v1.4)** Only the calls of sessions started by this session (entries whose request named it as `parent_session_id`). |
 | `--since <time>` | *(none)* | **(v1.4)** Entries at or after this time. A duration counts back from now (`2h`, `30m`, `90s`); otherwise an RFC 3339 time (`2026-10-14T09:00:00Z`). |
 | `--until <time>` | *(none)* | **(v1.4)** Entries before this time (exclusive). Same forms as `--since`. A value in neither form is a usage mistake (exit 2). |
-
-A server older than 1.4 ignores the parameters behind `--since`, `--until` and `--parent-session` and returns every entry. So when one of those flags is set, the CLI first asks the server whether it reads them (one `/v1/audit` request with a `since` that isn't a time: 1.4 answers `400`, older servers `200`), and exits 1 if it doesn't. Asking, rather than comparing version numbers, also works with dev builds.
 | `--limit <int>` | `50` | Max entries. Server clamps silently above configured ceiling (default 1000). |
 | `--order <desc\|asc>` | `desc` | **(v1.2)** `desc` shows the newest entries first; `asc`, the oldest (the order before v1.2, when `--limit` returned the first entries in the log rather than the latest). |
 | `--api-key <key>` | `$VANZIK_API_KEY` | Bearer token. |
+
+A server older than 1.4 ignores the parameters behind `--since`, `--until` and `--parent-session` and returns every entry. So when one of those flags is set, the CLI first asks the server whether it reads them (one `/v1/audit` request with a `since` that isn't a time: 1.4 answers `400`, older servers `200`), and exits 1 if it doesn't. Asking, rather than comparing version numbers, also works with dev builds.
 
 ```bash
 vanzik audit --session sess-42 --since 2h --order asc
 vanzik audit --decision DENY --scope shell --limit 20
 # Showing 20 audit entries:
 #
-#   2026-04-19T12:03:44Z  DENY                scope=shell         agent=researcher-01     rm -rf /
-#     reason: Matches deny rule in shell scope
+#   2026-04-19T12:03:44Z  DENY                transport=sdk           scope=shell         agent=researcher-01    dd if=/dev/zero of=/dev/sda
+#     reason: Raw disk operations are blocked
 #   ...
 ```
 
@@ -615,7 +616,7 @@ Exit status: `0` the report was written, `1` it was written but the audit log fa
 
 ## `vanzik tenant` (v0.6)
 
-Manage per-tenant policies in the durable store. Operates directly on the store database (the server need not be running — SQLite WAL permits a concurrent writer, and a running server picks up a new tenant on its next lookup). Requires persistence (the store); these commands open it directly.
+Manage per-tenant policies in the durable store. Operates directly on the store database. The server need not be running (SQLite WAL permits a concurrent writer). A running server sees a new tenant on its next lookup (within `--tenant-policy-refresh-interval` if that tenant ID was queried before it was registered); replacements and removals reach it within `--tenant-policy-refresh-interval` (default 30s). Requires persistence (the store); these commands open it directly.
 
 ```
 vanzik tenant put <tenant-id> --policy <file.yaml> [--store-dsn <dsn>] [--data-dir <dir>]
@@ -702,10 +703,10 @@ The version comes from the source; the part in parentheses identifies the build:
 
 ### Update notice on startup (v0.5.1+)
 
-The interactive subcommands (`check`, `validate`, `approve`, `deny`, `status`, `audit`, `migrate`, `tenant`, `version`) kick off an async best-effort check against the GitHub Releases API at startup (800 ms wait budget, 1.5 s HTTP timeout). If a newer release exists, one line lands on stderr before subcommand output; otherwise silent.
+Every subcommand except `server`, `help` and `hook` (that is `setup`, `validate`, `check`, `test`, `tenant`, `status`, `approve`, `deny`, `audit`, `migrate`, `report` and `version`) kicks off an async best-effort check against the GitHub Releases API at startup (800 ms wait budget, 1.5 s HTTP timeout). If a newer release exists, one line lands on stderr before subcommand output; otherwise silent.
 
 ```
-Notice: Vanzik v1.3.0 is available (you have v1.2.0). Update: vanzik setup — what's new: https://github.com/lictorate/vanzik/releases/latest
+Notice: Vanzik v<latest> is available (you have v<current>). Update: vanzik setup — what's new: https://github.com/lictorate/vanzik/releases/latest
 ```
 
 The command it names depends on how this copy was installed:
@@ -718,7 +719,7 @@ The command it names depends on how this copy was installed:
 
 Both replace the binaries and keep your policy, and say whether they updated or downgraded (with a warning). See [`SETUP.md`](SETUP.md#update).
 
-`server` never performs the check (nor does `serve`, the same command): the enforcement server opens no outbound connection the operator did not configure (see [`THREAT_MODEL.md`](THREAT_MODEL.md#outbound-connections)). The check is also skipped for development builds — a version string containing `dev`, or no `-ldflags` commit (`commit=dev`) *and* no tagged release version in the Go build info, as with `go build` on an untagged or modified checkout. `go install …@vX.Y.Z` and `@latest` builds record the release tag, so they do check. It is also skipped when `VANZIK_NO_UPDATE_CHECK` is set to any value other than `0`, or when the HTTP request fails. It is not run for `vanzik help` or a mistyped command either. Never touches stdout, never affects exit codes. Only the `vanzik` binary has the check; the MCP gateway and LLM proxy never had one.
+`server` never performs the check (nor does `serve`, the same command): the enforcement server opens no outbound connection the operator did not configure (see [`THREAT_MODEL.md`](THREAT_MODEL.md#outbound-connections)). The check is also skipped for development builds — a version string containing `dev`, or no `-ldflags` commit (`commit=dev`) *and* no tagged release version in the Go build info, as with `go build` on an untagged or modified checkout. `go install …@vX.Y.Z` and `@latest` builds record the release tag, so they do check. It is also skipped when `VANZIK_NO_UPDATE_CHECK` is set to any value other than `0`, or when the HTTP request fails. It is not run for `vanzik help` or a mistyped command either, nor for `vanzik hook`, which runs before every coding-agent tool call and must answer in milliseconds. Never touches stdout, never affects exit codes. Only the `vanzik` binary has the check; the MCP gateway and LLM proxy never had one.
 
 ---
 
@@ -729,7 +730,7 @@ Both replace the binaries and keep your policy, and say whether they updated or 
 | `VANZIK_API_KEY` | `server`, `approve`, `deny`, `status`, `audit`, `report --url` (when `--api-key` unset); the MCP gateway and LLM proxy; the SDKs | empty |
 | `VANZIK_URL` | `approve`, `deny`, `status`, `audit` (when `--url` unset); the MCP gateway and LLM proxy (when `--guard-url` unset); the SDKs | `http://localhost:8080` (CLI, SDKs), `http://127.0.0.1:8080` (gateway, proxy) |
 | `VANZIK_POLICY` | `server`, `validate`, `check`, `test` (when `--policy` unset) — see [Policy file](#policy-file) | unset |
-| `VANZIK_NO_UPDATE_CHECK` | Every subcommand except `server` (which never checks) — disables the GitHub Releases startup check when set to any value other than `0` | unset |
+| `VANZIK_NO_UPDATE_CHECK` | Every subcommand except `server`, `help` and `hook` (which never check) — disables the GitHub Releases startup check when set to any value other than `0` | unset |
 
 A flag always wins over its environment variable. The variables' AgentGuard 1.x names (`AGENTGUARD_*`) are never read: a command that would fall back to one that is set, with its `VANZIK_*` name unset, exits naming the new one (see [`MIGRATION.md`](MIGRATION.md#v1x-to-v20)). `vanzik hook` is the exception; it runs anyway and names the variable when it couldn't check a call. When no key is given at all, `approve`, `deny`, `status`, `audit`, `report --url`, the MCP gateway and the LLM proxy use the key [`vanzik setup`](#vanzik-setup) saved (`~/.config/vanzik/api-key`, `%APPDATA%\vanzik\api-key`). The server never picks that file up by itself — a key changes which interfaces it listens on — only through `--api-key-file`.
 

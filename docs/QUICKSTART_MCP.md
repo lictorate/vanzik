@@ -10,7 +10,7 @@ dashboard you can approve / deny from.
 ## Prerequisites
 
 - **Claude Desktop** installed: <https://claude.ai/download>
-- **Go 1.25+** (for `go install`): <https://go.dev/dl/>
+- **Go 1.26+** (for `go install`): <https://go.dev/dl/>
 - **`npx`** (Node.js 20+, a current LTS): <https://nodejs.org/> — used to launch the
   upstream MCP servers
 
@@ -46,7 +46,7 @@ export VANZIK_API_KEY="$(openssl rand -hex 32)"
 
 git clone https://github.com/lictorate/vanzik.git
 vanzik server \
-  --policy Vanzik/configs/default.yaml \
+  --policy vanzik/configs/default.yaml \
   --dashboard \
   --watch \
   --api-key "$VANZIK_API_KEY"
@@ -68,7 +68,7 @@ open `claude_desktop_config.json`. Replace its contents with:
       "args": [
         "--upstream", "fs:npx -y @modelcontextprotocol/server-filesystem /tmp",
         "--guard-url", "http://127.0.0.1:8080",
-        "--policy", "/absolute/path/to/Vanzik/configs/default.yaml",
+        "--policy", "/absolute/path/to/vanzik/configs/default.yaml",
         "--policy-mode", "strict",
         "--fail-mode", "deny"
       ],
@@ -80,9 +80,10 @@ open `claude_desktop_config.json`. Replace its contents with:
 }
 ```
 
-Replace `/absolute/path/to/Vanzik/configs/default.yaml` with your
+Replace `/absolute/path/to/vanzik/configs/default.yaml` with your
 actual clone path. Claude Desktop does not expand shell variables in flag
-strings — the `env` block is the only place the API key is looked up.
+strings, so put the API key in the `env` block. Without `VANZIK_API_KEY`
+there, the gateway falls back to the key `vanzik setup` saved.
 
 The exact file path of `claude_desktop_config.json`:
 
