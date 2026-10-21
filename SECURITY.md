@@ -44,8 +44,8 @@ When reporting, include as much of the following as you can:
   writing to extend it.
 
 We will keep you informed throughout the process and credit you in the
-release notes (or the `SECURITY.md` advisories section) unless you request
-otherwise.
+release notes (or a [GitHub Security Advisory](https://github.com/lictorate/vanzik/security/advisories))
+unless you request otherwise.
 
 ## Out of Scope
 
