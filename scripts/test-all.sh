@@ -10,8 +10,10 @@
 #
 # Suites:
 #   go       — go test -race -coverprofile=coverage.out ./...
-#   policy   — vanzik validate --strict on every YAML in configs/ and configs/examples/
-#   python   — pip install -e ".[dev]" + pytest -v --cov=vanzik in plugins/python
+#   policy   — vanzik validate --strict on configs/default.yaml and every YAML
+#              in configs/examples/, then vanzik test configs/tests
+#   python   — pip install -e ".[dev,langchain,crewai,mcp,openai-agents]" +
+#              pytest -v --cov=vanzik in plugins/python
 #   ts       — npm install + npm run build + npm test in plugins/typescript
 #
 # Behavior:
@@ -139,22 +141,28 @@ go_suite() {
   fi
 }
 
+# The agent fragments in configs/ (claude-code.yaml, cursor.yaml, ...) are
+# blocks that only load inside a policy, so only default.yaml and the
+# examples are validated on their own.
+#
+# run_suite calls this on the left of `||`, where bash ignores `set -e`, so
+# every step that can fail returns explicitly.
 policy_suite() {
   set -e
-  ensure_vanzik_built
+  ensure_vanzik_built || return 1
   local f any=0
-  for f in configs/*.yaml configs/examples/*.yaml; do
+  for f in configs/default.yaml configs/examples/*.yaml; do
     [ -f "$f" ] || continue
     any=1
     echo "  validate $f"
-    "$VANZIK_BIN" validate --strict --policy "$f"
+    "$VANZIK_BIN" validate --strict --policy "$f" || return 1
   done
   if [ "$any" -eq 0 ]; then
     echo "  no policy files found under configs/ — nothing to validate" >&2
   fi
   if [ -d configs/tests ]; then
     echo "  test configs/tests"
-    "$VANZIK_BIN" test configs/tests
+    "$VANZIK_BIN" test configs/tests || return 1
   fi
 }
 
@@ -192,11 +200,13 @@ python_suite() {
   fi
 
   set -e
-  ensure_vanzik_built
+  ensure_vanzik_built || return 1
 
+  # The same extras CI installs: the adapter tests import the real
+  # frameworks and fail with ImportError without them.
   (
     cd plugins/python &&
-    "${PY_CMD[@]}" -m pip install --quiet -e ".[dev]" &&
+    "${PY_CMD[@]}" -m pip install --quiet -e ".[dev,langchain,crewai,mcp,openai-agents]" &&
     "${PY_CMD[@]}" -m pytest -v --cov=vanzik
   )
 }

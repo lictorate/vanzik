@@ -36,9 +36,9 @@ lint:
 run: build
 	./$(BINARY) server --policy configs/default.yaml --dashboard --watch
 
-## validate: Validate all policy files
+## validate: Validate the starter policy and every example policy
 validate: build
-	@for f in configs/*.yaml configs/examples/*.yaml; do \
+	@for f in configs/default.yaml configs/examples/*.yaml; do \
 		echo "Validating $$f..."; \
 		./$(BINARY) validate --strict --policy $$f || exit 1; \
 	done
@@ -46,10 +46,10 @@ validate: build
 
 ## ----- Validation -----
 
-## validate-examples: Validate every YAML in configs/ and configs/examples/
+## validate-examples: Validate configs/default.yaml and every YAML in configs/examples/
 validate-examples: build
 	@set -e; \
-	for f in configs/*.yaml configs/examples/*.yaml; do \
+	for f in configs/default.yaml configs/examples/*.yaml; do \
 		echo "Validating $$f"; \
 		./$(BINARY) validate --strict --policy $$f; \
 	done

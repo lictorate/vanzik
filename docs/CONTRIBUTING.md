@@ -130,11 +130,11 @@ This runs, in order:
 | Suite | What it does |
 |-------|--------------|
 | `go` | `go test -race -coverprofile=coverage.out ./...` |
-| `policy` | builds the binary, runs `vanzik validate --strict` on every YAML in `configs/` and `configs/examples/` |
-| `python` | `pip install -e ".[dev]"` + `pytest -v --cov=vanzik` in `plugins/python` |
+| `policy` | builds the binary, runs `vanzik validate --strict` on `configs/default.yaml` and every YAML in `configs/examples/` (the agent blocks in `configs/` load only inside a policy), then `vanzik test configs/tests`; any invalid file or failing case fails the suite |
+| `python` | `pip install -e ".[dev,langchain,crewai,mcp,openai-agents]"` (the extras CI installs) + `pytest -v --cov=vanzik` in `plugins/python` |
 | `ts` | `npm install` + `npm run build` + `npm test` in `plugins/typescript` |
 
-The script does **not** stop on the first failure — every suite runs so you see the full picture in one go. Suites whose toolchain is missing (no `python`, no `npm`) are reported as `SKIP` rather than `FAIL`, so Go-only contributors aren't penalised on a partial setup. Final exit code is the number of failed suites (0 if all passed).
+The script does **not** stop on the first failure — every suite runs so you see the full picture in one go. Suites whose toolchain is missing (no `python`, no `npm`) are reported as `SKIP` rather than `FAIL`, so Go-only contributors aren't penalised on a partial setup. The script exits 0 if no suite failed and 1 if any suite failed.
 
 Useful flags:
 
