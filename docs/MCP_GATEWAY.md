@@ -30,8 +30,8 @@ remains as a fallback for environments that cannot run a Go binary.
                        │  • dispatcher: route by ns prefix   │
                        │  • policy: Engine.Check via         │
                        │    --guard-url /v1/check (HTTP)     │
-                       │  • audit: BufferedAsyncLogger or    │
-                       │    pass-through to central server   │
+                       │  • audit: none here; the central    │
+                       │    server audits each /v1/check     │
                        │  • upstream pool (one per ns):      │
                        │    • subprocess.Popen + reader/     │
                        │      writer goroutines              │
@@ -55,9 +55,16 @@ to call the central Vanzik server's `/v1/check`.
 
 ### 1.1 Why Go (not Python)
 
-The Go gateway shares `pkg/policy`, `pkg/audit`,
-`pkg/proxy.ApprovalQueue`, and `pkg/notify` with the rest of the
-Vanzik daemons (no HTTP hop required when running in-process). The
+The Go gateway is a thin client of the central server. It imports
+`pkg/mcpgw` and `pkg/policy`, the latter only to read the policy's
+`tool_scope_map`, plus the `/v1/check` client it shares with the LLM API
+proxy (`pkg/internal/gateclient`). Every decision is an HTTP
+`/v1/check` call: the engine, the approval queue, the audit log and the
+notifications all live in the central server. The gateway writes no
+audit log of its own; the only file it writes is the
+`--fail-audit-log` JSONL under `--fail-mode fail-closed-with-audit`
+(it links `pkg/audit` and `pkg/notify` for that file's entry shape and
+redaction). The
 Python `GuardedMCPGateway` in `plugins/python/vanzik/adapters/mcp.py`
 remains as a fallback for environments that can't run a Go binary, but
 the docs default to the Go binary.
@@ -263,11 +270,15 @@ and concatenating the arrays.
 
 `description` and `inputSchema` are passed through unchanged.
 
-If pagination is in play (`params.cursor`), the gateway implements
-paging by streaming through upstreams in `--upstream` declaration
-order: first exhaust namespace 1's pages, then 2's, etc. The
-`nextCursor` value is opaque-base64 of `{"ns": "fs", "upstream_cursor":
-"..."}` so the next call can resume on the right upstream.
+The gateway doesn't paginate toward the host. It ignores a host's
+`params.cursor`, asks every healthy upstream in parallel, follows each
+upstream's `nextCursor` until that upstream has no more pages (at most
+64 pages per upstream), and returns every tool in one list with no
+`nextCursor`. The order of namespaces in the list isn't fixed. An
+upstream that is down or returns an error is left out of the list (the
+error goes to the gateway's log), and an upstream tool whose own name
+contains `:` is skipped because it would clash with the namespace
+prefix.
 
 ### 4.3 `tools/call` routing
 
@@ -297,10 +308,11 @@ The gateway:
 ### 4.4 Policy mapping — the dual-check decision
 
 **Recommendation: dual-check by default.** Each `tools/call` results in
-**two** `Engine.Check` calls:
+**two** `Engine.Check` calls, each a `/v1/check` request to the central
+server:
 
-- One with `scope: "mcp_tool"`, `command: "<ns>:<toolname>"`,
-  arguments redacted into `meta["arguments"]`.
+- One with `scope: "mcp_tool"`, `command: "<ns>:<toolname>"`, and each
+  argument in `meta["arg_<key>"]` (see § 5).
 - One with the **mapped scope** if the tool name (or its arguments) maps
   to an existing scope. E.g.:
   - `fs:read_file` with `path: "/etc/passwd"` → also check
@@ -448,42 +460,88 @@ tool_scope_map:
 
 ## 5. Audit shape
 
-One audit entry per `tools/call`, regardless of dual-check (the two
-checks merge into a single audit entry with the **denying** rule's
-result if either denies, otherwise the more specific scope's result).
+The gateway writes no audit log of its own. Each `/v1/check` call it
+makes is audited by the central server like any other check, so the
+entries land in the server's audit log with `transport: "mcp_gateway"`.
+The entries aren't merged: a `tools/call` in strict mode that maps to a
+scope writes **two** entries, one for the `mcp_tool` check and one for
+the mapped-scope check (one per path for a `paths` array). If the
+`mcp_tool` check doesn't allow, the mapped check never runs and there is
+one entry. A call in `fast` mode, or one that maps to no scope, writes
+one entry.
+
+A mapped `fs:read_file` of `/tmp/x` from Claude Desktop writes these two
+entries:
 
 ```json
 {
-  "schema_version": "v1",
-  "transport": "mcp_gateway",
   "timestamp": "2026-05-06T12:34:56.789Z",
-  "session_id": "claude-desktop-pid-12345",
-  "agent_id": "mcp-gateway",
+  "session_id": "mcp-gateway:Claude Desktop",
+  "agent_id": "mcp-gateway:Claude Desktop",
   "request": {
+    "schema_version": "v1",
     "scope": "mcp_tool",
     "command": "fs:read_file",
-    "path": "/tmp/x",
+    "agent_id": "mcp-gateway:Claude Desktop",
+    "session_id": "mcp-gateway:Claude Desktop",
     "meta": {
-      "arguments_json": "{\"path\":\"/tmp/x\"}",
-      "namespace": "fs",
+      "arg_path": "/tmp/x",
       "gateway_connection": "3f9c0a1b2d4e5f60",
-      "upstream_cmd": "npx -y @modelcontextprotocol/server-filesystem /tmp",
-      "policy_mode": "strict",
-      "secondary_check_scope": "filesystem",
-      "secondary_check_decision": "ALLOW"
+      "namespace": "fs",
+      "tool_name": "read_file",
+      "transport": "mcp_gateway"
     }
   },
   "result": {
+    "schema_version": "v1",
     "decision": "ALLOW",
-    "matched_rule": "allow:filesystem:tmp",
-    "reason": "matched allow rule for /tmp/**"
+    "reason": "Allowed by mcp_tool rule",
+    "matched_rule": "allow:mcp_tool:fs:*"
   },
-  "duration_ms": 4
+  "duration_ms": 0,
+  "transport": "mcp_gateway"
+}
+{
+  "timestamp": "2026-05-06T12:34:56.790Z",
+  "session_id": "mcp-gateway:Claude Desktop",
+  "agent_id": "mcp-gateway:Claude Desktop",
+  "request": {
+    "schema_version": "v1",
+    "scope": "filesystem",
+    "action": "read",
+    "command": "fs:read_file",
+    "path": "/tmp/x",
+    "agent_id": "mcp-gateway:Claude Desktop",
+    "session_id": "mcp-gateway:Claude Desktop",
+    "meta": {
+      "arg_path": "/tmp/x",
+      "gateway_connection": "3f9c0a1b2d4e5f60",
+      "namespace": "fs",
+      "tool_name": "read_file",
+      "transport": "mcp_gateway"
+    }
+  },
+  "result": {
+    "schema_version": "v1",
+    "decision": "ALLOW",
+    "reason": "Allowed by filesystem rule",
+    "matched_rule": "allow:filesystem:read"
+  },
+  "duration_ms": 0,
+  "transport": "mcp_gateway"
 }
 ```
 
-`Meta["arguments_json"]` is **redacted** through
-`pkg/notify.DefaultRedactor` before being written. Bearer tokens, AWS
+Both entries carry the same meta: `namespace`, `tool_name`, `transport`,
+`gateway_connection`, `approval_id` (on a retry that carries one) and one
+`arg_<key>` per tool argument. A string argument is stored as is; any
+other value is JSON-encoded. Only the mapped entry has `path`, `url`,
+`domain` or `action`, projected from the arguments (§ 4.4).
+
+The `arg_<key>` values are **redacted** by the central server before the
+entry is written (`vanzik serve --audit-redact`, on by default), through
+`pkg/notify.DefaultRedactor` plus the policy's
+`notifications.redaction.extra_patterns`. Bearer tokens, AWS
 keys, GitHub tokens, Slack tokens, `key=value` secret patterns and, from
 v1.2.0, `sk-…` and Google API keys, JWTs, PEM private keys and
 `Authorization` / `x-api-key` header values are scrubbed.
@@ -615,15 +673,19 @@ While in degraded state:
 - The namespace flag is set.
 - `tools/list` aggregation **excludes** the namespace's tools (the
   client just doesn't see them — the model can't try to call them).
-- `tools/call` to a degraded namespace returns:
+- `tools/call` to a degraded namespace returns the gateway's own
+  error code `-32002`:
   ```json
   {
     "jsonrpc": "2.0", "id": ...,
-    "error": { "code": -32603,
-               "message": "Internal error: <ns> upstream unavailable" }
+    "error": { "code": -32002,
+               "message": "tools/call: upstream \"<ns>\" unavailable",
+               "data": { "namespace": "<ns>" } }
   }
   ```
-- Health endpoint reflects the degradation in `warnings`.
+- The gateway has no health endpoint, and the central server's
+  `/v1/health` knows nothing about the gateway's upstreams. The
+  degradation shows only in the gateway's stderr log.
 
 Recovery: when the subprocess restarts and re-completes `initialize`,
 the namespace flag clears and the next `tools/list` aggregation
@@ -653,9 +715,10 @@ tools.
 Per spec: newline-delimited UTF-8 JSON. **No embedded newlines** in any
 JSON-RPC message. The gateway:
 
-- Reads from stdin via `bufio.Scanner` with a 4 MiB max line buffer
-  (raise from 64 KiB default; tool argument JSON can legitimately be
-  large).
+- Reads from stdin with a `bufio.Reader` and `readFrame`, which caps a
+  frame at 4 MiB (`MaxStdoutLineBytes`; tool argument JSON can
+  legitimately be large). An oversized frame is dropped, answered with
+  `-32600` when its id can be read, and the gateway keeps going.
 - Writes to stdout via a `*os.File` direct write, one frame at a time,
   with a `\n` terminator.
 - Holds a write mutex for stdout so concurrent goroutines (say, two
@@ -687,16 +750,22 @@ the gateway silently drops as the Python adapter does.
 
 ### 8.3 Concurrency model
 
-- **Stdin reader**: one goroutine. Pushes frames into a per-call
-  dispatcher.
-- **Per-call dispatcher**: spawns a goroutine for each tools/call so
-  they run concurrently. Other JSON-RPC methods (initialize,
-  tools/list, ping) are dispatched synchronously to maintain ordering.
-- **Per-upstream**: one writer goroutine and one reader goroutine.
-  Frames out of the dispatcher land on the writer's channel; frames in
-  from the reader land in a per-id response map keyed by JSON-RPC id.
-- **Stdout writer**: one goroutine drains a fan-in channel with a write
-  mutex. Frames are flushed with `os.Stdout.Sync()` after every write.
+- **Stdin reader**: one goroutine reads frames and hands them to the
+  main loop, which calls `dispatchFrame` for each.
+- **Dispatch**: `dispatchFrame` runs each `tools/call` in its own
+  goroutine so calls run concurrently. Other JSON-RPC methods
+  (initialize, tools/list, ping) are handled synchronously to keep
+  their order.
+- **Per stdio upstream**: one reader goroutine (`readLoop`) routes each
+  response to the waiting caller through a pending map keyed by the
+  gateway-internal request id; another goroutine drains the
+  subprocess's stderr into the log, and a supervisor restarts the
+  subprocess. There is no writer goroutine: the calling goroutine
+  writes the frame to the subprocess's stdin under a write mutex.
+- **Stdout**: no writer goroutine either. `writeResponse` and
+  `writeNotification` write each frame straight to stdout under one
+  mutex (`outMu`), so concurrent responses don't interleave. There is
+  no `Sync()` call.
 
 ### 8.4 Cancellation
 
@@ -761,7 +830,7 @@ way out. That is deferred — see `Bridge.handleNotification`.
 | Dual-check               | `mcp_tool` allow + `filesystem` deny → DENY; both allow → ALLOW             |
 | Reconnect                | upstream crashes mid-stream, backoff schedule respected, recovery clears flag|
 | Approval round-trip      | _meta prefix variants, expired id (404), unresolved id (still pending)      |
-| Cancellation             | cancel propagates to upstream and the policy check goroutine                |
+| Cancellation             | `notifications/cancelled` is accepted and forwarded, and is a no-op (§ 8.4) |
 | Stdout serialisation     | concurrent upstream responses don't interleave bytes                        |
 | Real upstream            | spawn the stub MCP server subprocess via the real `StdioUpstream`, drive a full session|
 
@@ -929,9 +998,12 @@ its parent — there is no inbound HTTP for the gateway. The
   - <https://modelcontextprotocol.io/specification/2025-11-25/server/tools>
 - MCP error codes: JSON-RPC 2.0 reserved range (-32768 to -32000); MCP
   uses `-32602` for invalid params, `-32603` for internal errors,
-  `-32700` for parse errors. Vanzik does not introduce custom
-  error codes — denial and approval-required are returned as **tool
-  execution errors** (`isError: true`), not JSON-RPC protocol errors.
+  `-32700` for parse errors. Denial and approval-required are returned
+  as **tool execution errors** (`isError: true`), not JSON-RPC protocol
+  errors. The gateway defines three codes in the server-defined range
+  (`pkg/mcpgw/protocol.go`): `-32002` for an unavailable upstream, which
+  it returns (§ 7), and `-32000` (policy deny) and `-32001` (approval
+  required), which are reserved and not returned today.
 - Python preview: `plugins/python/vanzik/adapters/mcp.py`
   (`GuardedMCPGateway`).
 - Cross-cutting design: [`docs/PROXY_ARCHITECTURE.md`](./PROXY_ARCHITECTURE.md).
