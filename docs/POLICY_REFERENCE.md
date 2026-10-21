@@ -202,7 +202,7 @@ Applies only when `scope: cost`. The incoming request must carry a numeric `est_
 
 - Session totals survive a restart when the server runs with `--persist` (the default): the cost accumulators are saved to and restored from the store. With `--persist=false` they are in memory only, and a restart loses them.
 - `--session-cost-ttl` evicts idle sessions so the map does not grow forever. Default `0` = never.
-- `Engine.RecordCost` / `RefundCost` exist for out-of-band accounting but are still **not** wired into the HTTP request path as of v0.5.1 — call them from custom Go embeddings if you need pre-reserved cost accounting outside of `/v1/check`.
+- `Engine.RecordCost` / `RefundCost` exist for out-of-band accounting but are **not** wired into the HTTP request path — call them from custom Go embeddings if you need pre-reserved cost accounting outside of `/v1/check`.
 
 ---
 
@@ -250,7 +250,7 @@ The Python SDK applies a redactor (mirrored from `pkg/notify.DefaultRedactor`) t
 
 Since v1.2.0 the server also masks secrets in every request before it reaches the audit trail (`serve --audit-redact`, on by default — see [OPERATIONS § Audit redaction](OPERATIONS.md#audit-redaction)), so a value that reaches the server unredacted is masked there too.
 
-The field NAME (in `meta.field`) is NOT redacted — operators need it stable for rule authoring. Raw values do not land in the audit log unless they survive the redactor cleanly. Future deferred work (`v0.6, #data-pii`): regex / classifier-based PII detection baked into a built-in rule library so operators don't have to spell out SSN/CC formats themselves.
+The field NAME (in `meta.field`) is NOT redacted — operators need it stable for rule authoring. Raw values do not land in the audit log unless they survive the redactor cleanly. Regex / classifier-based PII detection baked into a built-in rule library, so operators don't have to spell out SSN/CC formats themselves, is not implemented yet (`#data-pii`).
 
 ### Default-deny still applies
 
@@ -302,7 +302,7 @@ Rules match on `pattern` against the namespaced `command`:
 
 ### Default-deny still applies
 
-A `mcp_tool` request that matches no allow rule receives `DENY "No matching allow rule (default deny)"`. The gateway's default behaviour (no `mcp_tool` rules in policy) is therefore **deny everything** — operators must add at least one allow rule for the gateway to be useful. See `configs/default.yaml` for a commented template.
+A `mcp_tool` request that matches no allow rule receives `DENY "No matching allow rule (default deny)"`. The gateway's default behaviour (no `mcp_tool` rules in policy) is therefore **deny everything** — operators must add at least one allow rule for the gateway to be useful. `configs/default.yaml` ships an active `mcp_tool` block (the MCP quickstart's safe defaults) to start from.
 
 ---
 
@@ -533,7 +533,7 @@ Unknown types fall back to `log` with `level: "warn"`.
 
 ## Proxy tunables
 
-All under the optional `proxy:` block. Absent values fall back to the defaults in `pkg/policy/engine.go:54-60`.
+All under the optional `proxy:` block. Absent values fall back to the `Default*` constants in `pkg/policy/engine.go:92-98`.
 
 ```yaml
 proxy:
