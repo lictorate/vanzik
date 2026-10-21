@@ -35,7 +35,8 @@ guard = Guard(
     api_key="…",                        # or set VANZIK_API_KEY (needed for approve/deny/status)
 )
 
-result = guard.check("shell", command="rm -rf ./old_data")
+command = "rm -rf ./old_data"
+result = guard.check("shell", command=command)
 
 if result.allowed:
     execute(command)
@@ -87,7 +88,7 @@ def run_command(cmd: str):
 
 try:
     run_command("ls")
-    run_command("rm -rf /")        # raises VanzikDenied
+    run_command("dd if=/dev/zero of=/dev/sda")  # raises VanzikDenied
 except VanzikDenied as e:
     log(f"blocked: {e.result.reason}")
 ```

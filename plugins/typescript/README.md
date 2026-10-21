@@ -63,10 +63,10 @@ if (result.allowed) {
 
 ```ts
 // Default: fail closed. On any fetch/abort/JSON error → CheckResult(decision: "DENY", reason: "Vanzik unreachable: …")
-const guard = new Vanzik('http://localhost:8080');
+const strictGuard = new Vanzik('http://localhost:8080');
 
 // Opt-in: fail open. Use only when Vanzik is advisory.
-const guard = new Vanzik({ baseUrl: '…', failMode: 'allow' });
+const advisoryGuard = new Vanzik({ baseUrl: '…', failMode: 'allow' });
 ```
 
 Any thrown/rejected error from `fetch` (connection refused, DNS failure, TLS handshake, body-read failure, `AbortController` timeout) collapses into the fail-mode response, and so does a response that isn't a valid decision: a non-2xx status, a `Content-Type` other than `application/json`, a body that isn't JSON, or one without `decision`. This matches the Python SDK's semantics.
@@ -83,7 +83,7 @@ const safeExec = guarded(guard, 'shell',
 
 await safeExec('ls -la');      // allowed → runs
 try {
-  await safeExec('rm -rf /');  // throws VanzikDeniedError
+  await safeExec('dd if=/dev/zero of=/dev/sda');  // throws VanzikDeniedError
 } catch (e) {
   if (e instanceof VanzikDeniedError) {
     console.log(e.result?.matchedRule);
