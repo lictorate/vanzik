@@ -272,14 +272,18 @@ func FirstStringArg(args map[string]interface{}, keys ...string) string {
 
 // InferFilesystemAction maps a tool-name verb to the canonical
 // filesystem-scope action ("read"/"write"/"delete"). Best-effort —
-// rules that match by Path only are unaffected.
+// an unknown verb yields "", which no filesystem path rule matches.
+// Search and tree tools (the MCP filesystem server's search_files and
+// directory_tree) only look at the tree, so they are reads.
 func InferFilesystemAction(toolName string) string {
 	tl := strings.ToLower(toolName)
 	switch {
 	case strings.HasPrefix(tl, "read"), strings.HasPrefix(tl, "list"),
 		strings.HasPrefix(tl, "get"), strings.HasPrefix(tl, "stat"),
 		strings.HasPrefix(tl, "cat"), strings.HasPrefix(tl, "find"),
-		strings.HasPrefix(tl, "glob"), strings.HasPrefix(tl, "grep"):
+		strings.HasPrefix(tl, "glob"), strings.HasPrefix(tl, "grep"),
+		strings.HasPrefix(tl, "search"), strings.HasPrefix(tl, "tree"),
+		strings.HasPrefix(tl, "directory_tree"):
 		return "read"
 	case strings.HasPrefix(tl, "write"), strings.HasPrefix(tl, "edit"),
 		strings.HasPrefix(tl, "create"), strings.HasPrefix(tl, "append"),

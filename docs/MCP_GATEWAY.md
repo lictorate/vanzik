@@ -305,13 +305,16 @@ The gateway:
   to an existing scope. E.g.:
   - `fs:read_file` with `path: "/etc/passwd"` → also check
     `scope: "filesystem"`, `path: "/etc/passwd"`, `action: "read"`.
+    The action comes from the tool name's verb: search and tree tools
+    (`search_files`, `directory_tree`) are reads too.
+  - `fs:read_multiple_files` with `paths: ["/tmp/a", "/etc/passwd"]` →
+    one `filesystem` check per entry of the `paths` array.
   - `github:fetch_url` with `url: "https://api.github.com/..."` → also
     check `scope: "network"`, `url: ...`, `domain: "api.github.com"`.
 
-The forwarded action proceeds **only if both checks return ALLOW**. If
-either denies, the call denies. If either requires approval, the call
-requires approval (and we surface the union of approval URLs — in
-practice, the first one to fire).
+The forwarded action proceeds **only if every check returns ALLOW**. If
+any denies, the call denies. If any requires approval, the call
+requires approval, with the first approval to fire.
 
 #### 4.4.1 Why dual-check
 
