@@ -90,7 +90,7 @@ All fields are optional; you combine them to describe what matches.
 |---|---|---|
 | `action` | string | Exact match against `ActionRequest.Action` (e.g., `"read"`, `"write"`, `"delete"`). |
 | `pattern` | string | Glob match against `ActionRequest.Command` (or URL for `network`). See [pattern semantics](#pattern-matching-semantics-read-this). |
-| `paths` | string array | One or more glob patterns matched against `ActionRequest.Path`. Each path **and** `req.Path` are passed through `filepath.Clean + ToSlash` first. |
+| `paths` | string array | One or more glob patterns matched against `ActionRequest.Path`. Each path **and** `req.Path` are passed through `filepath.Clean + ToSlash` first. Paths are compared only when the rule's `action` equals the request's, so a rule with `paths` must also set `action`; without one its paths never match (policy load warns, see [Load-time validation](#load-time-validation)). |
 | `domain` | string | Glob match against `ActionRequest.Domain` (or the host of `ActionRequest.URL` if `Domain` is empty). |
 | `message` | string | Human-readable reason returned in `CheckResult.Reason` and shown in the dashboard. Defaults to a generic string. |
 | `conditions` | `[]Condition` | Contextual constraints. See [Conditions](#conditions). All listed conditions must be satisfied for the rule to match. |
@@ -747,6 +747,7 @@ Every policy load — the `--policy` file, a hot reload, a tenant policy from th
 
 - (v1.2.0) a scope that appears in more than one block — the blocks were merged (see [Rule sets and scopes](#rule-sets-and-scopes));
 - (v1.2.0) a scope name that isn't built-in but is one or two edits away from one (`shel`, `filesytem`, `Shell`): its rules only apply to requests whose scope is spelled exactly that way, so it is almost always a typo;
+- (v2.0.0) a rule with `paths` but no `action`: paths are compared only when the rule's `action` equals the request's, so its paths never match anything (an allow allows nothing, a deny denies nothing). Add `action: read`, `write` or `delete`;
 - (v1.0) a rule path pattern that contains `/` but no `**` (e.g. `/workspace/*`) — its single `*` crosses `/` and matches recursively (`/workspace/a/b/secret.env`), usually broader than intended. Switch to `**` (segment-aware) if you meant one level. See [Single-star `*` crosses `/`](#single-star--crosses-).
 
 There is **no** schema validation beyond the above — typos in field names are silently ignored by the YAML decoder. Always run `vanzik validate --policy <file>` after edits; wire `vanzik validate --strict` into CI against every policy file you ship, so warnings fail the build.

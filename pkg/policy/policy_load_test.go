@@ -159,3 +159,45 @@ agents:
 		}
 	}
 }
+
+func TestLintWarnsOnPathRuleWithoutAction(t *testing.T) {
+	yml := `
+version: "1"
+name: t
+rules:
+  - scope: filesystem
+    deny:
+      - paths: ["/etc/**", "/root/**"]
+      - action: write
+        paths: ["/var/**"]
+    allow:
+      - paths: ["/tmp/**"]
+agents:
+  bot:
+    override:
+      - scope: filesystem
+        allow: [{action: read, paths: ["**"]}, {paths: ["./work/**"]}]
+`
+	pol, warnings, err := parsePolicyBytesWithWarnings([]byte(yml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(warnings, "\n")
+	for _, want := range []string{
+		`rules[0](filesystem).deny[0] has paths but no action, so its paths never match`,
+		`rules[0](filesystem).allow[0] has paths but no action, so its paths never match`,
+		`agents.bot.override[0](filesystem).allow[1] has paths but no action, so its paths never match`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing warning %q in:\n%s", want, joined)
+		}
+	}
+	if n := strings.Count(joined, "has paths but no action"); n != 3 {
+		t.Errorf("got %d action warnings, want 3:\n%s", n, joined)
+	}
+	// The warning is accurate: the action-less allow matches nothing.
+	eng := NewEngineFromPolicy(pol)
+	if got := eng.Check(ActionRequest{Scope: "filesystem", Action: "read", Path: "/tmp/x"}, LocalTenantID); got.Decision != Deny {
+		t.Errorf("read /tmp/x = %s, want DENY (default)", got.Decision)
+	}
+}
