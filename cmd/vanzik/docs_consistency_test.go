@@ -1,8 +1,7 @@
 package main
 
-// Documentation tripwires for facts the code owns. Each one guards a claim
-// that was found stale in the 2026-09-09 review; the test names the doc and
-// the line so the fix is a one-file edit.
+// Documentation tripwires for facts the code owns. Each test names the doc
+// and the line so a fix is a one-file edit.
 
 import (
 	"os"
@@ -42,9 +41,8 @@ func docFiles(t *testing.T) []string {
 }
 
 // The replay checkpoint lives at `<audit-log>` + audit.CheckpointSuffix.
-// Three docs described it as `<audit-dir>/.replay-checkpoint` — the path
-// the CLI wrongly used (R2). Any doc that names the checkpoint must use
-// the real shape.
+// Any doc that names the checkpoint must use that shape, not
+// `<audit-dir>/.replay-checkpoint`.
 func TestDocs_CheckpointPathMatchesCode(t *testing.T) {
 	const stale = "<audit-dir>/.replay-checkpoint"
 	real := "<audit-log>" + audit.CheckpointSuffix

@@ -100,8 +100,8 @@ type setupState struct {
 	APIKey     bool   `json:"api_key"`     // the server runs with --api-key-file
 	LoginStart bool   `json:"login_start"` // a login service runs it
 	// Seal: the server runs with --audit-seal and the key in sealKeyPath.
-	// Set for setups made since v1.4; an older setup.json has no field, so
-	// an existing install keeps the command line it had.
+	// A setup.json without the field (written before v1.4) keeps the
+	// command line it had.
 	Seal bool `json:"seal,omitempty"`
 }
 

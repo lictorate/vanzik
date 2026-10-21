@@ -555,7 +555,7 @@ func TestBuildMappedActionRequest_ShellArgs(t *testing.T) {
 	}
 }
 
-// TestHTTPPolicyClient_PropagatesApprovalID — A19b. The bridge stamps
+// TestHTTPPolicyClient_PropagatesApprovalID: the bridge stamps
 // ToolsCallRequest.ApprovalID from `_meta.dev.vanzik/approval_id`;
 // the gateway's HTTPPolicyClient must forward this as a top-level
 // ApprovalID field on the /v1/check body so the central server can
@@ -620,16 +620,10 @@ func TestHTTPPolicyClient_PropagatesApprovalID_DualCheck(t *testing.T) {
 }
 
 // TestHTTPPolicyClient_FailMode_DenyVsClosedAudit_DistinctRules pins
-// the B4 fix on the MCP gate side: --fail-mode deny and
-// --fail-mode fail-closed-with-audit must emit DISTINCT rule strings
-// so dashboards can break out central-server-outage events from plain
+// DISTINCT rule strings for --fail-mode deny (FailModeRuleClosed) and
+// --fail-mode fail-closed-with-audit (FailModeRuleClosedAudit), so
+// dashboards can break out central-server-outage events from plain
 // fail-closed denials.
-//
-// Pre-fix: the MCP gate's failModeDecision collapsed both branches into
-// the same `deny:gateway:fail_closed` rule, making the operator-claimed
-// `fail-closed-with-audit` mode observationally indistinguishable from
-// `deny`. Post-fix: `fail-closed-with-audit` emits FailModeRuleClosedAudit
-// and `deny` emits FailModeRuleClosed.
 func TestHTTPPolicyClient_FailMode_DenyVsClosedAudit_DistinctRules(t *testing.T) {
 	// Unreachable-guard server: hijacks the connection and closes it so
 	// every /v1/check call errors out and failModeDecision fires.

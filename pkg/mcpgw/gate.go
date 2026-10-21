@@ -157,8 +157,7 @@ func (c *HTTPPolicyClient) Check(ctx context.Context, req *ToolsCallRequest) (De
 	// /v1/check body. The central server's handleCheck consults the
 	// approval queue first when this is set; resolved entries short-
 	// circuit the policy evaluation entirely so a human's approve/deny
-	// is honored across the model's retry. (A19b — closes
-	// #mcp-approval-roundtrip.)
+	// is honored across the model's retry.
 	mcpAR := policy.ActionRequest{
 		Scope:      "mcp_tool",
 		AgentID:    req.AgentID,

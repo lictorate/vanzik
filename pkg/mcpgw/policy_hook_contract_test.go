@@ -2,17 +2,15 @@ package mcpgw
 
 // Contract tests for the nil-PolicyCheck behaviour.
 //
-// A Bridge constructed without PolicyCheck ALLOWS every tools/call. That is a
-// deliberate test-ergonomics default, not an accident — but it is an S1
-// fail-open shape and, until now, nothing in the tree pinned it. Both halves
-// were unpinned: that it allows, and that it is *identifiable* when it does.
+// A Bridge constructed without PolicyCheck ALLOWS every tools/call: a
+// deliberate test-ergonomics default, but a fail-open shape. These tests pin
+// both halves: that it allows, and that it is *identifiable* when it does.
 //
 // These tests are tripwires, not cages. They do not argue the default should
-// stay; they make changing it a deliberate act. If a future change makes the
-// unwired bridge fail closed (the recommended B5 direction — an additive
-// RequirePolicyHook opt-in), these tests SHOULD fail, and the fix is to update
-// them together with a CHANGELOG entry, because that flips an
-// externally-observable default for library embedders.
+// stay; they make changing it a deliberate act. If the unwired bridge is made
+// to fail closed (e.g. an additive RequirePolicyHook opt-in), these tests
+// SHOULD fail, and the fix is to update them together with a CHANGELOG entry,
+// because that flips an externally-observable default for library embedders.
 
 import (
 	"context"

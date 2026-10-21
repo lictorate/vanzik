@@ -1,11 +1,11 @@
 package gateclient
 
-// Transport-level contract for RecordForcedAudit — the F1 audit-verdict
-// fidelity path, previously at 0% coverage in this package.
+// Transport-level contract for RecordForcedAudit, the audit-verdict fidelity
+// path.
 //
-// Its behaviour IS exercised end-to-end through pkg/llmproxy's gate wrapper,
-// but the HTTP contract itself was untested: where it POSTs, what it sends,
-// how it reports failure. That matters because this is the call that keeps a
+// pkg/llmproxy's gate wrapper exercises it end-to-end; these tests pin the
+// HTTP contract itself: where it POSTs, what it sends, how it reports
+// failure. That matters because this is the call that keeps a
 // firewall from going dark. When the LLM proxy manufactures its own
 // fail-closed refusal (a malformed tool-call completion), the client is denied
 // locally and the central server never sees a /v1/check for it. Without this
@@ -89,8 +89,8 @@ func TestRecordForcedAudit_PostsVerdictToTenantAuditEndpoint(t *testing.T) {
 	if g.method != http.MethodPost {
 		t.Errorf("method = %s, want POST", g.method)
 	}
-	// Tenant routing is the invariant-#3 half: a forced audit record must land
-	// on the CALLER's tenant, never a default or another tenant's trail.
+	// Tenant routing: a forced audit record must land on the CALLER's
+	// tenant, never a default or another tenant's trail.
 	if !strings.Contains(g.path, "/acme/") {
 		t.Errorf("path = %q, want the record routed to the caller's tenant", g.path)
 	}

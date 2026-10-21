@@ -95,7 +95,7 @@ func main() {
 	}()
 
 	// Wire the bridge's PolicyCheck hook against the central server's
-	// /v1/check via mcpgw.HTTPPolicyClient (A18). The gate also reads
+	// /v1/check via mcpgw.HTTPPolicyClient. The gate also reads
 	// the local policy file (the same YAML the central server loads)
 	// for the dual-check tool_scope_map.
 	//
@@ -148,19 +148,14 @@ func main() {
 
 	// Tool-call-level audit + SSE for MCP traffic flow through the
 	// central server's /v1/check path: the gate stamps
-	// meta["transport"] = "mcp_gateway" on every check, A19's
-	// transport-tag plumbing in pkg/proxy + pkg/audit lands the entry
-	// on disk and on the SSE bus with the right chip. So the bridge's
-	// per-tool-call AuditEmit / SSEEmit hooks (defined in
-	// pkg/mcpgw/bridge.go) intentionally stay nil — wiring them here
-	// would double-audit every check.
+	// meta["transport"] = "mcp_gateway" on every check, and pkg/proxy +
+	// pkg/audit record the entry and the SSE event with that tag. So the
+	// bridge's AuditEmit / SSEEmit hooks intentionally stay nil — wiring
+	// them here would double-audit every check.
 	//
-	// Gateway-LEVEL events (upstream subprocess crash, malformed
-	// JSON-RPC frame from host, gateway startup failure) are a
-	// separate operator-monitoring concern. They ship to stderr logs
-	// today; an /v1/operator/event endpoint to surface them in the
-	// dashboard is future work. See pkg/mcpgw/audit.go for the full
-	// rationale and TODO(#mcp-gateway-events).
+	// Gateway-LEVEL events (upstream crash, malformed host frame,
+	// startup failure) go to stderr; see pkg/mcpgw/audit.go and
+	// TODO(#mcp-gateway-events).
 
 	if err := bridge.Run(ctx, os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintf(os.Stderr, "vanzik-mcp-gateway: %v\n", err)

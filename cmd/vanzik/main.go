@@ -38,17 +38,13 @@ var (
 )
 
 func main() {
-	// Best-effort update check: kick off a background goroutine that asks
-	// GitHub for the latest release. It prints one line to stderr if the
-	// running binary is older. Never for `server`, help or a mistyped
-	// command; disabled on dev builds and via VANZIK_NO_UPDATE_CHECK=1.
-	// See update_check.go.
+	// Best-effort update check (update_check.go): one line on stderr when a
+	// newer release exists. Never for `server`, help, a mistyped command,
+	// dev builds or VANZIK_NO_UPDATE_CHECK=1.
 	updateDone := startUpdateCheck(version, commit, subcommandOf(os.Args))
 
-	// Give the background update check up to 800ms to finish so any
-	// notice lands before subcommand output starts. If the check is still
-	// running after the deadline we just move on — the goroutine continues
-	// silently and a late print is harmless.
+	// Up to 800ms for the notice to land before the command's output; a
+	// later print is harmless.
 	waitForUpdateCheck(updateDone, 800*time.Millisecond)
 
 	os.Exit(run(os.Args[1:]))
@@ -77,8 +73,7 @@ func run(args []string) int {
 		return runValidateCmd(rest)
 	case "check":
 		// runCheck owns its own flag.FlagSet: usage errors map to exit code
-		// 3, not 2. Stdin/stdout/stderr are passed explicitly so the
-		// function is unit-testable from check_cmd_test.go.
+		// 3, not 2.
 		return runCheck(rest, os.Stdin, os.Stdout, os.Stderr)
 	case "test":
 		return runTestCmd(rest)
@@ -249,11 +244,8 @@ func newServerFlags() (*flag.FlagSet, *serverFlags) {
 	f.sessionCostTTL = fs.Duration("session-cost-ttl", 0, "If > 0, evict session-cost accumulator entries idle longer than this duration (e.g. 24h). Zero disables eviction (entries never expire).")
 	f.sessionCostSweep = fs.Duration("session-cost-sweep-interval", 0, "How often to run the session-cost sweeper. Defaults to max(session-cost-ttl/4, 1m).")
 	f.approvalValidity = fs.Duration("approval-validity", 5*time.Minute, "How long a resolved approval is honored by the /v1/check approval-id retry, measured from resolution. Past the window the retry re-enters the approval flow under a new id. 0 disables the bound. Default matches the SDKs' wait_for_approval poll window.")
-	// Audit log rotation. Defaults aim at production-friendly bounds:
-	// 100 MiB live-file ceiling, 30-day retention, 5 archives kept (older
-	// archives pruned by oldest-first lex order on the timestamp suffix),
-	// gzip on. Set --audit-max-size-mb=0 to disable rotation entirely.
-	// See pkg/audit/rotation.go for the rotation contract.
+	// Audit log rotation; --audit-max-size-mb=0 disables it. The contract
+	// is in pkg/audit/rotation.go.
 	f.auditMaxSizeMB = fs.Int("audit-max-size-mb", 100, "Maximum size of the live audit log in MiB before rotation. 0 disables rotation.")
 	f.auditMaxBackups = fs.Int("audit-max-backups", 5, "Maximum number of rotated archives to keep. 0 keeps all archives indefinitely.")
 	f.auditMaxAgeDays = fs.Int("audit-max-age-days", 30, "Maximum age (in days) of archived audit files. Archives older than this are pruned at rotation time. 0 disables age-based pruning.")
@@ -266,19 +258,15 @@ func newServerFlags() (*flag.FlagSet, *serverFlags) {
 	f.auditWorkers = fs.Int("audit-workers", 4, "Worker goroutines draining the buffered audit queue. Ignored unless --audit-buffered is set.")
 	f.auditRedact = fs.Bool("audit-redact", true, "Mask secrets (API keys, tokens, passwords, private keys) in commands, paths, URLs and meta before they reach the audit log, GET /v1/audit, the SSE stream and the pending-approvals list. The policy's notifications.redaction.extra_patterns apply too. Set false to store requests verbatim.")
 	f.auditOverflowPath = fs.String("audit-overflow-path", "", "Path to the disk-overflow spill file used when the buffered queue saturates. Defaults to <audit-log>.overflow.jsonl. Ignored unless --audit-buffered is set.")
-	// Tamper-evident audit log (v1.4). Off by default so the file format and
-	// the cost of a write stay what they were. File backend only: the store
-	// keeps a subset of the entry's fields, so there is nothing to chain.
-	// See pkg/audit/seal.go.
+	// Tamper-evident audit log (pkg/audit/seal.go). Off by default: it
+	// changes the file format and adds cost to every write. File backend
+	// only: the store keeps a subset of the entry's fields, so there is
+	// nothing to chain.
 	f.auditSeal = fs.Bool("audit-seal", false, "Seal the audit log into a hash chain so 'vanzik audit verify' can detect edited, removed or reordered entries. File backend only. Not encryption.")
 	f.auditSealKeyFile = fs.String("audit-seal-key-file", "", "HMAC-SHA256 key for --audit-seal (the file's content, surrounding whitespace ignored). Without it the chain is plain SHA-256, which anyone who can write the file can recompute. The server won't start if the file is missing, empty or readable by every user.")
 	f.auditAnchorInterval = fs.Duration("audit-anchor-interval", 5*time.Minute, "How often to log the head of the sealed chain ('audit anchor segment=... seq=... hash=...') so it can be shipped off this machine. Anchors are also logged at each rotation and at shutdown. 0 disables the periodic anchor. Ignored unless --audit-seal.")
-	// Debug pprof. Off by default; when on, the runtime profiler endpoints
-	// register under http.DefaultServeMux via the blank import above and we
-	// expose them on a second listener bound to 127.0.0.1 only. Operators
-	// who want pprof reachable beyond localhost MUST tunnel it explicitly
-	// (e.g. `kubectl port-forward`, `ssh -L`) — this is a security floor we
-	// will not lower behind a flag.
+	// Debug pprof, on a second listener bound to 127.0.0.1 only; see
+	// startPprofServer for why there is no flag to widen it.
 	f.debugPprof = fs.Bool("debug-pprof", false, "Expose Go pprof handlers on a separate localhost-only listener (--debug-pprof-port). Off by default; enable for performance investigations only.")
 	f.debugPprofPort = fs.Int("debug-pprof-port", 6060, "Port for the localhost-only pprof listener. Ignored unless --debug-pprof is set.")
 	// Durable persistence. Zero-config by default: runtime state
@@ -298,7 +286,7 @@ func newServerFlags() (*flag.FlagSet, *serverFlags) {
 	// request path. Ignored unless --persist (the multi-tenant provider only
 	// exists in persistence mode).
 	f.tenantPolicyRefresh = fs.Duration("tenant-policy-refresh-interval", 30*time.Second, "How often to rebuild the non-local tenant policy cache from the store, so 'vanzik tenant put' reaches a running server without a restart. 0 disables the rebuild (boot-time cache only). Ignored unless --persist.")
-	// Multi-node reconciliation (v1.0). When multiple Vanzik nodes share a
+	// Multi-node reconciliation. When multiple Vanzik nodes share a
 	// durable store, a background reconcile loop converges each node's local
 	// rate-limit / session-cost view toward the cluster-wide total (bounded
 	// overshoot ~= reconcile-interval x rate x nodes). It is off the /v1/check hot
@@ -710,9 +698,8 @@ func runMigrateFromAgentGuard(w io.Writer) int {
 	return 0
 }
 
-// auditRotationOpts mirrors the --audit-* CLI flags. Held in a struct so
-// runServe's signature does not balloon further; the struct itself is
-// translated into a pkg/audit RotationConfig inside runServe.
+// auditRotationOpts mirrors the --audit-* rotation flags; runServe turns
+// it into an audit.RotationConfig.
 type auditRotationOpts struct {
 	MaxSizeMB  int
 	MaxBackups int
@@ -720,9 +707,8 @@ type auditRotationOpts struct {
 	Compress   bool
 }
 
-// auditBufferedOpts mirrors the --audit-buffered* CLI flags. Held in a
-// struct so runServe's signature stays bounded; the struct is translated
-// into a pkg/audit BufferedAsyncOpts inside runServe.
+// auditBufferedOpts mirrors the --audit-buffered* CLI flags; runServe
+// turns it into an audit.BufferedAsyncOpts.
 //
 // Enabled=false makes writes go straight to the FileLogger and /v1/check
 // waits on the audit mutex. Enabled=true (the default) decouples the
@@ -770,25 +756,21 @@ func auditSealFromFlags(f *serverFlags) (auditSealOpts, int, error) {
 	return o, 0, nil
 }
 
-// pprofOpts mirrors the --debug-pprof* CLI flags. Held in a struct so
-// runServe's signature stays bounded; the listener is started in runServe
-// only when Enabled is true and is always bound to 127.0.0.1 (no flag to
-// loosen this — operators who need pprof reachable beyond localhost must
-// tunnel through SSH or a kube port-forward).
+// pprofOpts mirrors the --debug-pprof* CLI flags. The listener starts only
+// when Enabled is true, and always on 127.0.0.1 (see startPprofServer).
 type pprofOpts struct {
 	Enabled bool
 	Port    int
 }
 
-// persistOpts mirrors the persistence CLI flags. Held in a struct so
-// runServe's signature stays bounded.
+// persistOpts mirrors the persistence CLI flags.
 type persistOpts struct {
 	Enabled      bool
 	DSN          string
 	DataDir      string
 	AuditBackend string // "file" | "store"
 
-	// Multi-node reconciliation (v1.0). NodeID identifies this node; empty or a
+	// Multi-node reconciliation. NodeID identifies this node; empty or a
 	// zero ReconcileInterval disables reconciliation (single-node behavior).
 	NodeID            string
 	ReconcileInterval time.Duration
@@ -813,10 +795,7 @@ func defaultNodeID() string {
 // durable store.Store PLUS the tenant-policy methods its consumers depend on —
 // policy.PolicySource (for the MultiTenantProvider) and PutPolicy/DeletePolicy
 // (for the `tenant` CLI). Both *store.SQLiteStore and *store.PostgresStore
-// satisfy it. This is an UNEXPORTED, package-main type and NOT part of the
-// frozen v1.0 surface; the exported store.Store interface is unchanged. The
-// PolicySource methods (GetPolicyYAML/ListPolicyTenants) come in via the
-// embedded policy.PolicySource and are not re-declared here.
+// satisfy it. Unexported, so not part of the frozen v1.0 surface.
 type persistentStore interface {
 	store.Store
 	policy.PolicySource
@@ -824,17 +803,10 @@ type persistentStore interface {
 	DeletePolicy(ctx context.Context, tenantID string) (bool, error)
 }
 
-// openStore opens the durable store described by cfg. A DSN whose scheme is
-// postgres:// or postgresql:// selects the multi-node PostgresStore; an empty
-// DSN selects the zero-config embedded SQLite database at
-// <data-dir>/vanzik.db; any other DSN is treated as a SQLite path. Returns
-// a persistentStore (store.Store for the syncer/audit AND the tenant-policy
-// methods for the multi-tenant provider / CLI) plus the resolved DSN/path for
-// logging.
 // isPostgresDSN reports whether dsn selects the multi-node PostgresStore (a
 // postgres:// / postgresql:// URL). Used both to pick the backend in openStore
 // and to gate multi-node reconciliation, which is a Postgres-only feature: the
-// zero-config single-node SQLite default must stay I/O-identical to pre-1-R.
+// zero-config single-node SQLite default does no reconciliation I/O.
 func isPostgresDSN(dsn string) bool {
 	return strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://")
 }
@@ -842,6 +814,10 @@ func isPostgresDSN(dsn string) bool {
 // dbFile is the zero-config SQLite database's name in --data-dir.
 const dbFile = "vanzik.db"
 
+// openStore opens the durable store described by cfg: a postgres:// or
+// postgresql:// DSN selects the multi-node PostgresStore, an empty DSN the
+// zero-config SQLite database <data-dir>/vanzik.db, and any other DSN is a
+// SQLite path. It also returns the resolved DSN/path for logging.
 func openStore(cfg persistOpts) (persistentStore, string, error) {
 	if isPostgresDSN(cfg.DSN) {
 		s, err := store.NewPostgresStore(cfg.DSN)
@@ -892,15 +868,11 @@ func runServe(policyFile string, port int, dashboardEnabled bool, watch bool, au
 
 	// LOUD security warning: with no API key configured (flag empty AND
 	// VANZIK_API_KEY empty), the control- and audit-plane endpoints are
-	// unauthenticated (see requireAuthOrSession in pkg/proxy/auth.go — an empty
-	// key short-circuits to allow). The server still binds localhost-only in this
-	// mode (proxy.Server.Start), but an operator who fronts it with a reverse
-	// proxy or passes --tls-terminated-upstream can expose these without an auth
-	// gate. Make the exposure impossible to miss at startup. This is additive
-	// visibility only — the default (start unauthenticated) is unchanged, and no
-	// endpoint is gated differently. Full multi-key / RBAC auth is deferred
-	// post-v1 (see "Post-v1, only if a concrete need arises" in
-	// docs/COMPATIBILITY.md).
+	// unauthenticated (requireAuthOrSession in pkg/proxy/auth.go allows on an
+	// empty key). The server still binds localhost-only in this mode
+	// (proxy.Server.Start), but a reverse proxy or --tls-terminated-upstream
+	// can expose them without an auth gate. Visibility only: the server still
+	// starts, and no endpoint is gated differently.
 	if apiKey == "" {
 		fmt.Fprint(os.Stderr, "\n"+
 			"================================ SECURITY WARNING ================================\n"+
@@ -924,10 +896,7 @@ func runServe(policyFile string, port int, dashboardEnabled bool, watch bool, au
 		log.Println("WARNING: --session-cost-ttl is 0; session-cost accumulator will grow unbounded. Set e.g. --session-cost-ttl 24h to bound memory.")
 	}
 
-	// Optional pprof debug listener. Bound to 127.0.0.1 only — never
-	// 0.0.0.0 — because pprof exposes goroutine stacks and live memory
-	// shapes that should not leak to the network. Operators who want to
-	// reach it remotely must tunnel (`ssh -L`, `kubectl port-forward`).
+	// Optional pprof debug listener, loopback only (see startPprofServer).
 	pprofSrv := startPprofServer(pprofCfg)
 	if pprofSrv != nil {
 		defer func() {
@@ -936,9 +905,6 @@ func runServe(policyFile string, port int, dashboardEnabled bool, watch bool, au
 			_ = pprofSrv.Shutdown(ctx)
 		}()
 	}
-	// Load policy through the provider abstraction. FilePolicyProvider
-	// wraps the single-file load + watch pattern; a database-backed
-	// provider can swap in without changing engine or server code.
 	provider, err := policy.NewFilePolicyProvider(policyFile)
 	if err != nil {
 		log.Fatalf("Failed to load policy %s: %v", policyFile, err)
@@ -952,7 +918,7 @@ func runServe(policyFile string, port int, dashboardEnabled bool, watch bool, au
 	}
 	log.Printf("Loaded policy: %s from %s (%d rules across %d scopes)", pol.Name, policyFile, pol.RuleCount(), pol.ScopeCount())
 
-	// Audit redaction (v1.2): mask secrets in requests before they reach the
+	// Audit redaction: mask secrets in requests before they reach the
 	// audit trail, the SSE stream and the pending-approvals list. It runs in
 	// the audit workers and the SSE writers, not on the /v1/check goroutine
 	// (except with --audit-buffered=false, where the write itself is
@@ -993,13 +959,10 @@ func runServe(policyFile string, port int, dashboardEnabled bool, watch bool, au
 		log.Fatalf("--audit-backend=store requires --persist (the store is disabled)")
 	}
 
-	// Audit pipeline. The default "file" backend is the JSONL FileLogger
-	// (rotation + startup migration); "store" routes the audit trail into
-	// the SQLite store's indexed audit_entries table (unified single-file
-	// deployment, §2.4). Either way the BufferedAsyncLogger keeps the
-	// /v1/check hot path off the audit write — it only enqueues. See
-	// buildAuditPipeline (audit_setup.go) for the construction + forced-
-	// buffering rules.
+	// Audit pipeline: the "file" backend is the JSONL FileLogger, "store" the
+	// store's indexed audit_entries table. Either way the BufferedAsyncLogger
+	// keeps the audit write off the /v1/check hot path. buildAuditPipeline
+	// (audit_setup.go) has the construction and forced-buffering rules.
 	pipeline, err := buildAuditPipeline(auditPath, storeAudit, st, rotOpts, bufOpts, sealOpts, auditTransform)
 	if err != nil {
 		log.Fatalf("Failed to initialize audit pipeline: %v", err)
@@ -1026,11 +989,9 @@ func runServe(policyFile string, port int, dashboardEnabled bool, watch bool, au
 		if mtErr != nil {
 			log.Fatalf("Failed to initialize multi-tenant policy provider: %v", mtErr)
 		}
-		// Rebuild the tenant cache periodically. Without this the cache is
-		// frozen at boot and `vanzik tenant put` on an existing tenant
-		// never reaches this process (non-local tenants have no Watch channel).
-		// mtp.Close() also stops the ticker, so the deferred provider close
-		// below covers shutdown; the explicit stop keeps the lifetime obvious.
+		// Non-local tenants have no Watch channel, so only this rebuild brings
+		// in a `vanzik tenant put` on an existing tenant. mtp.Close() also stops
+		// the ticker; the explicit stop keeps the lifetime obvious.
 		if persistCfg.TenantPolicyRefresh > 0 {
 			stopRefresh := mtp.StartAutoRefresh(persistCfg.TenantPolicyRefresh)
 			defer stopRefresh()
@@ -1060,12 +1021,10 @@ func runServe(policyFile string, port int, dashboardEnabled bool, watch bool, au
 	})
 	defer notifier.Close()
 
-	// Hot-reload: log every successful provider update. The engine's own
-	// Watch subscription already swaps the cached policy; this callback
-	// is for operator visibility (`Policy reloaded: ...`). The --watch
-	// flag is preserved for back-compat — the file watcher is always on
-	// inside the FilePolicyProvider, so the flag now only gates the log
-	// line, not the underlying behavior.
+	// Log every successful provider update (`Policy reloaded: ...`). The
+	// engine's own Watch subscription swaps the policy, and the file watcher
+	// is always on inside FilePolicyProvider; --watch, kept for
+	// compatibility, only gates this log line.
 	if watch {
 		stop, err := provider.Watch(policy.LocalTenantID, func(updated *policy.Policy) {
 			log.Printf("Policy reloaded: %s (%d rules)", updated.Name, updated.RuleCount())
@@ -1076,10 +1035,9 @@ func runServe(policyFile string, port int, dashboardEnabled bool, watch bool, au
 		defer stop()
 	}
 
-	// Build and start proxy server. Policy-driven tunables (session TTL,
-	// request body cap, audit query bounds) are resolved through Policy
-	// accessors so an operator gets the documented defaults when the
-	// relevant YAML key is absent.
+	// Policy-driven tunables (session TTL, request body cap, audit query
+	// bounds) go through Policy accessors, which apply the documented
+	// defaults when the YAML key is absent.
 	srv := proxy.NewServer(proxy.Config{
 		Port:                     port,
 		Engine:                   engine,
@@ -1108,12 +1066,11 @@ func runServe(policyFile string, port int, dashboardEnabled bool, watch bool, au
 	// performs a final flush; registered AFTER store.Close (defer LIFO) so the
 	// final flush writes through a still-open store.
 	if persistCfg.Enabled {
-		// Multi-node reconciliation is a POSTGRES-ONLY feature (v1.0). The
-		// zero-config single-node SQLite backend is the locked, supported default
-		// and must stay I/O-identical to pre-1-R — so we force the interval to 0
-		// for SQLite, which trips the syncer's `ReconcileInterval>0` gate and the
-		// reconcile ticker never starts (no consumption-table writes, no GC).
-		// Tests arm reconcile on SQLite by setting Config.ReconcileInterval
+		// Multi-node reconciliation is POSTGRES-ONLY. The zero-config
+		// single-node SQLite backend must do no reconciliation I/O, so the
+		// interval is forced to 0 for SQLite: the syncer's `ReconcileInterval>0`
+		// gate keeps the reconcile ticker off (no consumption-table writes, no
+		// GC). Tests arm reconcile on SQLite by setting Config.ReconcileInterval
 		// directly; only this production wiring is gated.
 		reconcileInterval := persistCfg.ReconcileInterval
 		if !isPostgresDSN(persistCfg.DSN) {
@@ -1127,7 +1084,7 @@ func runServe(policyFile string, port int, dashboardEnabled bool, watch bool, au
 			CostTTL:     sessionCostTTL, // matches in-memory sweeper (0 = keep)
 			ApprovalTTL: 24 * time.Hour, // resolved approvals retained 24h
 			BucketTTL:   time.Hour,      // fully-refilled buckets reaped after 1h
-			// Multi-node reconciliation (v1.0). Armed only when the interval is >0
+			// Multi-node reconciliation. Armed only when the interval is >0
 			// (Postgres backend) AND the store supports it; SQLite => 0 => disabled.
 			NodeID:            persistCfg.NodeID,
 			ReconcileInterval: reconcileInterval,
@@ -1186,10 +1143,9 @@ func runServe(policyFile string, port int, dashboardEnabled bool, watch bool, au
 	return exitCode
 }
 
-// startPprofServer boots a localhost-bound HTTP listener that serves the
-// pprof handlers registered by the blank import of net/http/pprof at the
-// top of this file. Returns the server (so callers can Shutdown it) when
-// enabled; returns nil when --debug-pprof is unset.
+// startPprofServer starts a localhost-bound listener for the pprof
+// handlers the net/http/pprof import registers. It returns nil when
+// --debug-pprof is unset.
 //
 // Security: addr is hard-coded to 127.0.0.1 — there is no flag to widen
 // the bind. Pprof leaks goroutine stacks, heap shapes, and CPU samples
@@ -1598,10 +1554,8 @@ type migrateCmdOpts struct {
 
 // defaultCheckpointPath is the checkpoint file `vanzik server` actually
 // reads and writes for a given audit log. It MUST go through
-// audit.CheckpointPath: the migrate subcommand once computed
-// `<audit-dir>/.replay-checkpoint` here while the server used
-// `<audit-log>.replay-checkpoint`, so `--reset-checkpoint` deleted a file
-// that never existed and reported success (review R2).
+// audit.CheckpointPath: with any other path `--reset-checkpoint` deletes
+// a file that never existed and reports success.
 func defaultCheckpointPath(auditPath string) string {
 	return audit.CheckpointPath(auditPath)
 }

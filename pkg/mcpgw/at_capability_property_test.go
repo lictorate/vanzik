@@ -1,8 +1,8 @@
 package mcpgw
 
-// AT (Test Wrangler) property-based tests over the bridge's tools/list
-// aggregation + namespace-prefix logic. The bridge's bridge.go
-// handleToolsList walks every upstream, prefixes each tool name with
+// Property-based tests over the bridge's tools/list
+// aggregation + namespace-prefix logic. Bridge.handleToolsList
+// walks every upstream, prefixes each tool name with
 // the namespace, and skips tool names that already contain ':' (which
 // would collide with the prefix scheme). The combinatorial input
 // space (N upstreams * M tools each * possible name collisions and
@@ -15,10 +15,9 @@ package mcpgw
 //      prefixed names (sum of upstream-side counts minus skipped
 //      name-with-colon entries).
 //   2. No two output tool names collide (every output is unique).
-//   3. A downstream tool name containing ':' is silently dropped at
-//      the gateway with a log warning — the design choice A17 made
-//      in handleToolsList. Future versions may escape instead; this
-//      test pins the v0.5 behaviour.
+//   3. A downstream tool name containing ':' is dropped at the
+//      gateway with a log warning (a design choice; escaping would
+//      change it).
 //   4. If any upstream returns an error from tools/list, the bridge
 //      surfaces an error log but does NOT poison subsequent calls
 //      (the cache, if any, retries cleanly).
@@ -129,11 +128,10 @@ func TestAT_CapabilityMerge_Property_NameUniquenessAndCount(t *testing.T) {
 	}
 }
 
-// TestAT_CapabilityMerge_NameWithColonDropped pins the v0.5 design
+// TestAT_CapabilityMerge_NameWithColonDropped pins the design
 // choice: a downstream advertising a tool name containing `:`
 // is dropped (skipped) by handleToolsList rather than crashing or
-// silently producing an ambiguous prefix. This is documented in
-// bridge.go:447-451.
+// silently producing an ambiguous prefix.
 func TestAT_CapabilityMerge_NameWithColonDropped(t *testing.T) {
 	up := newFakeUpstream("fs")
 	up.handleSend = makeListSender(t, []ToolDescriptor{
@@ -377,9 +375,6 @@ func randomToken(r *rand.Rand, n int) string {
 	return string(b)
 }
 
-// reflectErrorString avoids importing reflect just for a tiny utility.
-// errors.New produces a fixed string per call site so we keep an
-// explicit constant for the colon-test panic — but we never actually
-// need it; left here as a helper sentinel for future extensions.
+// Keeps the errors import referenced.
 var _ = errors.New
 var _ = fmt.Sprintf

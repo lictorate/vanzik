@@ -80,8 +80,8 @@ func TestRenderSystemdUnit(t *testing.T) {
 		`"--api-key-file" "/home/u/.config/vanzik/api-key"`,
 		"Restart=on-failure",
 		"WantedBy=default.target",
-		// Only command lines take quotes; a quoted path here is "a bad unit
-		// file setting" (found by the real-service CI job).
+		// Only command lines take quotes; systemd rejects a quoted path here
+		// as "a bad unit file setting".
 		"\nWorkingDirectory=/home/u/.local/share/vanzik\n",
 	} {
 		if !strings.Contains(unit, want) {
@@ -544,8 +544,8 @@ func TestClientsFallBackToTheSavedKey(t *testing.T) {
 	}
 }
 
-// A starter policy that can't be written stops setup with the reason; it
-// used to be lost, and setup carried on as if it had worked.
+// A starter policy that can't be written stops setup with the reason,
+// rather than setup carrying on as if it had worked.
 func TestSetupStopsWhenThePolicyCantBeWritten(t *testing.T) {
 	serverUp(t)
 	m := testMachine(t)

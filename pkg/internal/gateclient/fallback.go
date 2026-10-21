@@ -1,6 +1,6 @@
 package gateclient
 
-// fallback.go closes the fail-closed-with-audit gap: when the central
+// fallback.go: in fail-closed-with-audit mode, when the central
 // server is unreachable, the gate itself appends a local audit record so
 // operators can reconstruct the deny chain for the outage window instead
 // of relying on metrics + stderr alone. Entries use the canonical

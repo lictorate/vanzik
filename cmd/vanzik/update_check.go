@@ -19,7 +19,7 @@ import (
 // Vanzik release. Prints one line to stderr when a newer version
 // exists and otherwise stays silent.
 //
-// Design constraints (from feature spec):
+// Design constraints:
 //   - At most one notice per CLI invocation.
 //   - MUST NOT slow down or interfere with the command — bounded wait,
 //     all errors swallowed.

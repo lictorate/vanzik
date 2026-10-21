@@ -134,8 +134,8 @@ func entryKey(e audit.Entry) [16]byte {
 // file rotates; a timestamp still means the same thing. The offset is used
 // only to step past a page of entries that all share the window.
 //
-// The since/until parameters are part of GET /v1/audit from 1.4 (the
-// sessions work). A server that predates them ignores them: the first
+// The since/until parameters are part of GET /v1/audit from 1.4. A
+// server that predates them ignores them: the first
 // entry before the requested since gives that away, and the walk falls
 // back to offset paging from where it is. Entries outside the period are
 // dropped here either way.

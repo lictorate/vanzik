@@ -11,19 +11,16 @@ import (
 // errFrameTooLong reports a newline-delimited frame larger than the configured
 // cap. The frame is discarded; the reader stays usable.
 //
-// This exists because bufio.Scanner cannot do it. Once Scan returns
-// bufio.ErrTooLong the Scanner is permanently dead -- it recovers zero
-// subsequent tokens and offers no way to resynchronize. Both read loops used a
-// Scanner, so one oversized frame ended the loop: on the host side that
-// returned from Bridge.Run, which main turns into os.Exit(1); on
-// the upstream side it killed readLoop while the subprocess kept running.
+// This exists because bufio.Scanner cannot do it: once Scan returns
+// bufio.ErrTooLong the Scanner recovers no further tokens. One oversized
+// frame would end the read loop: on the host side Bridge.Run (os.Exit(1)
+// in main); on the upstream side readLoop, while the subprocess runs on.
 var errFrameTooLong = errors.New("mcpgw: frame exceeds maximum size")
 
 // framePrefixBytes is how much of an oversized frame is retained so a request
 // id can be recovered for an error reply. A JSON-RPC frame carries its id in
 // the first handful of fields in practice; this is best-effort, and a frame
-// whose id is not in the prefix simply gets no reply, which is no worse than
-// the silence that preceded this.
+// whose id is not in the prefix gets no reply.
 const framePrefixBytes = 8 * 1024
 
 // readFrame returns the next newline-delimited frame from r.

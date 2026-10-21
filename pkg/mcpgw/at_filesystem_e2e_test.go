@@ -14,7 +14,7 @@ package mcpgw_test
 //   1. A real central Vanzik server (pkg/proxy.NewServer) backed
 //      by an on-disk audit log and a real Engine.
 //   2. A real MCP gateway (pkg/mcpgw.Bridge) wired against the central
-//      server via mcpgw.HTTPPolicyClient (A18's gate).
+//      server via mcpgw.HTTPPolicyClient.
 //   3. A stub upstream pretending to be a filesystem MCP server.
 //
 // The policy denies reads under /etc/** and allows reads under /tmp/**.
@@ -71,7 +71,7 @@ func startCentralServer(t *testing.T, pol *policy.Policy) (baseURL string, logge
 	return ts.URL, fl, ts
 }
 
-// TestAT_FilesystemE2E_AllowAndDeny is the headline v0.5 E2E.
+// TestAT_FilesystemE2E_AllowAndDeny is the headline gateway E2E.
 func TestAT_FilesystemE2E_AllowAndDeny(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skip in short mode (boots central server + spawns subprocess)")
@@ -131,7 +131,7 @@ func TestAT_FilesystemE2E_AllowAndDeny(t *testing.T) {
 	}
 	bridge := mcpgw.NewBridge(cfg, io.Discard, "0.5.0-AT-fs-e2e")
 
-	// Wire A18's gate against the central server.
+	// Wire the gate against the central server.
 	gate := mcpgw.NewHTTPPolicyClient(cfg, pol)
 	bridge.PolicyCheck = gate.Check
 
@@ -205,9 +205,8 @@ func TestAT_FilesystemE2E_AllowAndDeny(t *testing.T) {
 	})
 	r2 := h.readResponse()
 	if r2.Error != nil {
-		// JSON-RPC error path is also acceptable per the design (some
-		// future build may surface deny as -32000); v0.5 prefers the
-		// isError tool result.
+		// The JSON-RPC error path (-32000) is also acceptable per the
+		// design; the bridge uses the isError tool result.
 		t.Logf("got JSON-RPC error path on deny: %+v", r2.Error)
 	} else {
 		var denyResult mcpgw.ToolsCallResult

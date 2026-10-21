@@ -68,12 +68,12 @@ type Config struct {
 
 	// PolicyMode is "strict" (dual-check: mcp_tool + mapped scope) or
 	// "fast" (single-check: mcp_tool only). Default "strict".
-	// docs/MCP_GATEWAY.md § 4.4.3 — A18 wires the actual dual-check;
-	// the bridge passes this value through to the policy hook.
+	// docs/MCP_GATEWAY.md § 4.4.3; HTTPPolicyClient runs the
+	// dual-check.
 	PolicyMode string
 
 	// LogLevel controls stderr verbosity. "info" or "debug". Default
-	// "info". A18/A19 may extend this set.
+	// "info".
 	LogLevel string
 
 	// UpstreamTimeout caps how long the bridge waits for a response
@@ -290,10 +290,8 @@ Environment:
 //     whitespace-delimited token of cmd (the program name as the
 //     operator typed it).
 //
-// We split on the FIRST `:` only — command lines with `:` later are
-// preserved verbatim (e.g., a Windows path containing `C:\` would not
-// trigger here because the first `:` would be after the namespace
-// label, but we are explicit about it).
+// Only the FIRST `:` splits, so later colons in the command (a
+// Windows `C:\` path) are preserved verbatim.
 //
 // Edge case: a command starting with a colon ("--upstream :foo") would
 // be parsed as namespace="" + cmd="foo", which we reject as invalid
@@ -523,7 +521,6 @@ func expandEnvRefs(v string, lookup func(string) (string, bool)) (string, error)
 	return out, nil
 }
 
-// validHeaderName reports whether name is an RFC 9110 token.
 // validHeaderValue reports whether net/http will send v as a header
 // value: no control characters other than horizontal tab. Anything else
 // makes every request fail, which would look like an unreachable server.
@@ -536,6 +533,7 @@ func validHeaderValue(v string) bool {
 	return true
 }
 
+// validHeaderName reports whether name is an RFC 9110 token.
 func validHeaderName(name string) bool {
 	if name == "" {
 		return false

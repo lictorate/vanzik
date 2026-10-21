@@ -1,8 +1,8 @@
 package mcpgw
 
-// AT (Test Wrangler) protocol-negotiation matrix at the bridge level.
-// A17 already covers the pure NegotiateProtocolVersion function in
-// protocol_test.go. This file drives a real `initialize` request
+// Protocol-negotiation matrix at the bridge level. protocol_test.go
+// covers the pure NegotiateProtocolVersion function; this file drives a
+// real `initialize` request
 // through the in-process bridge harness so we exercise:
 //
 //   - the JSON unmarshal of InitializeParams (handleInitialize),
@@ -73,8 +73,8 @@ func TestAT_BridgeProtocolNegotiation_Matrix(t *testing.T) {
 			upstreamPV: "2025-11-25",
 			// "garbage" lexically compares > all dated versions, so by
 			// the negotiation algorithm it's "newer than everything we
-			// know" → returns highest. This pins the v0.5 design choice;
-			// future versions may add a strict YYYY-MM-DD validator.
+			// know" → returns highest. This pins that design choice; a
+			// strict YYYY-MM-DD validator would change it.
 			want: "2025-11-25",
 		},
 		{

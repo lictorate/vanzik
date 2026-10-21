@@ -1,6 +1,6 @@
 package mcpgw_test
 
-// AT (Test Wrangler) — approval flow E2E.
+// Approval flow E2E.
 //
 // Validates docs/MCP_GATEWAY.md § 6.1 + § 6.2 (the `_meta` round-trip):
 //
@@ -261,7 +261,7 @@ func TestAT_ApprovalE2E_RequireApproveRetry(t *testing.T) {
 	//      ALLOW on the retry.
 	//    - The retry's ALLOW carries rule="allow:approved" so audit
 	//      investigators can distinguish human-approved from
-	//      policy-allowed decisions (T1 reinforcement).
+	//      policy-allowed decisions.
 	//    - No fresh approval entry was created on the retry — the
 	//      original entry is reused.
 	entries, err := fl.Query(audit.QueryFilter{

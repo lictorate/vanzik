@@ -549,9 +549,9 @@ func addAgentRules(path, agentID, name string, block []byte) error {
 	var updated string
 	if loc := agentsLine.FindStringIndex(text); loc != nil {
 		// Insert before the line's ending. With CRLF the match takes the
-		// \r, and inserting after it left "agents:\r\r\n": still valid
-		// YAML, but no longer an agents: line to the next insertion, which
-		// then added a second agents: key.
+		// \r; inserting after it would leave "agents:\r\r\n", still valid
+		// YAML but not an agents: line to the next insertion, which would
+		// then add a second agents: key.
 		end := loc[1]
 		for end > loc[0] && text[end-1] == '\r' {
 			end--

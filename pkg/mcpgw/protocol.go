@@ -3,16 +3,10 @@
 // plugins) and one or more downstream MCP servers, gating every
 // tools/call through the Vanzik policy engine.
 //
-// This file owns the wire-format types: JSON-RPC 2.0 envelopes, the
-// MCP-specific request/result shapes for the methods the gateway
-// dispatches (initialize, tools/list, tools/call, ping, notifications),
-// and the protocol-version negotiation helper.
-//
-// The types are intentionally minimal — only the fields the gateway
-// actually inspects are typed. Everything else is preserved as
-// json.RawMessage so the gateway can forward upstream payloads
-// (descriptions, input schemas, content blocks) verbatim without
-// shape-coupling to every downstream MCP server's quirks.
+// The wire types are intentionally minimal — only the fields the
+// gateway inspects are typed. Everything else is preserved as
+// json.RawMessage so upstream payloads (descriptions, input schemas,
+// content blocks) are forwarded verbatim.
 package mcpgw
 
 import (
@@ -197,8 +191,7 @@ type ToolDescriptor struct {
 	InputSchema map[string]interface{} `json:"inputSchema,omitempty"`
 
 	// Annotations / outputSchema / future fields are preserved so the
-	// gateway forwards the descriptor verbatim. We marshal/unmarshal
-	// through a custom helper to keep this clean — see toolDescriptorFromRaw.
+	// gateway forwards the descriptor verbatim (see MarshalJSON).
 	Extra map[string]json.RawMessage `json:"-"`
 }
 
@@ -389,7 +382,6 @@ func NegotiateProtocolVersion(clientRequested string, supported []string) string
 		return ""
 	}
 
-	// Find the gateway's highest and lowest known versions.
 	highest := supported[0]
 	lowest := supported[0]
 	for _, v := range supported {
@@ -406,7 +398,6 @@ func NegotiateProtocolVersion(clientRequested string, supported []string) string
 		return highest
 	}
 
-	// Exact match? Echo back.
 	for _, v := range supported {
 		if v == clientRequested {
 			return clientRequested
@@ -451,10 +442,9 @@ func NegotiateProtocolVersion(clientRequested string, supported []string) string
 // `resources` and `prompts` capabilities are intentionally masked OUT —
 // even when an upstream advertises them, the gateway does NOT expose
 // them to the client because resources/* and prompts/* method routing
-// is not yet implemented (see TODO(#mcp-resources)). Advertising
-// them today would mislead the client into showing resources that every
-// read would reject with MethodNotFound (the default case in
-// Bridge.dispatchFrame returns ErrCodeMethodNotFound for unrouted methods).
+// is not implemented (see TODO(#mcp-resources)). Advertising them would
+// mislead the client into showing resources that every read would
+// reject with MethodNotFound (Bridge.dispatchFrame's default case).
 //
 // `listChanged` is advertised true: the bridge forwards upstream
 // notifications/tools/list_changed frames to the host (see

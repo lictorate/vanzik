@@ -1,6 +1,6 @@
 package mcpgw_test
 
-// AT (Test Wrangler) — helpers shared across the external-package
+// Helpers shared across the external-package
 // E2E tests in pkg/mcpgw. These tests must run in package
 // `mcpgw_test` so they can `import "github.com/.../pkg/proxy"` without
 // creating an internal-package import cycle. That means we cannot

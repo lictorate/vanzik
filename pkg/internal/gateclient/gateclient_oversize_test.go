@@ -1,16 +1,14 @@
 package gateclient
 
-// Regression tests for audit B25: a `/v1/check` response larger than the read
-// cap must be REJECTED as oversized, never silently truncated.
+// Regression tests: a `/v1/check` response larger than the read cap must be
+// REJECTED as oversized, never silently truncated.
 //
-// The bug: the body was read through a plain io.LimitReader(body, maxResp),
-// which returns a clean EOF exactly at the cap. A verdict at or past that size
-// was cut mid-JSON, json.Unmarshal failed, and the caller could not tell that
-// error apart from a transport failure — so it applied its configured fail-mode
-// default in place of a verdict the central server had actually issued. With
-// --fail-mode allow that silently converts a real DENY into an ALLOW.
-//
-// The fix reads maxResp+1 and treats the extra byte as proof of overflow.
+// A plain io.LimitReader(body, maxResp) returns a clean EOF exactly at the
+// cap: a verdict at or past that size is cut mid-JSON, json.Unmarshal fails,
+// and the caller can't tell that error from a transport failure, so it applies
+// its fail-mode default in place of a verdict the central server actually
+// issued. With --fail-mode allow that turns a real DENY into an ALLOW.
+// CallV1Check reads maxResp+1 and treats the extra byte as proof of overflow.
 
 import (
 	"context"
@@ -38,7 +36,7 @@ func checkServer(t *testing.T, body string) *httptest.Server {
 	return srv
 }
 
-// TestCallV1Check_OversizedResponseIsRejectedNotTruncated is the core B25
+// TestCallV1Check_OversizedResponseIsRejectedNotTruncated is the core
 // assertion. A valid-JSON DENY padded past the cap must produce an error that
 // names the overflow — not a decode error, and above all not a silent verdict
 // swap.

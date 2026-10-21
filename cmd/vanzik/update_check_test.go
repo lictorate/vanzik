@@ -1,6 +1,6 @@
 package main
 
-// Tests for the startup update check (review finding R4): the enforcement
+// Tests for the startup update check: the enforcement
 // server must never call out, dev builds must stay silent, and the check
 // must be bounded and harmless in every failure mode.
 
