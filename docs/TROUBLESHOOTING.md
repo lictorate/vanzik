@@ -61,13 +61,13 @@ vanzik server --base-url https://guard.example.com ...
 vanzik server --policy ./my-policy.yaml --watch ...
 ```
 
-**Likely cause (b):** the file's mtime did not change. The watcher polls `os.Stat(path).ModTime()` every 2s (`pkg/policy/watcher.go` `DefaultPollInterval`). If you edited through a tool that preserves mtime, touch the file:
+**Likely cause (b):** the file's mtime did not change. The watcher reacts to fsnotify events on the file's directory, and falls back to polling `os.Stat(path).ModTime()` every 2s (`pkg/policy/watcher.go` `DefaultPollInterval`) only when fsnotify can't start. Either way a reload happens only when the mtime has advanced. If you edited through a tool that preserves mtime, touch the file:
 
 ```bash
 touch configs/default.yaml
 ```
 
-**Likely cause (c):** your edit is syntactically invalid. Parse errors are logged but do **not** halt the watcher — the old policy keeps serving. Check the server log for `WatchFile: reload failed:` and run `vanzik validate --policy configs/default.yaml` to pinpoint the error.
+**Likely cause (c):** your edit is syntactically invalid. Parse errors are logged but do **not** halt the watcher — the old policy keeps serving. Check the server log for `Policy reload failed:` and run `vanzik validate --policy configs/default.yaml` to pinpoint the error.
 
 ---
 
@@ -100,7 +100,7 @@ Details: [`docs/OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments).
 
 ## `/metrics` or `/api/stats` are slow / inaccurate right after startup
 
-**Cause:** on boot, Vanzik replays the entire audit log through `metrics.IncDecision` to seed decision counters so `/metrics` survives restarts with accurate totals. For a multi-GB `audit.jsonl`, this scan can take seconds to minutes.
+**Cause:** on boot, Vanzik replays the audit log through `metrics.IncDecision` to seed decision counters so `/metrics` survives restarts with accurate totals. The replay resumes from a saved byte-offset checkpoint, so normally only entries written since the last checkpoint are read; the whole log is replayed only on first boot, after a reset, or when the checkpoint can't be read (the log says `replaying full log`). For a multi-GB `audit.jsonl`, that full scan can take seconds to minutes.
 
 **Fix:**
 
@@ -123,7 +123,7 @@ curl -s http://127.0.0.1:8080/metrics | grep notify_events_dropped_total
 
 **Mitigations:**
 
-- Increase notifier timeouts in the policy file (`notifications.dispatch_timeout`).
+- Lower notifier timeouts in the policy file (`notifications.dispatch_timeout`, or a target's own `timeout`), so a slow or flaky endpoint holds a worker for less time. Longer timeouts keep workers busy and make drops more likely.
 - Reduce notifier fanout (remove unused targets).
 - Shard to multiple webhook endpoints if a single Slack channel is a bottleneck.
 - Watch `vanzik_notify_queue_depth{notifier}` — steady growth means the worker cannot drain.
@@ -201,7 +201,7 @@ Details: [`docs/DEPRECATIONS.md`](DEPRECATIONS.md) and [`docs/POLICY_REFERENCE.m
 
 **Fixes:**
 
-- Refresh the page. The dashboard does **not** auto-reconnect today.
+- Wait a few seconds: the dashboard reconnects by itself, and its badge shows `RECONNECTING...` meanwhile. If it stays there, the server is down or something between you and it is blocking the stream.
 - If behind nginx, set `proxy_buffering off` on `/api/stream`. See [`docs/DEPLOYMENT.md` §2c](DEPLOYMENT.md#2c-nginx-reference-config).
 
 ---
