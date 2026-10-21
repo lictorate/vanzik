@@ -36,9 +36,7 @@ from typing import Optional
 
 import pytest
 
-anthropic = pytest.importorskip("anthropic")
-
-from vanzik import Guard  # noqa: E402
+from vanzik import Guard
 
 pytestmark = pytest.mark.integration
 
@@ -74,12 +72,17 @@ def _binary(env_var: Optional[str], name: str) -> Optional[str]:
 VANZIK_BIN = _binary(None, "vanzik")
 PROXY_BIN = _binary("VANZIK_LLM_PROXY_BIN", "vanzik-llm-proxy")
 
-if VANZIK_BIN is None or PROXY_BIN is None:
-    pytest.skip(
-        "needs the vanzik and vanzik-llm-proxy binaries "
-        "(go build -o vanzik ./cmd/vanzik; set VANZIK_LLM_PROXY_BIN)",
-        allow_module_level=True,
-    )
+
+# The skips live in a fixture, not at module level: a module-level skip fires
+# at collection, before ``-m "not integration"`` deselects this file.
+@pytest.fixture()
+def anthropic_sdk():
+    if VANZIK_BIN is None or PROXY_BIN is None:
+        pytest.skip(
+            "needs the vanzik and vanzik-llm-proxy binaries "
+            "(go build -o vanzik ./cmd/vanzik; set VANZIK_LLM_PROXY_BIN)"
+        )
+    return pytest.importorskip("anthropic")
 
 
 def _free_port() -> int:
@@ -169,7 +172,7 @@ class _UpstreamHandler(BaseHTTPRequestHandler):
 
 
 class _Stack:
-    def __init__(self, upstream, server_url: str, api_key: str, proxy_url: str):
+    def __init__(self, anthropic, upstream, server_url: str, api_key: str, proxy_url: str):
         self.upstream = upstream
         self.server_url = server_url
         self.api_key = api_key
@@ -191,7 +194,7 @@ class _Stack:
 
 
 @pytest.fixture()
-def stack(tmp_path):
+def stack(anthropic_sdk, tmp_path):
     upstream = ThreadingHTTPServer(("127.0.0.1", 0), _UpstreamHandler)
     upstream.command = "ls -la"
     upstream.headers_seen = []
@@ -225,7 +228,7 @@ def stack(tmp_path):
     try:
         assert _wait_for(f"{server_url}/health"), "vanzik server did not start"
         assert _wait_for(f"{proxy_url}/healthz"), "llm proxy did not start"
-        yield _Stack(upstream, server_url, api_key, proxy_url)
+        yield _Stack(anthropic_sdk, upstream, server_url, api_key, proxy_url)
     finally:
         _stop(proxy)
         _stop(server)
