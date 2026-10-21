@@ -36,8 +36,8 @@ def main():
     print()
 
     # --- Test 2: Dangerous command (should be DENIED) ---
-    print("[2] Checking: rm -rf /")
-    result = guard.check("shell", command="rm -rf /")
+    print("[2] Checking: dd if=/dev/zero of=/dev/sda")
+    result = guard.check("shell", command="dd if=/dev/zero of=/dev/sda")
     print(f"    Decision: {result.decision}")
     print(f"    Reason:   {result.reason}")
     print()

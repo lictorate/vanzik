@@ -14,7 +14,7 @@ Verified against:
     `OPENAI_API_BASE` env var is honored as a fallback.
 
 Setup:
-  pip install "crewai>=0.80,<2.0"
+  pip install "crewai>=1.0,<2.0"
   export OPENAI_API_KEY=sk-...
   export OPENAI_API_BASE=http://127.0.0.1:8081/v1   # CrewAI/LiteLLM
                                                     # also reads
@@ -65,7 +65,7 @@ try:
 except ImportError:  # pragma: no cover
     sys.stderr.write(
         "crewai-agent-config.py: the 'crewai' package is not installed.\n"
-        "Install with:  pip install 'crewai>=0.80,<2.0'\n"
+        "Install with:  pip install 'crewai>=1.0,<2.0'\n"
     )
     sys.exit(2)
 

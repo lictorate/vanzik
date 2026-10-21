@@ -36,7 +36,7 @@ This logs the intended actions without touching disk. Use this to confirm that t
 
 ### Rollback to v0.4.0
 
-Supported through v0.4.2. Steps:
+Steps:
 
 1. Stop the v0.4.1 server.
 2. `cp <audit-log>.v040-backup <audit-log>` — the backup is exactly the file v0.4.0 wrote.
@@ -45,7 +45,7 @@ Supported through v0.4.2. Steps:
 
 v0.4.0 does not understand the schema-2 header and will refuse to read a migrated file; that is what the backup is for. If you deleted the backup deliberately, downgrade is not supported.
 
-**The backup is removed in v0.4.3**, along with the migration itself. Operators who upgrade past v0.4.2 lose the downgrade-to-v0.4.0 path. If you want to retain the ability to downgrade indefinitely, copy `.v040-backup` off the server before upgrading past v0.4.2.
+**The backup is kept.** The removal planned for v0.4.3 never shipped: the `v040_to_v041` migration and its `.v040-backup` are still in 2.0 (`vanzik migrate --list` shows it), and no release deletes the backup. To keep the downgrade path safe from disk cleanup, copy `.v040-backup` off the server.
 
 ### Behavioral changes worth knowing about
 
@@ -79,7 +79,7 @@ This deletes `<path>.replay-checkpoint` — the file `agentguard serve` reads �
 
 - The audit-log binary format is unchanged from v0.4.1 (`schema_version: 2`). No file rewrite runs.
 - New audit entries written by v0.5+ binaries carry an additional top-level `transport` field (`"sdk"`, `"mcp_gateway"`, or `"llm_api_proxy"`). The field is purely additive — existing readers ignore unknown top-level keys, so the schema version does not bump.
-- `runServe` constructs the rotating logger by default (`--audit-max-size-mb 100`, `--audit-max-backups 5`, `--audit-max-age-days 30`, `--audit-compress true`). On first restart after upgrade, the live `audit.jsonl` keeps appending; once it crosses the size threshold, the rotator kicks in and rotated files start to appear as `audit-YYYYMMDDTHHMMSSZ.jsonl.gz` (or `.jsonl` with `--audit-compress=false`) alongside the active file.
+- `runServe` constructs the rotating logger by default (`--audit-max-size-mb 100`, `--audit-max-backups 5`, `--audit-max-age-days 30`, `--audit-compress true`). On first restart after upgrade, the live `audit.jsonl` keeps appending; once it crosses the size threshold, the rotator kicks in and rotated files start to appear as `audit.jsonl.YYYYMMDDTHHMMSSZ.gz` (or `audit.jsonl.YYYYMMDDTHHMMSSZ` with `--audit-compress=false`) alongside the active file.
 
 ### What you should do
 
@@ -112,7 +112,7 @@ This deletes `<path>.replay-checkpoint` — the file `agentguard serve` reads �
 
 ### New CLI subcommand
 
-- `agentguard check` — one-shot policy check (or batch from JSONL stdin) against a local policy file without going through the HTTP server. Useful for CI gates and pre-commit hooks. See [`CLI.md`](CLI.md#agentguard-check).
+- `agentguard check` — one-shot policy check (or batch from JSONL stdin) against a local policy file without going through the HTTP server. Useful for CI gates and pre-commit hooks. See [`CLI.md`](CLI.md#vanzik-check).
 
 ### Behavioral changes worth knowing about
 
@@ -160,7 +160,7 @@ Same as v0.4.0 → v0.4.1: `agentguard migrate --reset-checkpoint --audit-log <p
 ### New surfaces
 
 - **`AGENTGUARD_NO_UPDATE_CHECK`** environment variable — disables the v0.5.1 startup update-notice. Only the `agentguard` binary performs the check; the MCP gateway and LLM proxy never did.
-- **`make test-all` / `scripts/test-all.sh`** — single entry point for Go + policy YAML + Python SDK + TypeScript SDK suites with PASS / FAIL / SKIP summary. See [`CONTRIBUTING.md`](CONTRIBUTING.md#running-the-full-test-suite).
+- **`make test-all` / `scripts/test-all.sh`** — single entry point for Go + policy YAML + Python SDK + TypeScript SDK suites with PASS / FAIL / SKIP summary; exits 1 if any suite failed. See [`CONTRIBUTING.md`](CONTRIBUTING.md#running-the-full-test-suite).
 
 ### Rollback to v0.5.0
 
@@ -600,10 +600,6 @@ Entries 1.2.0 wrote stay masked.
 
 ---
 
-_Migration guides for prior releases live in the git history of this file._
-
----
-
 ## v1.2.x → v1.3.0
 
 1.3.0 adds prebuilt releases with one-line installers, `agentguard setup`, and
@@ -792,8 +788,8 @@ two of them can change what a policy decides.
 
 **CLI**
 
-- **`agentguard audit` with `--session`, `--parent-session`, `--since` or
-  `--until` against a pre-1.4 server** exits 1 instead of printing every
+- **`agentguard audit` with `--parent-session`, `--since` or `--until`
+  against a pre-1.4 server** exits 1 instead of printing every
   entry, since that server would ignore the filters.
 
 ### New surfaces
@@ -853,9 +849,12 @@ login: *No* first, then set it up again after installing 1.3 with
 
 2.0.0 renames the project from AgentGuard to Vanzik. Every name that said
 AgentGuard says Vanzik now, and the old names are gone: no alias, no second
-binary, no fallback variable. Nothing else about the product changed. The
+binary, no fallback variable, and a set `AGENTGUARD_*` variable stops the
+program. That is the only breaking change: everything else in 2.0 is an
+addition (`vanzik migrate --from-agentguard`, the server adopting an
+`agentguard.db`) or a fix. The
 policy schema, the `/v1/*` wire protocol, the audit log format with its hash
-chain and seal, and every command's flags are as in 1.4.0, so your policy,
+chain and seal, and every command's existing flags are as in 1.4.0, so your policy,
 audit log and database carry over as they are.
 
 The rename has one risk worth reading this section for. The coding-agent

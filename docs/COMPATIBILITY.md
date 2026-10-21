@@ -12,7 +12,8 @@ now 2.x.
 ## 2.0: the rename
 
 2.0.0 is the major-version event the promise below reserves for breaking
-changes, and its only one is the name. Every identifier that carried
+changes, and its only one is the name, including refusing the old
+`AGENTGUARD_*` variable names. Every identifier that carried
 "AgentGuard" carries "Vanzik" instead, with no alias for the old one: the
 binaries (`vanzik`, `vanzik-mcp-gateway`, `vanzik-llm-proxy`), the `VANZIK_*`
 environment variables, the folders and the `vanzik.db` database, the login
@@ -24,7 +25,7 @@ metrics, the Go module `lictorate.com/vanzik/v2`, and the SDK packages
 [`MIGRATION.md`](MIGRATION.md#v1x-to-v20) lists each old and new name and
 how an existing install moves over.
 
-Nothing else changed. The policy schema (`version: "1"`), the `/v1/*` wire
+Everything else in 2.0 is an addition or a fix. The policy schema (`version: "1"`), the `/v1/*` wire
 protocol (`schema_version: "v1"`), the audit log format
 (`schema_version: 2`, its hash chain and seal) and every command's flags
 are as in 1.4.0 (2.0 adds one, `vanzik migrate --from-agentguard`), so a 1.x policy and audit log work with 2.0
@@ -132,9 +133,11 @@ The on-disk audit format is frozen at audit **`schema_version: 2`** (the
 per decision).
 
 - The `Entry` fields (`timestamp`, `tenant_id`, `session_id`, `agent_id`,
-  `request`, `result`, `duration_ms`, `transport`) are stable. `tenant_id` and
-  `transport` are `omitempty`, so single-tenant SDK output stays
-  **byte-identical** to pre-v0.6 / pre-v0.5 files.
+  `request`, `result`, `duration_ms`, `transport`) are stable. `tenant_id` is
+  `omitempty`, so single-tenant entries carry no `tenant_id`, as before v0.6.
+  `transport` is `omitempty` in the format, but the 2.x server writes it on
+  every entry (`sdk` for SDK calls); only entries from pre-v0.5 writers lack it.
+  `session_id` is always written (`""` when the request had none).
 - The same `schema_version: 2` format is produced by both the `file` (JSONL)
   and `store` (SQLite `audit_entries`) backends; their `QueryFilter` semantics
   are pinned by a parity test.
@@ -163,7 +166,7 @@ subcommand is removed. The same applies to the `vanzik-mcp-gateway` and
 `vanzik-llm-proxy` flag sets. New flags and new subcommands may be added.
 
 `server` is the documented name for `serve`; both run the same command, and
-`serve` stays for the whole 1.x line. Additions since 1.2.0 are all of the
+`serve` stays for the whole 2.x line. Additions since 1.2.0 are all of the
 kind this surface allows: the `server`, `help`, `setup`, `hook` and `test`
 subcommands (`hook claude-code` sits in users' Claude Code settings, so it
 stays; so do `hook cursor`, `hook gemini-cli` and `hook codex`, which sit in

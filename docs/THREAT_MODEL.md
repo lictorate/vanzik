@@ -18,7 +18,7 @@ A compromised operator host is out of scope: whoever can edit the policy file or
 
 ### Embedder — trusted, fallible
 
-Go code that imports `pkg/proxy`, `pkg/llmproxy`, or `pkg/mcpgw` directly. The packages are nil-safe rather than fail-closed on missing wiring: a nil `PolicyCheck` hook allows every call with an identifiable rule string (audit B5, `local_fixes/STATUS.md`), and the legacy `HistoryQuerier` answers `require_prior` without a tenant filter behind a one-time warning. Both shipped binaries wire every hook; an embedder must do the same.
+Go code that imports `pkg/proxy`, `pkg/llmproxy`, or `pkg/mcpgw` directly. The packages are nil-safe rather than fail-closed on missing wiring: a nil `PolicyCheck` hook allows every call with an identifiable rule string (audit B5), and the legacy `HistoryQuerier` answers `require_prior` without a tenant filter behind a one-time warning. Both shipped binaries wire every hook; an embedder must do the same.
 
 ### Co-tenants — mutually untrusted
 
@@ -50,7 +50,7 @@ The provider is trusted for the *content* of its answers but **not for the struc
 | Start-seeded input plus streamed deltas | `anthropic_parser.go` (audit H2) | Two argument sources would concatenate into invalid JSON and the gate would evaluate a truncated view. Refused. |
 | First-wins function name | `openai_parser.go` (audit M1) | A second, different name for the same `tool_calls[i]` would make the gate evaluate a different call than the client executes. The first name wins, matching client SDKs. |
 
-Each refusal is a synthetic refusal to the client, counted in `vanzik_llmproxy_protocol_violation_total{provider}`, and the buffered bytes are discarded. Oversized argument accumulation is capped by `--max-buffer-bytes` with a built-in 64 MiB ceiling. Still open and priced in `local_fixes/STATUS.md`: B6, B17, B18, B21+B7.
+Each refusal is a synthetic refusal to the client, counted in `vanzik_llmproxy_protocol_violation_total{provider}`, and the buffered bytes are discarded. Oversized argument accumulation is capped by `--max-buffer-bytes` with a built-in 64 MiB ceiling. The same fail-closed rule covers audit items B6, B7, B17, B18 and B21, all implemented: a non-streaming body that fails strict decode but still carries a tool call is refused (B6, `vanzik_llmproxy_undecodable_tool_call_total`); tool input with no block open (B7) and tool calls spread across several OpenAI choices (B18) are protocol-violation refusals (rule strings in [`LLM_API_PROXY.md`](LLM_API_PROXY.md) §5.4); a stream that ends with a cycle still open is gated or refused, never dropped (B17); and an empty Anthropic seed with whitespace no longer trips the conflict refusal (B21).
 
 ### The downstream MCP server — untrusted for framing and liveness
 
@@ -100,7 +100,7 @@ Enforcement is only as strong as the operator's control over the agent's environ
 
 ## Fail-open versus fail-closed
 
-- Central server unreachable: both proxies default to `--fail-mode deny` (`deny:<gateway>:fail_closed`), with `fail-closed-with-audit` writing the denial to a local fallback file. `allow` is an explicit, logged opt-in for trusted development environments.
+- Central server unreachable: both proxies default to `--fail-mode deny` (`deny:<gateway>:fail_closed`), with `fail-closed-with-audit` writing the denial to a local fallback file. `allow` is an explicit opt-in for trusted development environments; neither proxy logs the mode at startup.
 - `/v1/check` answers 2xx with an unparseable or unknown decision: hard deny (`InvalidResponseRule`), regardless of `--fail-mode`.
 - SDKs: fail-closed by default; `fail_mode="allow"` / `failMode: 'allow'` is an explicit opt-in.
 - Audit backend saturated: entries spill to a durable overflow file and the request is still answered — the audit path never blocks or fails the decision.

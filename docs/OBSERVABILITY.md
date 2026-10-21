@@ -38,7 +38,7 @@ curl -s http://127.0.0.1:8080/metrics
 | `vanzik_audit_seal_tail_mismatch_total` | — | **(v1.4)** Startups where the sealed audit log ended before the chain head the replay checkpoint recorded: entries may have been removed. Any increase deserves a look (`vanzik audit verify`). |
 | `vanzik_notify_spooled_to_disk_total` | — | Notification events spilled to the `--notify-spool` file on queue overflow (retried, not dropped). |
 | `vanzik_notify_despooled_total` | — | Spooled notification events re-enqueued for dispatch. |
-| `vanzik_deprecations_used_total` | `feature` | Times a deprecated feature was exercised. Keys match `docs/DEPRECATIONS.md`. |
+| `vanzik_deprecations_used_total` | `feature` | Times a deprecated feature was exercised. Keys match `docs/DEPRECATIONS.md`. In 2.x neither `audit.migration.v040_to_v041` nor `audit.backup.v040` calls `deprecation.Warn`, so `vanzik_deprecations_used_total` stays at 0 for them whether or not they run. |
 
 ### Gauges
 
@@ -82,7 +82,7 @@ Bucket boundaries are treated as a stable contract. Re-bucketing invalidates his
 
 **Neither proxy binary exposes `/metrics`.** The LLM API Proxy serves only its API routes plus `GET /healthz`; the MCP Gateway is a stdio bridge with no HTTP surface at all. Per-request gating metrics for both flow through the **central server's** `/metrics`, distinguished in the audit stream by `Entry.Transport` (`llm_api_proxy` / `mcp_gateway`). See [`PROXY_ARCHITECTURE.md`](PROXY_ARCHITECTURE.md) §8.
 
-The LLM proxy additionally records these series in its process-local registry (`pkg/metrics`). They are **not exported anywhere yet** — no scrape endpoint, no log dump — so today they matter only to code embedding the proxy in-process (they are listed here so the names stay reserved):
+The LLM proxy additionally records these series in its own process (`pkg/metrics`), which serves no `/metrics`. Because the registry is shared code, the central server's `/metrics` lists all six too, but they never move there: the two unlabelled ones read `0` and the four `provider` counters have no samples, because the counting happens in the proxy process, not the server. **Don't alert on them** — such an alert never fires. They matter only to code embedding the proxy in-process (they are listed here so the names stay reserved):
 
 | Name | Type | Labels | Meaning |
 |---|---|---|---|
@@ -231,7 +231,7 @@ data: {"type":"check","timestamp":"…","request":{…},"result":{…}}\n\n
 | `check` | Every response from `/v1/check` (any decision, including rate-limit denies) and every `POST /v1/audit` record. `REQUIRE_APPROVAL` and `DENY` decisions arrive as `check` events — read `result.decision`. |
 | `resolved` | The first `approve` / `deny` of a pending approval. `result.decision` is `ALLOW` or `DENY`, `result.reason` is `manually allow` / `manually deny`. Repeating the same resolution does not send it again. |
 
-Events are unnamed SSE messages (no `event:` field), so an `EventSource` receives them through `onmessage`. Each carries `transport` (`sdk`, `mcp_gateway`, `llm_api_proxy`) and, for tenants other than `local`, `tenant`, alongside `request` and `result`. `approval_required` and `denied` are **notifier** event types (webhook / Slack / console), not stream events — see [`APPROVAL_WORKFLOW.md`](APPROVAL_WORKFLOW.md#2-notification-fan-out).
+Events are unnamed SSE messages (no `event:` field), so an `EventSource` receives them through `onmessage`. Each carries `transport` (`sdk`, `mcp_gateway`, `llm_api_proxy`, or a coding-agent hook's `claude_code`, `cursor`, `gemini_cli`, `codex_cli`) and, for tenants other than `local`, `tenant`, alongside `request` and `result`. `approval_required` and `denied` are **notifier** event types (webhook / Slack / console), not stream events — see [`APPROVAL_WORKFLOW.md`](APPROVAL_WORKFLOW.md#2-notification-fan-out).
 
 Slow consumers drop events; see `vanzik_sse_events_dropped_total{reason="slow_consumer"}`.
 

@@ -26,7 +26,7 @@ Two follow-on consequences regardless of who rotates:
 
 ### External shipping (compatible with default rotation)
 
-The audit log is append-only JSON Lines with one decision per line (schema in [`docs/FILE_FORMATS.md`](FILE_FORMATS.md)). Any log shipper that handles newline-delimited JSON works — Vector, Fluent Bit, Filebeat, Datadog agent, etc. Point your shipper at `audit.jsonl` AND the rotated `audit-*.jsonl[.gz]` siblings; the shipper does not need to truncate anything.
+The audit log is append-only JSON Lines with one decision per line (schema in [`docs/FILE_FORMATS.md`](FILE_FORMATS.md)). Any log shipper that handles newline-delimited JSON works — Vector, Fluent Bit, Filebeat, Datadog agent, etc. Point your shipper at `audit.jsonl` AND the rotated `audit.jsonl.<YYYYMMDDTHHMMSSZ>[.gz]` siblings (glob `audit.jsonl.[0-9]*`, or `<audit-log>.[0-9]*` for another `--audit-log` path; a plain `audit.jsonl.*` also picks up `audit.jsonl.replay-checkpoint`); the shipper does not need to truncate anything.
 
 ### Disabling default rotation (legacy / external rotator path)
 
@@ -139,7 +139,7 @@ survive a *restart*, but each replica keeps its own working copy):
   `"<scope>:<tenant>:<agent_id>"`; an agent hitting two replicas round-robin
   gets up to `2 × max_requests` per window. `MaxBuckets = 10000` per instance.
 - **Session-cost accumulators** (`pkg/policy/engine.go` `sessionCosts`): keyed
-  by `session_id`; each replica enforces `max_per_session` against its local
+  by tenant and `session_id`; each replica enforces `max_per_session` against its local
   total. `--session-cost-ttl` evicts idle entries; it does not share state.
 
 Mitigations if you must run multiple replicas *without* PostgreSQL:
@@ -160,8 +160,8 @@ Mitigations if you must run multiple replicas *without* PostgreSQL:
 
 Behavior at capacity:
 
-- New approvals bulk-evict any **resolved** entries from the queue (`evictResolvedLocked`) before inserting. Unresolved pendings are never evicted.
-- If every entry is unresolved, `/v1/check` calls that would require approval get `503 Service Unavailable` with `Retry-After: 5`.
+- A new approval into a full queue evicts the one oldest **resolved** entry (`evictOldestResolvedLocked`) before inserting. Unresolved pendings are never evicted.
+- If every entry is unresolved, `/v1/check` calls that would require approval get `503 Service Unavailable` with `Retry-After: 30`. Approving or denying never returns `503`.
 - Approvals **survive restarts** since v0.6 — `--persist` (default `true`) snapshots the queue to the SQLite store and rehydrates it on boot. Only with `--persist=false`, or for entries created inside the final ≥1 s store-sync window before a hard crash, are pending approvals lost (agents polling `/v1/status/{id}` then hit their SDK wall-clock timeout). See [`CLI.md`](CLI.md#persistence--multi-tenancy-v06).
 
 Operational guidance:
@@ -180,7 +180,7 @@ Operational guidance:
 | `SessionTTL` | `1h` | `pkg/proxy/auth.go` (default, overridable via `policy.proxy.session.ttl`) |
 | `MaxSessions` | `1024` | `pkg/proxy/auth.go` (still hardcoded as of v1.0) |
 
-At capacity, the oldest-by-expiry session is evicted. Under pathological login bursts you can see `503` with `Retry-After: 5` from `/auth/login`.
+At capacity, a login first sweeps expired sessions; live sessions are never evicted. If the store is still full, `/auth/login` returns `503` with `Retry-After: 5` (under pathological login bursts, for example).
 
 Operational guidance:
 
@@ -208,7 +208,7 @@ Dispatch is **non-blocking**: `Dispatcher.Send(event)` enqueues one job per conf
 
 - `vanzik_notify_events_dropped_total{notifier, reason}` — Prometheus counter.
 - `notify.DroppedEvents` — atomic `uint64` for in-process Go consumers.
-- `vanzik_notify_queue_depth{notifier}` — current queue depth.
+- `vanzik_notify_queue_depth` — current depth of the one queue all notifiers share (no `notifier` label).
 - `vanzik_notify_dispatch_duration_seconds{notifier}` — histogram of per-target HTTP latency.
 
 Tune by:
@@ -245,8 +245,8 @@ Both wire-level enforcement points are **stateless** — they fan every gated re
 
 - **Health:** the LLM API Proxy serves `GET /healthz` on its listen port — use it as the readiness probe. The MCP Gateway is a stdio bridge with no HTTP listener; probe the process, not a port.
 - **Metrics:** neither proxy binary exposes `/metrics` — the central `vanzik server` does. See [`OBSERVABILITY.md`](OBSERVABILITY.md#mcp-gateway--llm-api-proxy-metrics-v05) for what is and isn't observable at the proxies.
-- **Shutdown:** the LLM API Proxy buffers tool calls inside streaming responses; give it 30 s graceful drain (`TimeoutStopSec=30s` / `terminationGracePeriodSeconds: 30`). A hard kill truncates the client's response.
-- **Version skew:** keep all binaries on the same `0.x.y`. The wire protocol is stable within a minor line; cross-minor mixing is unsupported. Upgrade the server first, then the proxies.
+- **Shutdown:** the LLM API Proxy buffers tool calls inside streaming responses; on SIGTERM it drains in-flight requests for 10 s, then closes them. Give the host a stop timeout above 10 s (the systemd and Kubernetes defaults, 90 s and 30 s, already are); a longer one doesn't extend the 10 s drain, and a hard kill truncates the client's response.
+- **Version skew:** the `/v1/*` wire protocol is frozen across 1.x and 2.x, so mixed server and proxy versions interoperate. Upgrading the server first, then the proxies, is still the safe order.
 - **Topology:** prefer per-agent sidecars — shared proxies couple every agent's lifecycle.
 
 ---

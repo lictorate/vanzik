@@ -10,7 +10,7 @@ Verified against:
     src/anthropic/_client.py, 2026-05-05). Constructor parameter
     `base_url=` and env var `ANTHROPIC_BASE_URL`. The default value is
     `https://api.anthropic.com` (no path).
-  - Vanzik LLM API Proxy v0.4.1+ (`vanzik-llm-proxy --listen
+  - Vanzik 2.0 LLM API Proxy (`vanzik-llm-proxy --listen
     127.0.0.1:8081`).
 
 Setup:
@@ -43,7 +43,10 @@ Expected behaviour:
     until `content_block_stop`, runs `Engine.Check`, and either flushes
     byte-identical bytes (ALLOW) or emits a synthetic `text` block in
     place at the same content-block index, plus `message_delta` with
-    `stop_reason: end_turn` (DENY / REQUIRE_APPROVAL).
+    `stop_reason: end_turn` and `usage` (DENY / REQUIRE_APPROVAL).
+    `messages.stream()` consumes the refusal like any other reply:
+    the final message has one text block and `usage.output_tokens` 0
+    (verified with anthropic 1.17.0).
   - The dashboard shows the decision live with `transport=llm_api_proxy`.
 """
 
@@ -110,7 +113,7 @@ def main() -> None:
     # stream so we can also surface tool-input deltas as they arrive.
     print("[assistant stream]")
     with client.messages.stream(
-        model="claude-3-5-haiku-latest",  # any Claude model — proxy is model-agnostic
+        model="claude-haiku-5-5",  # any Claude model — proxy is model-agnostic
         max_tokens=512,
         tools=tools,
         messages=[{"role": "user", "content": user_prompt}],

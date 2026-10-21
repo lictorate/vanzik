@@ -2,7 +2,7 @@
 
 This document is the reference for the **non-rule** keys in a Vanzik policy YAML file — the `proxy:` and `notifications:` server-side tunables — with each key's default, validation rules, and runtime effect. Rule-level fields (`scope`, `allow`, `deny`, `require_approval`, `pattern`, `paths`, `domain`, `action`, `conditions`, `rate_limit`, `limits`, `tool_scope_map`) are covered in [`POLICY_REFERENCE.md`](POLICY_REFERENCE.md) and the examples under `configs/`.
 
-Every key listed here is optional — each unset key falls back to a compile-time default, so a policy file that only contains rules is always valid. [`TUNING.md`](TUNING.md) covers when to change these; this file covers what they do.
+Every key listed here is optional — each unset key falls back to a compile-time default, so a policy file needs none of them. `version` and `name` are still required: a file without them fails to load (`policy missing required 'version' field`). [`TUNING.md`](TUNING.md) covers when to change these; this file covers what they do.
 
 ## Quick reference
 
@@ -10,7 +10,7 @@ Every key listed here is optional — each unset key falls back to a compile-tim
 version: "1"
 name: my-policy
 
-# Server-side tunables (v0.4.1+).
+# Server-side tunables.
 proxy:
   session:
     ttl: "1h"                  # duration; default 1h
@@ -20,7 +20,7 @@ proxy:
     default_limit: 100         # rows returned when ?limit is omitted; default 100
     max_limit: 1000            # hard ceiling on ?limit; default 1000
 
-# Notification dispatcher tunables (v0.4.1+).
+# Notification dispatcher tunables.
 notifications:
   dispatch_timeout: "10s"      # default timeout for webhook/slack; default 10s
   approval_required:
@@ -51,7 +51,7 @@ Controls how long an `vanzik_session` cookie stays valid after `/auth/login` suc
 | **Type** | integer (bytes) |
 | **Default** | `1048576` (1 MiB) |
 | **Affects** | `POST /v1/check` body acceptance |
-| **Validation** | Must be `> 0` when present. Invalid values fail at policy load. |
+| **Validation** | `0` (or unset) means the default; a negative value fails at policy load. |
 
 Caps the size of `/v1/check` request bodies. Requests larger than this receive HTTP `413 Request Entity Too Large`, a warning log line including the source, `Content-Length`, and the effective limit, and an increment on the Prometheus counter `vanzik_request_rejected_total{reason="body_too_large"}`. Tune down in hostile environments where a small request surface is part of the threat model; tune up only if a legitimate agent produces genuinely large `meta` payloads.
 
@@ -62,9 +62,9 @@ Caps the size of `/v1/check` request bodies. Requests larger than this receive H
 | **Type** | integer (row count) |
 | **Default** | `100` |
 | **Affects** | `GET /v1/audit` when `?limit=` is omitted |
-| **Validation** | Must be `> 0` when present. Must be `<= proxy.audit.max_limit`. |
+| **Validation** | `0` (or unset) means the default; a negative value fails at policy load. Must be `<= proxy.audit.max_limit`. |
 
-The row count returned by `/v1/audit` when the caller does not pass `?limit=`. The dashboard, SDKs, and `vanzik audit` CLI call through this endpoint; tuning this sizes the default page everywhere.
+The row count returned by `/v1/audit` when the caller does not pass `?limit=`. It only affects callers that omit `?limit=`, such as a plain `curl`: the dashboard always sends `limit=200`, `vanzik audit` always sends its `--limit` (default 50), and the SDKs don't call `/v1/audit`.
 
 ### `proxy.audit.max_limit`
 
@@ -73,7 +73,7 @@ The row count returned by `/v1/audit` when the caller does not pass `?limit=`. T
 | **Type** | integer (row count) |
 | **Default** | `1000` |
 | **Affects** | `GET /v1/audit` ceiling on `?limit=` |
-| **Validation** | Must be `> 0` when present. Must be `>= proxy.audit.default_limit`. |
+| **Validation** | `0` (or unset) means the default; a negative value fails at policy load. Must be `>= proxy.audit.default_limit`. |
 
 Hard ceiling on `?limit=`. Clients requesting more than this receive this many rows (silently clamped, not rejected). The ceiling exists so a caller cannot pass `?limit=2147483647` and cause an unbounded scan of the audit file.
 
@@ -105,7 +105,7 @@ Per-target override. Use this when you run one webhook that is consistently slow
 
 ## Interaction with hot reload
 
-Policy hot reload (`--watch`) re-parses the file and swaps the `policy.Engine`'s policy pointer. **Runtime tunables resolved at startup do not change on reload** — `proxy.session.ttl` and `proxy.request.max_body_bytes` are latched into the `Server` struct, and the notify dispatcher's per-notifier `http.Client.Timeout` is set when each client is constructed. Change these in the policy file and the new values apply on the next process restart.
+Policy hot reload (always on; `--watch` only adds a log line per reload) re-parses the file and swaps the `policy.Engine`'s policy pointer. **Runtime tunables resolved at startup do not change on reload** — `proxy.session.ttl` and `proxy.request.max_body_bytes` are latched into the `Server` struct, and the notify dispatcher's per-notifier `http.Client.Timeout` is set when each client is constructed. Change these in the policy file and the new values apply on the next process restart.
 
 Rule-level keys (allow/deny/require_approval, rate limits, cost limits) continue to reload live as they did in v0.4.0.
 

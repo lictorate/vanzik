@@ -179,6 +179,8 @@ networks:
   internal:
 ```
 
+In the `nginx.conf` you mount here, point both `proxy_pass` lines at the Compose service, `http://vanzik:8080`, not §2c's `http://127.0.0.1:8080`: inside the nginx container, `127.0.0.1` is nginx itself.
+
 Mount your own policy over `/etc/vanzik/default.yaml` — **not** the whole `/etc/vanzik` directory, which would hide the image's baked-in default.
 
 ### 2e. Kubernetes stub
@@ -189,7 +191,11 @@ kind: Deployment
 metadata: { name: vanzik }
 spec:
   replicas: 1   # ⚠ per-instance limits on the default SQLite store; replicas > 1 needs --store-dsn postgres:// — see docs/OPERATIONS.md
+  selector:
+    matchLabels: { app: vanzik }
   template:
+    metadata:
+      labels: { app: vanzik }
     spec:
       containers:
         - name: vanzik
@@ -285,8 +291,8 @@ vanzik-mcp-gateway --upstream "fs:npx -y @modelcontextprotocol/server-filesystem
 
 - `--fail-mode=deny` — if the Vanzik server is unreachable, refuse rather than passthrough.
 - `--listen 127.0.0.1:<port>` — inbound is not authenticated unless you set `--proxy-api-key`. The LLM proxy refuses any non-loopback `--listen` without that key, including `:<port>` with no host (which binds every interface).
-- 30 s graceful-shutdown window (systemd `TimeoutStopSec=30s`, Kubernetes `terminationGracePeriodSeconds: 30`). The LLM proxy buffers tool calls inside streaming responses; a hard kill truncates the client's response.
-- Keep the proxies and the server on the same release. The `/v1/check` wire protocol is frozen across 1.x ([`COMPATIBILITY.md`](COMPATIBILITY.md)), so a mixed 1.x pair interoperates, but only same-release pairs are tested together.
+- A stop timeout above 10 s (systemd `TimeoutStopSec`, Kubernetes `terminationGracePeriodSeconds`; their defaults, 90 s and 30 s, already are). On SIGTERM the LLM proxy drains in-flight requests for 10 s, then closes them; a longer host timeout doesn't extend that. It buffers tool calls inside streaming responses, so a hard kill truncates the client's response.
+- Keep the proxies and the server on the same release. The `/v1/check` wire protocol is frozen across 1.x and 2.x ([`COMPATIBILITY.md`](COMPATIBILITY.md)), so a mixed pair interoperates, but only same-release pairs are tested together.
 
 Examples (systemd unit, Kubernetes sidecar, MCP client configs): [`QUICKSTART_MCP.md`](QUICKSTART_MCP.md), [`QUICKSTART_LLM_PROXY.md`](QUICKSTART_LLM_PROXY.md). Wire-format reference: [`MCP_GATEWAY.md`](MCP_GATEWAY.md), [`LLM_API_PROXY.md`](LLM_API_PROXY.md).
 

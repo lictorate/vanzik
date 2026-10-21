@@ -7,7 +7,7 @@ date.
 
 ## MCP Gateway
 
-The gateway binary is `vanzik-mcp-gateway` (Go 1.25+,
+The gateway binary is `vanzik-mcp-gateway` (Go 1.26+,
 `go install lictorate.com/vanzik/v2/cmd/vanzik-mcp-gateway@latest`).
 It sits between an MCP client and one or more downstream MCP servers,
 gating every `tools/call` against the central Vanzik server's
@@ -34,7 +34,7 @@ lists what to install; drop the upstreams you don't need.
 
 ## LLM API Proxy
 
-The proxy binary is `vanzik-llm-proxy` (Go 1.25+,
+The proxy binary is `vanzik-llm-proxy` (Go 1.26+,
 `go install lictorate.com/vanzik/v2/cmd/vanzik-llm-proxy@latest`).
 It speaks the OpenAI Chat Completions and Anthropic Messages wire
 formats, forwards traffic to the real upstream, and gates tool calls
@@ -53,9 +53,14 @@ for the 90-second walkthrough.
 | CrewAI | [`crewai-agent-config.py`](crewai-agent-config.py) + [`crewai-agent-config.md`](crewai-agent-config.md) | `LLM(base_url="http://127.0.0.1:8081/v1", ...)` |
 
 Each example is runnable end-to-end (`python <file>.py` after `pip
-install`). The paired `.md` walks through the two-binary setup,
-expected ALLOW / DENY / REQUIRE_APPROVAL behaviour with the bundled
-default policy, and SDK-specific gotchas. Quickstart:
+install`), refusals included: a DENY or REQUIRE_APPROVAL arrives as
+ordinary assistant text, also through Anthropic's `messages.stream()`.
+The paired `.md` walks through the two-binary setup, expected ALLOW /
+DENY / REQUIRE_APPROVAL behaviour with the bundled default policy
+(`dd if=/dev/zero of=/dev/sda` is denied; `sudo …` and `rm -rf …` need
+approval; the LangChain and CrewAI tools first need a `tool_scope_map`
+entry and an allow rule), how to resume an approved call with the
+`X-Vanzik-Approval-ID` header, and SDK-specific gotchas. Quickstart:
 [`docs/QUICKSTART_LLM_PROXY.md`](../docs/QUICKSTART_LLM_PROXY.md).
 
 ## Other integration paths

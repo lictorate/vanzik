@@ -1,16 +1,16 @@
 {
-  "_comment": "Vanzik MCP Gateway config for Cursor. See cursor-config.md for the file path (global vs project) and verification steps. Source: https://cursor.com/docs/context/mcp (verified 2026-05-05). Cursor's ${env:VAR} interpolation is unreliable across versions — prefer the env block, which the gateway reads via VANZIK_API_KEY when the --api-key flag is absent. --tenant-id selects the tenant whose policy applies; keep 'local' unless you registered another tenant on the server with `vanzik tenant put`.",
+  "_comment": "Vanzik MCP Gateway config for Cursor. See cursor-config.md for the file path (global vs project) and verification steps. Source: https://cursor.com/docs/context/mcp (verified 2026-05-05). Cursor's ${env:VAR} interpolation is unreliable across versions — prefer the env block, which the gateway reads via VANZIK_API_KEY when the --api-key flag is absent. --tenant-id selects the tenant whose policy applies; keep 'local' unless you registered another tenant on the server with `vanzik tenant put`. Today the gateway calls only the open /v1/check, so a missing or literal key doesn't stop it working; set the real key anyway, since it is sent as the bearer on every call. --policy is the starter policy a root install of the one-line installer writes; after a user install use the absolute path of ~/.config/vanzik/default.yaml (no ~ expansion here). Use the same file the server loads. For a per-project policy, point --policy at ${workspaceFolder}/.vanzik/policy.yaml in that project's .cursor/mcp.json only (and start the server with it): a global entry with that path fails to start in every workspace without the file.",
 
   "mcpServers": {
     "vanzik": {
       "type": "stdio",
       "command": "vanzik-mcp-gateway",
       "args": [
-        "--upstream", "fs:npx -y @modelcontextprotocol/server-filesystem ${workspaceFolder}",
+        "--upstream", "fs:npx -y @modelcontextprotocol/server-filesystem ${workspaceFolder} /tmp",
         "--upstream", "fetch:uvx mcp-server-fetch",
         "--upstream", "github:docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server",
         "--guard-url", "http://127.0.0.1:8080",
-        "--policy", "${workspaceFolder}/.vanzik/policy.yaml",
+        "--policy", "/etc/vanzik/default.yaml",
         "--tenant-id", "local",
         "--policy-mode", "strict",
         "--fail-mode", "deny",

@@ -47,16 +47,27 @@ Then run this script:
 Expected behaviour:
   - The model decides to call `list_tmp_files`. Vanzik's default
     LLM tool-scope map routes the tool name → scope `unmapped` (it's
-    not a built-in name like `bash`/`read_file`). Add a one-line
-    operator entry to your policy under `tool_scope_map:` to map it:
+    not a built-in name like `bash`/`read_file`). Map it to a scope in
+    your policy, and allow it there (`tool_scope_map` is a list):
 
         tool_scope_map:
-          list_tmp_files: shell
+          - pattern: "list_tmp_files"
+            scope: shell
 
-    With that entry, the call is gated against scope `shell`. Without
-    it, the central engine's default-deny on the unmapped scope kicks
-    in (as designed — see docs/POLICY_REFERENCE.md § "LLM API Proxy
-    tool scope mapping").
+        rules:
+          - scope: shell
+            allow:
+              - pattern: "list_tmp_files"
+
+    For a tool mapped to `shell` the proxy checks the tool's `command`
+    argument; this tool has none, so the check runs with the tool name
+    as the command, which is why the allow rule names it. The mapping
+    alone still gets the shell scope's default DENY. Without the
+    mapping, the central engine's default-deny on the unmapped scope
+    kicks in (as designed — see docs/POLICY_REFERENCE.md § "LLM API
+    Proxy tool scope mapping"). In configs/default.yaml, add both lines
+    to the existing `tool_scope_map:` list and `shell` block instead
+    of a second block; see examples/langchain-agent-config.md.
   - The dashboard shows the decision live, transport chip
     `llm_api_proxy`.
 """
@@ -144,7 +155,7 @@ def main() -> None:
     # First turn — model returns either text or a tool_call. The proxy
     # gates the tool_call before the SDK sees the deltas; on DENY the
     # model's "response" is an assistant text starting with
-    # `[Vanzik] Tool call denied:`.
+    # `Vanzik denied this action.`
     response = llm_with_tools.invoke(messages)
 
     if response.tool_calls:

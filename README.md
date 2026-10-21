@@ -4,7 +4,7 @@
 
 <p align="center">
   <strong>The firewall for AI agents.</strong><br/>
-  Every tool call, every API call — gated by policy, logged, and routed for human approval. No opt-out path.
+  Every tool call, every API call — gated by policy, logged, and routed for human approval. No opt-out path at the wire-level layers; the SDK layer is opt-in.
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
   <a href="docs/CONTRIBUTING.md">Contributing</a>
 </p>
 
-> **AgentGuard is now Vanzik.** Version 2.0 renamed the project; nothing else changed. Upgrading from AgentGuard 1.x? Run the [installer](#quickstart) as before: it moves your setup over, including the coding-agent hooks that still run `agentguard`. See [`docs/MIGRATION.md`](docs/MIGRATION.md#v1x-to-v20).
+> **AgentGuard is now Vanzik.** Version 2.0 renamed the project; the rename, including refusing the old `AGENTGUARD_*` variable names, is its only breaking change. Upgrading from AgentGuard 1.x? Run the [installer](#quickstart) as before: it moves your setup over, including the coding-agent hooks that still run `agentguard`. See [`docs/MIGRATION.md`](docs/MIGRATION.md#v1x-to-v20).
 
 ## Vanzik Cloud (preview)
 
@@ -133,7 +133,7 @@ irm https://github.com/lictorate/vanzik/releases/latest/download/install.ps1 | i
 
 Then run **`vanzik setup`**: a menu that starts Vanzik at login with an API key and shows how to connect your agents — and later updates or uninstalls it. Using **Claude Code**, **Cursor**, **Gemini CLI** or **Codex CLI**? Choose *Connect* for it there, and its shell commands, file edits, web fetches and MCP tools are checked against your policy ([`docs/CODING_AGENTS.md`](docs/CODING_AGENTS.md); Claude Code: [`docs/CLAUDE_CODE.md`](docs/CLAUDE_CODE.md)).
 
-Pin a version with `VANZIK_VERSION=2.0.0`, or choose the folder with `VANZIK_INSTALL_DIR`. To uninstall, add `| sh -s -- --uninstall` in place of `| sh` (Windows: `$env:VANZIK_UNINSTALL=1;` before the command); your policy is kept unless you also pass `--purge` — see [`docs/SETUP.md`](docs/SETUP.md#uninstall). To install by hand, every [release](https://github.com/lictorate/vanzik/releases) has archives for Linux, macOS and Windows (amd64 and arm64), a `checksums.txt`, and signed build provenance you can check with `gh attestation verify <file> --repo lictorate/vanzik`.
+Pin a version with `VANZIK_VERSION=2.0.0`, or choose the folder with `VANZIK_INSTALL_DIR`. To uninstall, add `| sh -s -- --uninstall` in place of `| sh` (Windows: `$env:VANZIK_UNINSTALL=1;` before the command); your policy is kept unless you also pass `--purge` (Windows: `$env:VANZIK_PURGE=1`) — see [`docs/SETUP.md`](docs/SETUP.md#uninstall). To install by hand, every [release](https://github.com/lictorate/vanzik/releases) has archives for Linux, macOS and Windows (amd64 and arm64), a `checksums.txt`, and signed build provenance you can check with `gh attestation verify <file> --repo lictorate/vanzik`.
 
 ```bash
 # Docker — multi-arch image with all three binaries; the server is the default entrypoint
@@ -147,7 +147,7 @@ go install lictorate.com/vanzik/v2/cmd/vanzik@latest
 
 # From source
 git clone https://github.com/lictorate/vanzik.git
-cd Vanzik && go build -o vanzik ./cmd/vanzik
+cd vanzik && go build -o vanzik ./cmd/vanzik
 ```
 
 > **The `-e VANZIK_API_KEY` is required, not optional.** Without an API key
@@ -156,7 +156,7 @@ cd Vanzik && go build -o vanzik ./cmd/vanzik
 > host gets connection-refused. Set the key, or use `--network host` if you really
 > do want a loopback-only server.
 
-Prerequisites: none for the installers, the release archives or Docker; Go 1.25+ for `go install` or a source build; Python 3.10+ (optional, for the SDK; 3.8 and 3.9 are unsupported — upstream EOL October 2024 and October 2025). See [`docs/SETUP.md`](docs/SETUP.md) for details.
+Prerequisites: none for the installers, the release archives or Docker; Go 1.26+ for `go install` or a source build; Python 3.10+ (optional, for the SDK; 3.8 and 3.9 are unsupported — upstream EOL October 2024 and October 2025). See [`docs/SETUP.md`](docs/SETUP.md) for details.
 
 ### Minimal policy
 
@@ -196,14 +196,12 @@ Vanzik is the **wire-level checkpoint** between your agent and everything it tou
 
 ```
    Claude Desktop / Cursor /         ┌──────────────────────┐
-   Cline / Continue / Zed   ───────▶ │ vanzik-mcp-      │ ─┐
-                                     │ gateway              │  │
+   Cline / Continue / Zed   ───────▶ │ vanzik-mcp-gateway   │ ─┐
                                      └──────────────────────┘  │
                                                                │     ┌──────────────────┐
-   OpenAI / Anthropic                ┌──────────────────────┐  │     │ Vanzik server│
-   SDK code                 ───────▶ │ vanzik-llm-proxy │ ─┼────▶│ (vanzik      │
-   (OPENAI_BASE_URL,…)               │                      │  │     │  serve)          │
-                                     └──────────────────────┘  │     ├──────────────────┤
+   OpenAI / Anthropic                ┌──────────────────────┐  │     │ Vanzik server    │
+   SDK code                 ───────▶ │ vanzik-llm-proxy     │ ─┼────▶│ (vanzik server)  │
+   (OPENAI_BASE_URL,…)               └──────────────────────┘  │     ├──────────────────┤
                                                                │     │ policy · audit · │
    Custom code (LangChain,           ┌──────────────────────┐  │     │ approvals ·      │
    CrewAI, browser-use,     ───────▶ │ Python / TypeScript  │ ─┘     │ dashboard        │
@@ -222,7 +220,7 @@ Vanzik is a policy enforcement and audit layer. It is **not** an OS sandbox. Rea
 - **Vanzik does not sandbox the host or intercept syscalls.** A determined agent that controls its own runtime can bypass Vanzik by ignoring `OPENAI_BASE_URL`, talking to a different MCP server, or shelling out directly. Combine Vanzik with OS-level isolation (containers, seccomp, AppArmor, network egress rules) when the threat model includes a hostile agent.
 - **Pattern matching is string-glob, not semantic.** A deny rule for `rm -rf *` matches literal strings; an agent (or a creative human) can substitute equivalents (`find / -delete`, base64 payloads, etc.). Treat policies as a high-signal first filter, not a complete authorization model. Since v1.2.0, a shell command that chains commands (`;`, `&&`, `|`, `$( )`, redirections) is checked one command at a time, so `allow: "ls *"` no longer covers `ls /tmp; rm -rf /` — see [Compound shell commands](docs/POLICY_REFERENCE.md#compound-shell-commands). A single `*` also matches across `/`, so an **ALLOW** path pattern like `/workspace/*` grants the **whole subtree** (`/workspace/a/b/secret.env`), not just the top level — bound path allows with `**`. See [`docs/POLICY_REFERENCE.md`](docs/POLICY_REFERENCE.md#pattern-matching-semantics-read-this).
 - **The MCP Gateway brokers tools only.** It gates `tools/call` and aggregates `tools/list`, but it does **not** route `resources/*` or `prompts/*` (those capabilities are masked out of the handshake, not advertised), does **not** support server-initiated requests (`sampling/createMessage`, `roots/list`, `elicitation/create` from a downstream are dropped, never forwarded to the host), and treats `notifications/cancelled` as a best-effort no-op. A downstream MCP server that depends on those flows has its tools gated normally while those specific features silently do nothing. The host connects to the gateway over stdio only; downstream servers can be stdio (`--upstream`) or Streamable HTTP (`--upstream-http`). See [`docs/MCP_GATEWAY.md`](docs/MCP_GATEWAY.md#10-currently-out-of-scope).
-- **Single-node by default; multi-node via PostgreSQL (v1.0).** With the default SQLite store, the approval queue, rate-limiter, and cost accumulators persist locally and survive restarts (write-behind, off the hot path) but are **per-instance**. Point `--store-dsn` at PostgreSQL and give each replica a `--node-id` to share that state across replicas. Two honesty notes on the shared mode: distributed rate/cost limiting is **bounded-overshoot**, not globally strict — worst-case admissions can exceed a limit by ≈ `reconcile-interval × peak rate` per additional replica, a deliberate trade that keeps synchronous database calls off the enforcement hot path — and cross-node approval state converges within one `--reconcile-interval` (default 2s): an approval consumed on one node is spent cluster-wide once reconciled, and conflicting resolutions always converge to DENY. Set `--persist=false` for the legacy pure-in-memory behavior.
+- **Single-node by default; multi-node via PostgreSQL (v1.0).** With the default SQLite store, the approval queue, rate-limiter, and cost accumulators persist locally and survive restarts (write-behind, off the hot path) but are **per-instance**. The one exception is tenant lookup on `/v1/t/<tenant>/…` routes: a tenant not yet in the in-memory cache is read from the store on its first lookup, and an unregistered tenant id costs at most one store read per `--tenant-policy-refresh-interval` (one per lookup when the interval is 0). Point `--store-dsn` at PostgreSQL and give each replica a `--node-id` to share that state across replicas. Two honesty notes on the shared mode: distributed rate/cost limiting is **bounded-overshoot**, not globally strict — worst-case admissions can exceed a limit by ≈ `reconcile-interval × peak rate` per additional replica, a deliberate trade that keeps synchronous database calls off the enforcement hot path — and cross-node approval state converges within one `--reconcile-interval` (default 2s): an approval consumed on one node is spent cluster-wide once reconciled, and conflicting resolutions always converge to DENY. Set `--persist=false` for the legacy pure-in-memory behavior.
 
 ## Dashboard
 
@@ -282,9 +280,9 @@ Full reference configs (nginx + Docker Compose + Kubernetes), auth/CORS/TLS deta
 
 ## Roadmap
 
-### Where things stand (v1.4)
+### Where things stand (v2.0)
 
-Everything in the pitch above is shipped: the policy engine with all seven scopes, the three enforcement paths (MCP Gateway and LLM API Proxy since v0.5, SDKs + adapters throughout), audit logging with default-on rotation and secret redaction, the approval queue + dashboard, cost guardrails, rate limiting, persistent state and multi-tenant policies on a zero-config SQLite store (v0.6), cross-transport verdict consistency and outage durability (v0.7), the v0.9 surface stabilization with a CI-enforced p99 latency gate, and the v1.0 PostgreSQL multi-node backend — shared approvals / rate-limit / cost state across replicas via background reconcile, with the hardened approval lifecycle (write-once resolutions, one-shot time-boxed ALLOWs) enforced cluster-wide. v1.2 checks compound shell commands one command at a time; v1.3 adds prebuilt binaries, one-line installers, `vanzik setup`, and the Claude Code hook; v1.4 adds hooks for Cursor, Gemini CLI and Codex CLI (fail open or closed), a tamper-evident audit log with `vanzik audit verify`, policy tests with `vanzik test`, session correlation and dashboard replay, `vanzik report`, Streamable HTTP upstreams for the MCP Gateway, and an OpenAI Agents SDK adapter. The release-by-release detail lives in [`CHANGELOG.md`](CHANGELOG.md); the frozen surfaces and the v1.x additive-only promise are in [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md).
+v2.0 renames AgentGuard to Vanzik; the features are those of 1.4. Everything in the pitch above is shipped: the policy engine with all seven scopes, the three enforcement paths (MCP Gateway and LLM API Proxy since v0.5, SDKs + adapters throughout), audit logging with default-on rotation and secret redaction, the approval queue + dashboard, cost guardrails, rate limiting, persistent state and multi-tenant policies on a zero-config SQLite store (v0.6), cross-transport verdict consistency and outage durability (v0.7), the v0.9 surface stabilization with a CI-enforced p99 latency gate, and the v1.0 PostgreSQL multi-node backend — shared approvals / rate-limit / cost state across replicas via background reconcile, with the hardened approval lifecycle (write-once resolutions, one-shot time-boxed ALLOWs) enforced cluster-wide. v1.2 checks compound shell commands one command at a time; v1.3 adds prebuilt binaries, one-line installers, `vanzik setup`, and the Claude Code hook; v1.4 adds hooks for Cursor, Gemini CLI and Codex CLI (fail open or closed), a tamper-evident audit log with `vanzik audit verify`, policy tests with `vanzik test`, session correlation and dashboard replay, `vanzik report`, Streamable HTTP upstreams for the MCP Gateway, and an OpenAI Agents SDK adapter. The release-by-release detail lives in [`CHANGELOG.md`](CHANGELOG.md); the frozen surfaces and the v1.x additive-only promise are in [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md).
 
 ### Shipped in v1.4
 - [x] Policy-as-code: `vanzik test` runs a policy against test cases in CI/CD
