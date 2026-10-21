@@ -784,6 +784,15 @@ func (s *Server) handleCheck(w http.ResponseWriter, r *http.Request) {
 					Reason:   err.Error(),
 					Rule:     "deny:ratelimit:" + req.Scope,
 				}
+				// on_deny covers rate-limit denies too, like every other DENY.
+				if s.cfg.Notifier != nil {
+					s.cfg.Notifier.Send(notify.Event{
+						Type:      "denied",
+						Timestamp: time.Now().UTC(),
+						Request:   req,
+						Result:    result,
+					})
+				}
 				s.logAndRespond(w, req, result, start, tenantID)
 				return
 			}

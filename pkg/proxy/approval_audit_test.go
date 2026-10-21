@@ -1,12 +1,16 @@
 package proxy
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/notify"
 	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
@@ -79,4 +83,64 @@ func TestApproveWritesAuditEntry(t *testing.T) {
 
 func TestDenyWritesAuditEntry(t *testing.T) {
 	testResolutionAudit(t, "/v1/deny/", func(s *Server) http.HandlerFunc { return s.handleDeny }, policy.Deny)
+}
+
+// TestRateLimitDenyNotifies: an on_deny target receives rate-limit denies,
+// as configs/default.yaml documents.
+func TestRateLimitDenyNotifies(t *testing.T) {
+	got := make(chan notify.Event, 4)
+	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var ev notify.Event
+		if err := json.NewDecoder(r.Body).Decode(&ev); err == nil {
+			got <- ev
+		}
+	}))
+	t.Cleanup(hook.Close)
+
+	logger, err := audit.NewFileLogger(filepath.Join(t.TempDir(), "audit.jsonl"))
+	if err != nil {
+		t.Fatalf("NewFileLogger: %v", err)
+	}
+	t.Cleanup(func() { logger.Close() })
+
+	disp := notify.NewDispatcher(policy.NotificationCfg{
+		OnDeny: []policy.NotifyTarget{{Type: "webhook", URL: hook.URL}},
+	})
+	t.Cleanup(disp.Close)
+
+	pol := &policy.Policy{
+		Version: "1",
+		Name:    "ratelimit-notify-test",
+		Rules: []policy.RuleSet{{
+			Scope:     "shell",
+			Allow:     []policy.Rule{{Pattern: "echo *"}},
+			RateLimit: &policy.RateLimitCfg{MaxRequests: 1, Window: "1m"},
+		}},
+	}
+	srv := NewServer(Config{
+		Engine:   policy.NewEngineFromPolicy(pol),
+		Logger:   logger,
+		Notifier: disp,
+		BaseURL:  "http://localhost:0",
+		Version:  "test",
+	})
+
+	body := `{"scope":"shell","command":"echo hi","agent_id":"a1"}`
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/v1/check", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		srv.handleCheck(httptest.NewRecorder(), req)
+	}
+
+	select {
+	case ev := <-got:
+		if ev.Type != "denied" {
+			t.Errorf("event type: got %q, want denied", ev.Type)
+		}
+		if ev.Result.Rule != "deny:ratelimit:shell" {
+			t.Errorf("rule: got %q, want deny:ratelimit:shell", ev.Result.Rule)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no on_deny notification for the rate-limit deny")
+	}
 }
