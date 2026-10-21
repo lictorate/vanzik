@@ -669,8 +669,10 @@ When the pattern contains `**`, the pattern and the input are split on `/`. `**`
 "**/secret/**"          matches   "/a/b/secret/c"
 "**/secret/**"          does NOT match   "/a/b/notsecret/c"        ← no substring bypass
 "./workspace/**"        matches   "./workspace/src/main.go"
-"./workspace/**"        does NOT match   "./workspace"             ← ** requires at least one segment on trailing use
+"./workspace/**"        matches   "./workspace"             ← ** also matches zero segments: the directory itself
 ```
+
+A trailing `/**` matches the directory itself as well as everything under it. On a deny rule that is the safer behavior (it denies more); on an allow rule, remember that it allows the directory too.
 
 ### Question mark `?` is a single character
 

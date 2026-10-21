@@ -49,9 +49,9 @@ rules:
         paths: ["/etc/**", "/usr/**", "/var/**"]
         message: "Writing to system directories is blocked"
       # `/home/**/.ssh/**` matches /home/alice/.ssh/id_rsa and
-      # /home/alice/work/.ssh/config. It does NOT match /home/alice/.ssh
-      # (no trailing segment) — add an explicit "/home/**/.ssh" entry if
-      # you need to block the directory itself.
+      # /home/alice/work/.ssh/config. A trailing `**` also matches zero
+      # segments, so it matches the directory /home/alice/.ssh itself too
+      # (the safer behavior: it denies more).
       - action: write
         paths: ["/home/**/.ssh/**", "/root/.ssh/**", "/home/**/.aws/**", "/root/.aws/**"]
         message: "Writing to credential directories is blocked"
