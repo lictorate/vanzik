@@ -1,8 +1,6 @@
 package llmproxy
 
-// refusal_test.go covers BuildRefusalRich: the operator-grade synthetic
-// refusal text and provider-specific SSE shape wired into
-// Server.BuildRefusal. Cross-checks:
+// BuildRefusalRich text and shapes:
 //
 //   - OpenAI shape: assistant-text content delta + finish_reason: "stop"
 //                   followed by [DONE].
@@ -12,8 +10,6 @@ package llmproxy
 //                     stop_reason: "end_turn", message_stop.
 //   - Reason + Rule + ApprovalID/URL all surface in the human-readable
 //     message body.
-//
-// SSE parsing uses bufio to match the streaming tests' assertion style.
 
 import (
 	"bufio"
@@ -23,9 +19,7 @@ import (
 	"testing"
 )
 
-// parseSSEEvents splits raw SSE bytes into discrete events. Each event
-// is a map of header lines (e.g. "event") plus a single "data" payload
-// (the stripped JSON or "[DONE]" string).
+// sseEvent is one parsed event: header lines plus its "data" payload.
 type sseEvent struct {
 	Event string
 	Data  string
@@ -365,8 +359,7 @@ func TestBuildRefusalRich_UnknownProviderFallsBackToOpenAI(t *testing.T) {
 }
 
 func TestBuildRefusalRich_NilContextSafe(t *testing.T) {
-	// Streaming.go always passes a non-nil ctx, but defensive: nil ctx
-	// must not panic.
+	// nil ctx must not panic.
 	raw := BuildRefusalRich("anthropic", Decision{Allow: false, Reason: "x"}, nil)
 	if len(raw) == 0 {
 		t.Errorf("nil ctx produced empty output")
@@ -377,12 +370,10 @@ func TestBuildRefusalRich_NilContextSafe(t *testing.T) {
 	}
 }
 
-// --- F9 (B2) — non-streaming JSON-object refusals ---
+// --- non-streaming JSON-object refusals ---
 
-// TestBuildRefusalRich_OpenAINonStreaming_ValidJSON confirms that
-// passing NonStreaming=true on the context yields a single decodable
-// ChatCompletionResponse JSON object (not SSE bytes) with the reason +
-// rule embedded in choices[0].message.content.
+// TestBuildRefusalRich_OpenAINonStreaming_ValidJSON: NonStreaming yields
+// one ChatCompletionResponse with reason and rule in the message content.
 func TestBuildRefusalRich_OpenAINonStreaming_ValidJSON(t *testing.T) {
 	dec := Decision{
 		Allow:  false,
@@ -435,8 +426,6 @@ func TestBuildRefusalRich_OpenAINonStreaming_ValidJSON(t *testing.T) {
 	}
 }
 
-// TestBuildRefusalRich_AnthropicNonStreaming_ValidJSON confirms the
-// Anthropic non-streaming refusal decodes as a valid Messages response.
 func TestBuildRefusalRich_AnthropicNonStreaming_ValidJSON(t *testing.T) {
 	dec := Decision{
 		Allow:  false,
@@ -488,9 +477,6 @@ func TestBuildRefusalRich_AnthropicNonStreaming_ValidJSON(t *testing.T) {
 	}
 }
 
-// TestBuildRefusalRich_StreamingFlagDistinguishesFormat confirms calling
-// the builder with NonStreaming=false vs NonStreaming=true produces
-// distinctly-shaped byte sequences (SSE vs JSON object).
 func TestBuildRefusalRich_StreamingFlagDistinguishesFormat(t *testing.T) {
 	dec := Decision{Allow: false, Reason: "test", Rule: "deny:test"}
 
@@ -540,9 +526,6 @@ func TestBuildRefusalRich_StreamingFlagDistinguishesFormat(t *testing.T) {
 	}
 }
 
-// TestBuildRefusalRich_NonStreaming_EmptyModelFallback confirms an empty
-// Model field on the RefusalContext yields a synthetic model name (so
-// the output remains decodable) rather than emitting an empty string.
 func TestBuildRefusalRich_NonStreaming_EmptyModelFallback(t *testing.T) {
 	dec := Decision{Allow: false, Reason: "x", Rule: "deny:y"}
 	raw := BuildRefusalRich("openai", dec, &RefusalContext{Provider: "openai", NonStreaming: true})

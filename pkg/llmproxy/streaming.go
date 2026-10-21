@@ -1,31 +1,10 @@
 package llmproxy
 
-// streaming.go is the SSE pause/resume/rewrite orchestrator:
-//
-//   - Pure content deltas pass through to the client byte-identical
-//     to upstream (the byte-identity invariant on the ALLOW path).
-//   - Tool_call deltas are accumulated; the orchestrator pauses
-//     forwarding from the first tool_call delta until the call is
-//     fully assembled.
-//   - The assembled tool_call is gated through Server.PolicyCheck.
-//     On ALLOW, the buffered SSE event bytes are replayed to the
-//     client byte-identical and forwarding resumes. On DENY /
-//     REQUIRE_APPROVAL, buffered events are discarded and a synthetic
-//     refusal is emitted via Server.BuildRefusal (this file ships a
-//     default fallback for tests).
-//   - Per-stream buffer cap (--max-buffer-bytes) bounds memory; if
-//     accumulated tool_call arguments exceed the cap, a synthetic
-//     refusal with reason "tool call arguments exceed gating buffer"
-//     fires and the metric vanzik_llmproxy_buffer_overflow_total
-//     increments.
-//
-// Per-request goroutine isolation is the hard rule: each request
-// constructs its own accumulator and never shares it. The orchestrator
-// holds no global state.
-//
-// Per docs/LLM_API_PROXY.md § 6 we use a hand-rolled bufio.Reader
-// loop (not bufio.Scanner) because SSE events have no hard line
-// bound and the scanner's default cap (64 KiB) is awkward to raise.
+// SSE pause/resume/rewrite orchestrator (docs/LLM_API_PROXY.md § 5).
+// Content deltas pass through byte-identical; tool-call deltas are held
+// until the call is assembled and gated, then replayed byte-identical on
+// ALLOW or replaced by a synthetic refusal. Each request owns its
+// accumulator; nothing is shared between requests.
 
 import (
 	"bufio"
@@ -42,45 +21,30 @@ import (
 	"lictorate.com/vanzik/v2/pkg/metrics"
 )
 
-// RefusalContext is the input to Server.BuildRefusal. Carries
-// everything the builder needs to construct a provider-specific
-// synthetic refusal payload.
+// RefusalContext is the input to Server.BuildRefusal.
 type RefusalContext struct {
-	// Provider is "openai" or "anthropic". Used to pick the right
-	// SSE event shape.
+	// Provider is "openai" or "anthropic".
 	Provider string
 
-	// OriginalToolCall is the parsed tool call that was denied. May
-	// be a zero-value when the refusal fires for a non-tool-call
-	// cause (buffer overflow before any complete tool_call landed).
+	// OriginalToolCall is the denied call; zero when the refusal has no
+	// single call (e.g. buffer overflow before one assembled).
 	OriginalToolCall ToolCallCheck
 
-	// AnthropicToolUseIndex is the content_block index of the
-	// in-flight tool_use the refusal is replacing. -1 when not
-	// applicable (overflow before any content_block_start arrived,
-	// or OpenAI provider).
+	// AnthropicToolUseIndex is the content_block index of the tool_use
+	// being replaced; -1 when unknown or for OpenAI.
 	AnthropicToolUseIndex int
 
-	// NonStreaming flips the refusal builder from "SSE event bytes"
-	// (the streaming path's shape — assistant-text content delta +
-	// [DONE] for OpenAI; content_block_* events for Anthropic) to a
-	// single non-streaming JSON object the SDK decodes as a normal
-	// chat.completion / message response. The non-streaming
-	// /v1/chat/completions and /v1/messages forwarders set this; the
-	// streaming orchestrator never does (zero-value preserves SSE).
+	// NonStreaming asks for one JSON response object instead of SSE
+	// events; only the non-streaming forwarders set it.
 	//
-	// Model is the original request's model string, surfaced into the
-	// synthetic non-streaming response so SDKs that index by model
-	// don't see "" / unknown-model errors. Optional; empty falls back
-	// to "vanzik-refusal" in the builder.
+	// Model is the request's model, echoed so SDKs that index by model
+	// don't fail on ""; empty becomes "vanzik-refusal".
 	NonStreaming bool
 	Model        string
 }
 
-// dispatchStreamingUpstream POSTs the request body to the upstream
-// and returns the live response. On success the caller is responsible
-// for closing resp.Body. On context cancel or network failure an
-// error is returned (no response).
+// dispatchStreamingUpstream POSTs body upstream and returns the live
+// response; the caller closes resp.Body.
 func (s *Server) dispatchStreamingUpstream(
 	ctx context.Context,
 	upstream *url.URL,
@@ -106,9 +70,6 @@ func (s *Server) dispatchStreamingUpstream(
 	rewriteUserAgent(req.Header, srcHeader.Get("User-Agent"))
 	req.Host = upstream.Host
 
-	// Streaming responses must NOT carry a request-level timeout —
-	// the http.Client's Timeout is 0 by construction (see NewServer).
-	// Cancellation rides through ctx.
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -119,12 +80,9 @@ func (s *Server) dispatchStreamingUpstream(
 	return resp, nil
 }
 
-// copyStreamingResponseHeaders copies upstream headers (filtered for
-// hop-by-hop) into the client response. Must be called before any
-// w.Write — once headers flush they freeze.
-//
-// Sets X-Accel-Buffering: no defensively in case anything in the
-// proxy chain (e.g. nginx) would otherwise buffer SSE.
+// copyStreamingResponseHeaders writes the filtered upstream headers and
+// status. X-Accel-Buffering: no stops intermediaries such as nginx from
+// buffering SSE.
 func (s *Server) copyStreamingResponseHeaders(w http.ResponseWriter, upstream *http.Response) {
 	copyForwardableHeaders(upstream.Header, w.Header())
 	if w.Header().Get("X-Accel-Buffering") == "" {
@@ -133,31 +91,21 @@ func (s *Server) copyStreamingResponseHeaders(w http.ResponseWriter, upstream *h
 	w.WriteHeader(upstream.StatusCode)
 }
 
-// streamingForwardError writes a JSON error envelope when streaming
-// setup fails BEFORE we've sent any bytes downstream. After the first
-// flush it's too late — we'd corrupt the SSE stream — so the
-// orchestrator never calls this past the headers boundary.
+// streamingForwardError writes a 502 envelope. Only valid before any
+// bytes are sent; after that it would corrupt the SSE stream.
 func (s *Server) streamingForwardError(w http.ResponseWriter, err error) {
 	writeJSONError(w, http.StatusBadGateway, fmt.Errorf("streaming proxy: %w", err))
 }
 
-// readSSEEvent reads one complete Server-Sent Event from r — every
-// line up to (and including) the blank-line terminator. Returns the
-// raw event bytes (joined with '\n', trailing "\n\n").
+// readSSEEvent returns the raw bytes of one SSE event, through its
+// blank-line terminator. A partial trailing event comes back with
+// io.EOF; callers should still dispatch it.
 //
-// We do NOT use bufio.Scanner per docs/LLM_API_PROXY.md § 6 — events
-// can be larger than the scanner's default 64 KiB and multiline data
-// fields require more state than a tokenizer. We also do NOT use
-// ReadBytes: it accumulates an entire line before returning, so a
-// malicious upstream sending one giant newline-free blob would grow
-// memory unboundedly BEFORE the cap check ever ran. ReadSlice hands
-// back at most the reader's buffer size per call (ErrBufferFull on a
-// long line), so the cap is enforced every few KiB regardless of
-// where — or whether — newlines appear.
-//
-// Returns io.EOF at end of stream. A partial trailing event (file
-// ended before blank line) is returned with err=io.EOF and the
-// accumulated bytes; callers should still attempt to dispatch it.
+// Not bufio.Scanner: events can exceed its 64 KiB default. Not
+// ReadBytes: it buffers a whole line before returning, so a giant
+// newline-free blob would grow memory before the cap check. ReadSlice
+// returns at most one buffer per call, so maxEventBytes is enforced
+// every few KiB.
 func readSSEEvent(r *bufio.Reader, maxEventBytes int) ([]byte, error) {
 	var buf bytes.Buffer
 	atLineStart := true
@@ -170,8 +118,7 @@ func readSSEEvent(r *bufio.Reader, maxEventBytes int) ([]byte, error) {
 			}
 		}
 		if errors.Is(err, bufio.ErrBufferFull) {
-			// Mid-line: the current line is longer than the reader's
-			// buffer; keep draining it before line-boundary logic.
+			// Line longer than the reader's buffer; keep draining it.
 			atLineStart = false
 			continue
 		}
@@ -181,11 +128,8 @@ func readSSEEvent(r *bufio.Reader, maxEventBytes int) ([]byte, error) {
 			}
 			return buf.Bytes(), err
 		}
-		// chunk ends with '\n' — the current line just completed.
-		// Blank line terminates the event (SSE spec: "\n" or "\r\n"),
-		// but only when the chunk IS the whole line: the trailing
-		// fragment of an over-length line can be exactly "\n" without
-		// being a blank line.
+		// A blank line ends the event, but only when the chunk is the
+		// whole line: the tail of an over-length line can be exactly "\n".
 		wasLineStart := atLineStart
 		atLineStart = true
 		if wasLineStart && (bytes.Equal(chunk, []byte("\n")) || bytes.Equal(chunk, []byte("\r\n"))) {
@@ -196,20 +140,14 @@ func readSSEEvent(r *bufio.Reader, maxEventBytes int) ([]byte, error) {
 
 var errSSEEventTooLarge = errors.New("sse event exceeded buffer cap")
 
-// absoluteMaxBufferBytes is the hard safety ceiling on the streaming
-// buffers. ParseConfig rejects --max-buffer-bytes <= 0, but a
-// Config built directly (tests, embedders) can carry MaxBufferBytes == 0
-// meaning "no operator-configured cap" — without a ceiling, an upstream
-// that never terminates an SSE event would grow the per-event read
-// buffer and the tool-call accumulator without bound (memory DoS). The
-// ceiling is a safety floor on top of the operator cap, never a
-// replacement: any positive cap behaves exactly as before. Value matches
-// MaxConfigurableBufferBytes, the largest cap Validate accepts.
+// absoluteMaxBufferBytes bounds the streaming buffers when a Config
+// built directly (tests, embedders) has MaxBufferBytes == 0, which
+// ParseConfig would reject. Without it, an upstream that never ends an
+// SSE event grows memory without bound. Any positive operator cap is
+// used as-is.
 const absoluteMaxBufferBytes = MaxConfigurableBufferBytes
 
-// hardCappedBufferBytes resolves a computed per-stream cap against the
-// absolute ceiling: <= 0 ("cap disabled") falls back to
-// absoluteMaxBufferBytes so streaming stays bounded fail-closed.
+// hardCappedBufferBytes maps a cap <= 0 to absoluteMaxBufferBytes.
 func hardCappedBufferBytes(computed int) int {
 	if computed <= 0 {
 		return absoluteMaxBufferBytes
@@ -217,17 +155,12 @@ func hardCappedBufferBytes(computed int) int {
 	return computed
 }
 
-// runPolicyCheck invokes Server.PolicyCheck. Default behaviour when
-// nil: ALLOW. This makes the streaming pipe testable without the gate
-// wired and matches the rest of the package's nil-safety pattern.
+// runPolicyCheck invokes Server.PolicyCheck; nil means ALLOW.
 func (s *Server) runPolicyCheck(ctx context.Context, tc ToolCallCheck) (Decision, error) {
-	// SECURITY: reject tool-call arguments that contain duplicate
-	// JSON keys before evaluating policy. The gate projects from a Go map
-	// (last-wins on duplicates) while the ALLOW path replays the raw argument
-	// bytes; a first-wins downstream executor would then act on a different
-	// value than the one gated — a parser-differential bypass. Fail closed
-	// regardless of the wired PolicyCheck (this is a hard deny, nil error, so
-	// it is not subject to --fail-mode allow).
+	// SECURITY: refuse duplicate JSON keys. The gate sees a Go map
+	// (last wins) while ALLOW replays the raw bytes, so a first-wins
+	// executor would act on a value that was never gated. This is a
+	// deny with nil error, so --fail-mode allow cannot override it.
 	if hasDuplicateJSONKeys(tc.RawArguments) {
 		return Decision{
 			Allow:  false,
@@ -241,9 +174,7 @@ func (s *Server) runPolicyCheck(ctx context.Context, tc ToolCallCheck) (Decision
 	return s.PolicyCheck(ctx, &tc)
 }
 
-// buildRefusal calls Server.BuildRefusal with a sane default fallback.
-// The default emits a minimal SSE refusal so unit tests can exercise
-// the deny path without the rich builder wired.
+// buildRefusal calls Server.BuildRefusal, or defaultRefusalBytes if nil.
 func (s *Server) buildRefusal(provider string, decision Decision, ctx *RefusalContext) []byte {
 	if s.BuildRefusal != nil {
 		return s.BuildRefusal(provider, decision, ctx)
@@ -251,19 +182,11 @@ func (s *Server) buildRefusal(provider string, decision Decision, ctx *RefusalCo
 	return defaultRefusalBytes(provider, decision, ctx)
 }
 
-// defaultRefusalBytes is the test-only fallback used when
-// Server.BuildRefusal is nil. Emits a minimal payload that closes the
-// stream cleanly so SDK clients don't hang. The production refusal
-// builder lives in refusal.go and is wired by main.go.
-//
-// Important: the OpenAI shape is assistant-text + [DONE]. The
-// `role: "tool"` shape was rejected because the response schema only
-// emits assistant role and SDKs hang on missing `tool_call_id`.
-//
-// Honours ctx.NonStreaming for the non-streaming forwarders. Non-
-// streaming refusals are single JSON objects shaped like a normal
-// upstream response — SDKs decode them without going through SSE
-// parsing.
+// defaultRefusalBytes is the minimal refusal used when
+// Server.BuildRefusal is nil (tests); production wires BuildRefusalRich.
+// It still closes the stream cleanly so SDKs don't hang. The OpenAI
+// shape is assistant text + [DONE]: `role: "tool"` is not in the
+// response schema and SDKs hang on the missing tool_call_id.
 func defaultRefusalBytes(provider string, decision Decision, ctx *RefusalContext) []byte {
 	msg := decision.Reason
 	if msg == "" {
@@ -277,9 +200,6 @@ func defaultRefusalBytes(provider string, decision Decision, ctx *RefusalContext
 
 	switch provider {
 	case "openai":
-		// Build a single content-delta event followed by [DONE]. The
-		// content string is JSON-escaped via json.Marshal so the
-		// payload is always valid even if `full` contains quotes.
 		quoted, _ := json.Marshal(full)
 		event := fmt.Sprintf(
 			`data: {"choices":[{"index":0,"delta":{"role":"assistant","content":%s},"finish_reason":"stop"}]}`,
@@ -293,9 +213,8 @@ func defaultRefusalBytes(provider string, decision Decision, ctx *RefusalContext
 			idx = ctx.AnthropicToolUseIndex
 		}
 		quoted, _ := json.Marshal(full)
-		// Replace the tool_use at idx with a text content_block, then
-		// rewrite stop_reason to "end_turn" so the SDK doesn't expect
-		// a tool result to follow.
+		// A text block at the tool_use's index, then stop_reason
+		// "end_turn" so the SDK doesn't wait for a tool result.
 		var buf bytes.Buffer
 		fmt.Fprintf(&buf, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":%d,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n", idx)
 		fmt.Fprintf(&buf, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":%d,\"delta\":{\"type\":\"text_delta\",\"text\":%s}}\n\n", idx, string(quoted))
@@ -309,16 +228,9 @@ func defaultRefusalBytes(provider string, decision Decision, ctx *RefusalContext
 	}
 }
 
-// defaultRefusalNonStreamingBytes is the non-streaming sibling of
-// defaultRefusalBytes. F9 (B2) wires it for the early-bring-up path
-// when Server.BuildRefusal is nil and the non-streaming forwarder
-// needs to emit a refusal. Mirrors BuildRefusalRich's non-streaming
-// shape but with the bare reason — refusal.go's BuildRefusalRich
-// produces the operator-grade copy with rule + approval URL.
-//
-// model carries the original request's model name when available;
-// empty falls back to "vanzik-refusal" so the JSON object remains
-// decodable by SDK clients without nil-model errors.
+// defaultRefusalNonStreamingBytes is defaultRefusalBytes' single-JSON
+// form: BuildRefusalRich's non-streaming shape with only the bare
+// reason. Empty model becomes "vanzik-refusal".
 func defaultRefusalNonStreamingBytes(provider, full, model string) []byte {
 	if model == "" {
 		model = "vanzik-refusal"
@@ -370,16 +282,11 @@ func defaultRefusalNonStreamingBytes(provider, full, model string) []byte {
 	}
 }
 
-// handleStreamingChatCompletion implements OpenAI streaming with the
-// byte-identity invariant: bytes delivered to the client MUST be
-// byte-identical to upstream output on the ALLOW path. No JSON re-
-// encoding; no whitespace normalization; no header rewriting beyond
-// hop-by-hop filtering.
-//
-// Streaming admission control: admitStream gates entry against
-// cfg.MaxConcurrentStreams. Refused requests get 503 + Retry-After: 5
-// before any body bytes touch upstream — protects the proxy from
-// self-DoS via fan-out.
+// handleStreamingChatCompletion streams OpenAI chat completions. On
+// ALLOW the client gets upstream's bytes unchanged: no JSON
+// re-encoding, no whitespace changes, only hop-by-hop header
+// filtering. admitStream refuses over-cap streams before upstream is
+// contacted.
 func (s *Server) handleStreamingChatCompletion(w http.ResponseWriter, r *http.Request, body []byte, _ *ChatCompletionRequest) {
 	if !s.admitStream(w) {
 		return
@@ -393,9 +300,7 @@ func (s *Server) handleStreamingChatCompletion(w http.ResponseWriter, r *http.Re
 	}
 	defer upstreamResp.Body.Close()
 
-	// Non-2xx upstream: pass through as-is. The body is small enough
-	// that a copy is fine; the client gets the upstream's error
-	// envelope verbatim.
+	// Non-2xx: pass the upstream error envelope through verbatim.
 	if upstreamResp.StatusCode < 200 || upstreamResp.StatusCode >= 300 {
 		s.copyStreamingResponseHeaders(w, upstreamResp)
 		_, _ = io.Copy(w, upstreamResp.Body)
@@ -414,8 +319,7 @@ func (s *Server) handleStreamingChatCompletion(w http.ResponseWriter, r *http.Re
 	s.runOpenAIStreamLoop(w, flusher, r, upstreamResp.Body)
 }
 
-// handleStreamingAnthropicMessages mirrors handleStreamingChatCompletion
-// for Anthropic Messages. Same MaxConcurrentStreams admission gate.
+// handleStreamingAnthropicMessages mirrors handleStreamingChatCompletion.
 func (s *Server) handleStreamingAnthropicMessages(w http.ResponseWriter, r *http.Request, body []byte, _ *AnthropicMessagesRequest) {
 	if !s.admitStream(w) {
 		return
@@ -447,10 +351,8 @@ func (s *Server) handleStreamingAnthropicMessages(w http.ResponseWriter, r *http
 	s.runAnthropicStreamLoop(w, flusher, r, upstreamResp.Body)
 }
 
-// runOpenAIStreamLoop is the per-request streaming loop. Constructs
-// a fresh accumulator (per-request goroutine isolation), reads SSE
-// events from upstream, branches on FeedResult, and either flushes
-// (PassThrough or ALLOW-path replay) or refuses (DENY / overflow).
+// runOpenAIStreamLoop reads upstream SSE events into a per-request
+// accumulator and flushes, gates, or refuses per FeedResult.
 func (s *Server) runOpenAIStreamLoop(w http.ResponseWriter, flusher http.Flusher, r *http.Request, body io.Reader) {
 	acc := NewOpenAIToolCallAccumulator(hardCappedBufferBytes(s.cfg.MaxBufferBytes))
 	reader := bufio.NewReader(body)
@@ -461,9 +363,7 @@ func (s *Server) runOpenAIStreamLoop(w http.ResponseWriter, flusher http.Flusher
 		isTooLarge := errors.Is(err, errSSEEventTooLarge)
 
 		if isTooLarge {
-			// One single SSE event blew past 2x the buffer cap. This
-			// is pathological; treat it as an upstream protocol error
-			// and emit a minimal refusal.
+			// A single event exceeded 2x the buffer cap.
 			metrics.IncLLMProxyBufferOverflow("openai")
 			decision := bufferOverflowDecision()
 			refusal := s.buildRefusal("openai", decision,
@@ -478,33 +378,26 @@ func (s *Server) runOpenAIStreamLoop(w http.ResponseWriter, flusher http.Flusher
 		if len(event) > 0 {
 			result, ferr := acc.FeedEvent(event)
 			if ferr != nil && !result.Completed && !isEOF {
-				// Malformed NON-completion delta — drop the event and
-				// continue. We do NOT inject our own bytes into the
-				// stream (would violate byte-identity for following
-				// events). Corruption that affects a decision surfaces
-				// at completion (handled fail-closed below), not here.
+				// Malformed non-completion delta: drop it rather than inject
+				// bytes. Corruption that affects a decision surfaces at
+				// completion, which fails closed below.
 				continue
 			}
 			switch {
 			case ferr != nil && result.Completed:
-				// F1 (fail-closed): a finalized tool_call cycle whose
-				// assembled arguments are not valid JSON (truncated /
-				// malformed — routine on a max_tokens cutoff, or
-				// attacker-inducible). Such a completion MUST deny, never
-				// be silently dropped: dropping leaves the gate un-run,
-				// writes no audit entry, and strands the accumulator so
-				// every later event is buffered then dropped at EOF (the
-				// firewall goes dark with no trail). See denyMalformedOpenAI.
+				// Completed call with invalid argument JSON (max_tokens
+				// cutoff, or attacker-induced). Must deny, never drop:
+				// dropping skips the gate and audit and strands the
+				// accumulator, so every later event is lost at EOF.
 				s.denyMalformedOpenAI(w, flusher, r, acc, result.CompletedToolCalls)
 				// The refusal ended with its own [DONE]; the client must
 				// not see a second one when upstream closes.
 				w = dropDoneWriter{w}
 
 			case result.ProtocolViolation:
-				// The accumulator found a stream it cannot gate without
-				// risking a bypass — today tool_calls spread across more
-				// than one choice. Fail closed with a
-				// synthetic refusal naming the specific defect.
+				// A stream that cannot be gated without risking a bypass
+				// (e.g. tool_calls on more than one choice): fail closed,
+				// naming the defect.
 				metrics.IncLLMProxyProtocolViolation("openai")
 				decision := protocolViolationDecision("openai", result.violation)
 				refusal := s.buildRefusal("openai", decision,
@@ -536,10 +429,8 @@ func (s *Server) runOpenAIStreamLoop(w http.ResponseWriter, flusher http.Flusher
 				flusher.Flush()
 
 			case result.Accumulating:
-				// Held in acc.bufferedEvents; do not flush. If the
-				// stream ends while they are still held, the EOF branch
-				// below finalizes the cycle — it must never drop them
-				// silently.
+				// Held in acc.bufferedEvents; closeOpenAIStreamAtEOF
+				// finalizes them if the stream ends first.
 			}
 		}
 
@@ -548,22 +439,18 @@ func (s *Server) runOpenAIStreamLoop(w http.ResponseWriter, flusher http.Flusher
 			return
 		}
 		if err != nil {
-			// Upstream read error mid-stream. The client may have
-			// already received some bytes; we can't safely emit a
-			// JSON error envelope here. Just close — clients react
-			// to EOF as end-of-stream.
+			// Bytes may already be sent, so no error envelope.
 			return
 		}
-		// Cancellation: client disconnected.
 		if r.Context().Err() != nil {
 			return
 		}
 	}
 }
 
-// gateAndFlushOpenAI gates each completed tool_call through PolicyCheck.
-// Returns true when ALLOW (orchestrator continues reading); false when
-// DENY (orchestrator emits a refusal and stops).
+// gateAndFlushOpenAI gates each completed call. On all-ALLOW it replays
+// the buffered events and returns true; otherwise it writes a refusal
+// and returns false (the loop stops).
 func (s *Server) gateAndFlushOpenAI(w http.ResponseWriter, flusher http.Flusher, r *http.Request, acc *OpenAIToolCallAccumulator, calls []ToolCallCheck) bool {
 	for i := range calls {
 		calls[i].TenantID = s.cfg.TenantID
@@ -577,25 +464,16 @@ func (s *Server) gateAndFlushOpenAI(w http.ResponseWriter, flusher http.Flusher,
 		calls[i].Stream = true
 		decision, err := s.runPolicyCheck(r.Context(), calls[i])
 		if err != nil {
-			// PolicyCheck failed (network error, malformed response).
-			// Honour fail-mode: when the gate (gate.go::failModeDecision)
-			// is wired (production), it returns a fully-shaped Decision
-			// alongside the err — `deny` → FailModeRuleClosed,
-			// `fail-closed-with-audit` → FailModeRuleClosedAudit,
-			// `allow` → FailModeRuleOpen. We propagate that Decision
-			// VERBATIM rather than synthesising a local one so the
-			// operator's chosen --fail-mode value reaches the
-			// client-visible refusal rule string. Tests that wire a
-			// PolicyCheck returning a bare error get the safe fallback.
+			// The wired gate returns a Decision shaped by --fail-mode
+			// (failModeDecision) alongside err; pass it on verbatim so the
+			// operator's mode reaches the client-visible rule string.
 			if s.cfg.FailMode == "allow" {
 				continue
 			}
 			refusalDecision := decision
 			if refusalDecision.Rule == "" {
-				// Test-shim or non-gate PolicyCheck returned a bare
-				// error without a fail-mode-shaped Decision. Synthesise
-				// a fallback that still distinguishes the two closed
-				// modes so the dashboard rule-string contract holds.
+				// Bare error (test shim): synthesise a decision that still
+				// distinguishes the two closed modes.
 				refusalDecision = Decision{
 					Allow:  false,
 					Reason: fmt.Sprintf("policy check unavailable: %v", err),
@@ -618,8 +496,6 @@ func (s *Server) gateAndFlushOpenAI(w http.ResponseWriter, flusher http.Flusher,
 			return false
 		}
 	}
-	// All tool_calls in this batch ALLOWed. Flush buffered events
-	// byte-identical and reset the accumulator for the next cycle.
 	for _, ev := range acc.BufferedEvents() {
 		_, _ = w.Write(ev)
 	}
@@ -628,10 +504,8 @@ func (s *Server) gateAndFlushOpenAI(w http.ResponseWriter, flusher http.Flusher,
 	return true
 }
 
-// bufferOverflowDecision is the fail-closed verdict for a stream whose
-// buffered tool-call bytes exceeded --max-buffer-bytes. The Rule is stable and
-// alertable; the four sites that emit it (per provider: one oversized single
-// event, one cumulative overflow) shared this literal verbatim.
+// bufferOverflowDecision is the verdict for buffered tool-call bytes
+// exceeding --max-buffer-bytes. The Rule is stable for alerting.
 func bufferOverflowDecision() Decision {
 	return Decision{
 		Allow:  false,
@@ -640,14 +514,9 @@ func bufferOverflowDecision() Decision {
 	}
 }
 
-// protocolViolationDecision renders the fail-closed verdict for a
-// parser-signalled protocol violation. The kind comes from the
-// accumulator so the client-visible Reason and the operator-visible Rule
-// name the actual defect instead of one catch-all message.
-//
-// The zero kind reproduces the pre-existing interleaved-tool_use refusal
-// VERBATIM, per provider, so refusals already shipped under v1.0 stay
-// byte-identical on the wire.
+// protocolViolationDecision names the accumulator-reported defect in
+// Reason and Rule. The zero kind's per-provider text is a wire
+// contract: keep it byte-identical.
 func protocolViolationDecision(provider string, kind protocolViolationKind) Decision {
 	switch kind {
 	case violationOrphanedToolInput:
@@ -678,21 +547,12 @@ func protocolViolationDecision(provider string, kind protocolViolationKind) Deci
 	}
 }
 
-// closeOpenAIStreamAtEOF finalizes a gating cycle still in flight when
-// upstream hit EOF: a dropped connection, or a provider that ended
-// the stream without a terminal finish_reason.
-//
-// The buffered events are the UNGATED tool call, which rules out both
-// obvious endings: dropping them leaves the client an empty response
-// with no gate run and nothing audited, and flushing them is a real
-// bypass. The cycle goes through the SAME gate-or-refuse path a
-// finish_reason takes — truncated arguments fail to parse and land on
-// the malformed refusal (deny + audit), complete arguments are gated
-// normally and replayed only on ALLOW. Nothing reaches the client
-// ungated on any branch.
-//
-// Runs once per stream, at EOF, so it adds nothing to the per-event
-// loop.
+// closeOpenAIStreamAtEOF finalizes a tool call still buffered at EOF
+// (dropped connection, or no terminal finish_reason). The buffered
+// bytes are ungated: dropping them skips gate and audit, flushing them
+// is a bypass. So they take the same path a finish_reason would:
+// truncated arguments get the malformed refusal, complete ones are
+// gated and replayed only on ALLOW.
 func (s *Server) closeOpenAIStreamAtEOF(w http.ResponseWriter, flusher http.Flusher, r *http.Request, acc *OpenAIToolCallAccumulator) {
 	result, ferr := acc.CloseAtEOF()
 	if !result.Completed {
@@ -705,10 +565,8 @@ func (s *Server) closeOpenAIStreamAtEOF(w http.ResponseWriter, flusher http.Flus
 	s.gateAndFlushOpenAI(w, flusher, r, acc, result.CompletedToolCalls)
 }
 
-// closeAnthropicStreamAtEOF mirrors closeOpenAIStreamAtEOF: a tool_use
-// block still open when upstream hit EOF is gated or refused, never
-// dropped and never flushed ungated. See that function for the
-// reasoning.
+// closeAnthropicStreamAtEOF mirrors closeOpenAIStreamAtEOF for a
+// tool_use block still open at EOF.
 func (s *Server) closeAnthropicStreamAtEOF(w http.ResponseWriter, flusher http.Flusher, r *http.Request, acc *AnthropicAccumulator) {
 	result, ferr := acc.CloseAtEOF()
 	if !result.Completed {
@@ -721,29 +579,16 @@ func (s *Server) closeAnthropicStreamAtEOF(w http.ResponseWriter, flusher http.F
 	s.gateAndFlushAnthropic(w, flusher, r, acc, result.CompletedToolCalls)
 }
 
-// auditStreamRefusal records a refusal the proxy manufactured for a STRUCTURAL
-// reason — an ungateable stream shape, or a buffer cap — in the central audit
-// trail.
+// auditStreamRefusal records a structural refusal (ungateable stream
+// shape, buffer cap) in the central audit trail. The gate never ran for
+// these, so without this the only trace is a process-local counter with
+// no scrape endpoint. The tool identity is often empty (no call
+// assembled); rule, tenant, agent and provider still make it
+// diagnosable.
 //
-// These refusals used to leave no trace at all. The gate never ran, so the
-// /v1/check path that normally writes the entry was never taken, and the only
-// signal was a counter in the proxy's process-local registry, which has no
-// scrape endpoint. An operator saw nothing: not the refusal, not the tenant,
-// not which upstream did it.
-//
-// The entry carries whatever identity the accumulator managed to observe.
-// Often that is nothing — a stream refused because its bytes cannot be bound
-// to a call is, by definition, one where no call assembled — and an entry
-// naming the rule, tenant, agent and provider is still the difference between
-// a diagnosable event and silence.
-//
-// Ordering: the client is served FIRST and audited after. The forced-audit
-// POST is a network round trip, and no refusal should wait on it. (The
-// malformed-completion path audits first; it predates this and continues to
-// work, but new refusal paths should not add latency ahead of the client.)
-//
-// Best-effort by design: a failure here must never change what the client
-// already received. Runs once per refused stream, never per event.
+// Called after the client is served, so no refusal waits on the audit
+// round trip (the malformed-completion path audits first). Best-effort:
+// a failure never changes what the client received.
 func (s *Server) auditStreamRefusal(r *http.Request, provider string, decision Decision, toolName, toolCallID string) {
 	call := ToolCallCheck{
 		Provider:        provider,
@@ -762,18 +607,14 @@ func (s *Server) auditStreamRefusal(r *http.Request, provider string, decision D
 		s.RecordForcedAudit(r.Context(), &call, decision)
 		return
 	}
-	// No forced-audit hook (tests, embedders): drive the normal /v1/check
-	// path purely for its audit side effect. Lower fidelity — it records the
-	// engine verdict rather than the refusal — but it is a trail.
+	// No hook (tests, embedders): /v1/check still writes an entry, but
+	// with the engine verdict rather than the refusal.
 	_, _ = s.runPolicyCheck(r.Context(), call)
 }
 
-// malformedToolCallDecision is the fail-closed verdict the streaming
-// orchestrator stamps when a finalized tool_call/tool_use cycle carries
-// a parse error (its assembled arguments are not valid JSON — e.g. a
-// max_tokens-truncated tool call, routine OR attacker-inducible). F1:
-// such a completion must DENY, never be silently dropped. The Rule is a
-// stable, tenant-agnostic string operators can alert on.
+// malformedToolCallDecision is the verdict for a completed tool call
+// whose arguments are not valid JSON (max_tokens truncation, or
+// attacker-induced). The Rule is stable for alerting.
 func malformedToolCallDecision() Decision {
 	return Decision{
 		Allow:  false,
@@ -782,19 +623,11 @@ func malformedToolCallDecision() Decision {
 	}
 }
 
-// auditMalformedToolCalls records the audit trail for a malformed-completion
-// refusal. When RecordForcedAudit is wired (production) it records the forced
-// DENY the client actually received — the F1 audit-verdict fidelity fix (C3):
-// the trail then reflects the malformed_tool_call DENY, not the engine verdict a
-// /v1/check would log after evaluating the garbage-projected request. When the
-// hook is nil (tests / early bring-up) it falls back to auditDeniedToolCalls,
-// which drives the normal /v1/check path — lower fidelity, but still an audit
-// trail rather than a silent gap.
-//
-// It sets the same tenant/agent/session identity fields gateAndFlush* set so the
-// recorded entry is attributed identically to a normal deny. Runs only on the
-// (rare) malformed-completion path, never the happy loop, so it adds no
-// per-event work to the hot path.
+// auditMalformedToolCalls records the malformed_tool_call DENY the
+// client received via RecordForcedAudit, not the engine verdict
+// /v1/check would log for the garbage arguments. With a nil hook it
+// falls back to auditDeniedToolCalls. Identity fields match
+// gateAndFlush* so the entry is attributed like a normal deny.
 func (s *Server) auditMalformedToolCalls(r *http.Request, calls []ToolCallCheck) {
 	if s.RecordForcedAudit == nil {
 		s.auditDeniedToolCalls(r, calls)
@@ -814,21 +647,10 @@ func (s *Server) auditMalformedToolCalls(r *http.Request, calls []ToolCallCheck)
 	}
 }
 
-// auditDeniedToolCalls is the nil-hook FALLBACK for auditMalformedToolCalls
-// (used when Server.RecordForcedAudit is not wired — tests / early bring-up). It
-// runs the SAME PolicyCheck the normal gate runs for each supplied tool call,
-// purely to drive the audit trail: the wired PolicyCheck POSTs to /v1/check,
-// which writes the transport-tagged audit entry. The returned decision and any
-// error are intentionally ignored — the caller forces an unconditional
-// fail-closed refusal regardless — but the call still closes the audit gap the
-// pre-fix silent drop left open. Note the fidelity limitation this fallback
-// carries: /v1/check records the ENGINE verdict (often ALLOW), not the DENY the
-// client received; RecordForcedAudit exists precisely to fix that.
-//
-// It sets the same tenant/agent/session identity fields gateAndFlush*
-// sets so the audit entry is attributed identically to a normal deny.
-// Runs only on the (rare) malformed-completion path, never the happy
-// path, so it adds no per-event work to the hot loop.
+// auditDeniedToolCalls is auditMalformedToolCalls' nil-hook fallback.
+// It runs PolicyCheck only for the audit entry /v1/check writes; the
+// verdict is ignored because the caller refuses regardless. That entry
+// carries the engine verdict (often ALLOW), not the client's DENY.
 func (s *Server) auditDeniedToolCalls(r *http.Request, calls []ToolCallCheck) {
 	for i := range calls {
 		calls[i].TenantID = s.cfg.TenantID
@@ -843,16 +665,11 @@ func (s *Server) auditDeniedToolCalls(r *http.Request, calls []ToolCallCheck) {
 	}
 }
 
-// denyMalformedOpenAI is the F1 fail-closed path for the OpenAI loop: a
-// finalized tool_call cycle whose assembled arguments are not valid
-// JSON. It (1) audits each malformed call through the normal PolicyCheck
-// path (auditDeniedToolCalls), (2) emits a fail-closed refusal with the
-// fixed malformed_tool_call Decision regardless of the check's verdict,
-// (3) flushes, and (4) resets the accumulator. Unlike the overflow /
-// normal-deny branches it does NOT stop reading upstream: a later valid
-// tool_call in the same response must still be gated (the reset is what
-// un-sticks the accumulator). Buffered events (the malformed cycle's raw
-// bytes) are discarded, not flushed — the refusal replaces them.
+// denyMalformedOpenAI handles a completed tool call with invalid
+// argument JSON: audit, write the malformed_tool_call refusal in place
+// of the buffered events, and reset the accumulator. Unlike other
+// denies it keeps reading upstream, so a later valid call is still
+// gated.
 func (s *Server) denyMalformedOpenAI(w http.ResponseWriter, flusher http.Flusher, r *http.Request, acc *OpenAIToolCallAccumulator, calls []ToolCallCheck) {
 	s.auditMalformedToolCalls(r, calls)
 	var original ToolCallCheck
@@ -870,11 +687,10 @@ func (s *Server) denyMalformedOpenAI(w http.ResponseWriter, flusher http.Flusher
 }
 
 // dropDoneWriter swallows a write that is exactly one OpenAI `[DONE]`
-// event. The OpenAI loop switches to it after a malformed-tool-call
-// refusal, which carries its own `[DONE]` but keeps reading upstream so
-// later tool calls are still gated: the upstream terminator would
-// otherwise reach the client as a second `[DONE]`. Upstream events are
-// written one per Write, so the match is exact.
+// event. After a malformed-tool-call refusal (which ends in its own
+// `[DONE]`) the loop keeps reading, and upstream's terminator would be
+// a second one. Upstream events are written one per Write, so the
+// match is exact.
 type dropDoneWriter struct {
 	http.ResponseWriter
 }
@@ -886,12 +702,9 @@ func (d dropDoneWriter) Write(p []byte) (int, error) {
 	return d.ResponseWriter.Write(p)
 }
 
-// dropAnthropicCloseWriter is the Anthropic sibling of dropDoneWriter:
-// it swallows a write that is exactly one `message_delta` or
-// `message_stop` event. The Anthropic loop switches to it after a
-// malformed-tool-call refusal, which ends with its own pair but keeps
-// reading upstream so later tool_use blocks are still gated. A synthetic
-// refusal is written in one Write of several events, so it never matches.
+// dropAnthropicCloseWriter is dropDoneWriter for Anthropic: it swallows
+// a single `message_delta` or `message_stop` event. A synthetic refusal
+// is one Write of several events, so it never matches.
 type dropAnthropicCloseWriter struct {
 	http.ResponseWriter
 }
@@ -906,13 +719,10 @@ func (d dropAnthropicCloseWriter) Write(p []byte) (int, error) {
 	return d.ResponseWriter.Write(p)
 }
 
-// fallbackFailModeRule returns the rule string the streaming
-// orchestrator uses when the wired PolicyCheck returns an error WITHOUT
-// a populated Decision (e.g. test shims). Production code paths get
-// the Decision shaped by gate.go::failModeDecision and never hit this
-// fallback. Kept in sync with FailModeRule* constants in gate.go so
-// the dashboard rule-string contract is identical regardless of which
-// path constructed the refusal.
+// fallbackFailModeRule gives the rule when PolicyCheck returns an error
+// with no Decision (test shims; the wired gate uses failModeDecision).
+// It uses the FailModeRule* constants so the dashboard sees the same
+// rule strings either way.
 func fallbackFailModeRule(failMode string) string {
 	switch strings.ToLower(failMode) {
 	case "fail-closed-with-audit":
@@ -922,9 +732,7 @@ func fallbackFailModeRule(failMode string) string {
 	}
 }
 
-// runAnthropicStreamLoop mirrors runOpenAIStreamLoop for Anthropic.
-// The shape difference is captured inside the accumulator; the loop
-// itself is structurally identical.
+// runAnthropicStreamLoop mirrors runOpenAIStreamLoop.
 func (s *Server) runAnthropicStreamLoop(w http.ResponseWriter, flusher http.Flusher, r *http.Request, body io.Reader) {
 	acc := NewAnthropicAccumulator(hardCappedBufferBytes(s.cfg.MaxBufferBytes))
 	reader := bufio.NewReader(body)
@@ -949,29 +757,20 @@ func (s *Server) runAnthropicStreamLoop(w http.ResponseWriter, flusher http.Flus
 		if len(event) > 0 {
 			result, ferr := acc.FeedEvent(event)
 			if ferr != nil && !result.Completed && !isEOF {
-				// Malformed NON-completion delta — drop and continue
-				// (mirrors the OpenAI loop). A malformed COMPLETION is
-				// handled fail-closed below, never dropped.
+				// As in the OpenAI loop: drop malformed non-completion deltas.
 				continue
 			}
 			switch {
 			case ferr != nil && result.Completed:
-				// F1 (fail-closed): a finalized tool_use cycle with
-				// unparseable input JSON. Deny + audit + reset, then keep
-				// gating the rest of the stream — see denyMalformedAnthropic.
 				s.denyMalformedAnthropic(w, flusher, r, acc, result.CompletedToolCalls)
 				// The refusal ended with its own message_delta and
 				// message_stop; the client must not see upstream's too.
 				w = dropAnthropicCloseWriter{w}
 
 			case result.ProtocolViolation:
-				// SECURITY: the upstream emitted a
-				// structurally unsafe tool_use stream — an interleaved
-				// second tool_use, a start-input conflicting with streamed
-				// deltas, or tool input arriving with no block open. We
-				// cannot gate it without risking an ungated call, so we
-				// fail closed: discard the buffered bytes and emit a
-				// synthetic refusal naming the specific defect.
+				// SECURITY: interleaved tool_use, start input conflicting
+				// with deltas, or input with no block open cannot be gated
+				// safely: discard the buffer and refuse.
 				metrics.IncLLMProxyProtocolViolation("anthropic")
 				decision := protocolViolationDecision("anthropic", result.violation)
 				refusal := s.buildRefusal("anthropic", decision,
@@ -1003,8 +802,7 @@ func (s *Server) runAnthropicStreamLoop(w http.ResponseWriter, flusher http.Flus
 				flusher.Flush()
 
 			case result.Accumulating:
-				// Held in acc.bufferedEvents. The EOF branch below
-				// finalizes them if the stream ends first.
+				// Held; closeAnthropicStreamAtEOF finalizes them.
 			}
 		}
 
@@ -1035,10 +833,7 @@ func (s *Server) gateAndFlushAnthropic(w http.ResponseWriter, flusher http.Flush
 		calls[i].Stream = true
 		decision, err := s.runPolicyCheck(r.Context(), calls[i])
 		if err != nil {
-			// See the OpenAI sibling above for the fail-mode propagation
-			// rationale; we propagate the gate's Decision verbatim and
-			// fall back to a synthesised one only when the test shim
-			// returned a bare error without a Rule-shaped Decision.
+			// Fail-mode handling as in gateAndFlushOpenAI.
 			if s.cfg.FailMode == "allow" {
 				continue
 			}
@@ -1074,13 +869,8 @@ func (s *Server) gateAndFlushAnthropic(w http.ResponseWriter, flusher http.Flush
 	return true
 }
 
-// denyMalformedAnthropic is the Anthropic sibling of denyMalformedOpenAI
-// (see it for the full rationale). It audits the malformed tool_use
-// through the normal PolicyCheck path, emits a fail-closed refusal that
-// rewrites the buffered tool_use's content-block index (captured via
-// acc.ActiveToolUseIndex() BEFORE the reset), flushes, then resets so a
-// later valid tool_use in the same stream is still gated. It does NOT
-// stop reading upstream.
+// denyMalformedAnthropic mirrors denyMalformedOpenAI. The refusal
+// reuses the tool_use's block index, read before the reset.
 func (s *Server) denyMalformedAnthropic(w http.ResponseWriter, flusher http.Flusher, r *http.Request, acc *AnthropicAccumulator, calls []ToolCallCheck) {
 	s.auditMalformedToolCalls(r, calls)
 	var original ToolCallCheck

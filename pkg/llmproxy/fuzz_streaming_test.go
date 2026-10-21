@@ -1,27 +1,14 @@
 package llmproxy
 
-// fuzz_streaming_test.go adds Go native fuzz targets for the two SSE
-// streaming tool-call accumulators (v1.0 item 2, sub-task 2b). These
-// complement the testing/quick property tests in
-// at_openai_property_test.go and at_anthropic_property_test.go, which
-// feed structurally-valid events; the fuzzers instead pound FeedEvent
-// with arbitrary bytes to prove the single robustness invariant that
-// matters on the hot path:
+// Fuzz targets for the two SSE accumulators. Unlike the property tests,
+// which feed structurally valid events, these feed arbitrary bytes:
 //
 //	FeedEvent must never panic and must always return (no hang) on ANY
 //	input.
 //
-// A fresh accumulator is constructed per iteration. The fuzzed []byte
-// is split on the SSE event boundary ("\n\n") so a single seed/mutation
-// exercises a multi-event sequence, then each event is fed in turn. The
-// seed corpus is drawn from the real fixtures under testdata/ plus a
-// handful of hand-written edge cases (empty, [DONE], malformed JSON,
-// bare comment/event lines).
-//
-// NOTE: these are TEST-ONLY additions. If a fuzzer discovers a crash in
-// the parsers (hot-path production code) the crasher is left in place
-// and reported for separate human review — the parsers are NOT patched
-// here.
+// Each input is split on "\n\n" into an event sequence fed to a fresh
+// accumulator. Seeds come from testdata/ fixtures plus hand-written edge
+// cases.
 
 import (
 	"bytes"
@@ -31,20 +18,15 @@ import (
 	"time"
 )
 
-// feedTimeout bounds a single FeedEvent call. json.Unmarshal over
-// arbitrary bytes is bounded (stdlib caps nesting depth), so this is a
-// generous ceiling that only trips on a genuine hang.
+// feedTimeout bounds one FeedEvent call; it only trips on a real hang.
 const feedTimeout = 5 * time.Second
 
-// maxFuzzEventBytes bounds a single event handed to FeedEvent so a
-// pathological seed/mutation cannot make one iteration allocate
-// unreasonable memory. Real SSE events are far smaller.
+// maxFuzzEventBytes bounds one event's size per iteration.
 const maxFuzzEventBytes = 1 << 20 // 1 MiB
 
-// callWithinTimeout runs fn on a watchdog goroutine. A panic raised by
-// fn is recovered and re-raised on the test goroutine so Go's fuzzing
-// engine records the reproducing input as a crasher; if fn does not
-// return within d the test fails (reported as a hang crasher).
+// callWithinTimeout runs fn on a goroutine, re-raising its panic on the
+// test goroutine so the fuzz engine records a crasher, and fails if fn
+// does not return within d.
 func callWithinTimeout(t *testing.T, d time.Duration, desc string, fn func()) {
 	t.Helper()
 	done := make(chan interface{}, 1) // carries the recovered panic value, or nil
@@ -55,8 +37,6 @@ func callWithinTimeout(t *testing.T, d time.Duration, desc string, fn func()) {
 	select {
 	case rec := <-done:
 		if rec != nil {
-			// Re-raise on the fuzz-worker goroutine so the engine
-			// captures it and writes the crasher to testdata/fuzz/.
 			panic(rec)
 		}
 	case <-time.After(d):
@@ -64,11 +44,8 @@ func callWithinTimeout(t *testing.T, d time.Duration, desc string, fn func()) {
 	}
 }
 
-// splitSSEEvents splits a raw SSE stream into per-event byte slices on
-// the blank-line ("\n\n") boundary and re-appends the terminator so the
-// framing each event sees matches what the streaming orchestrator feeds.
-// Empty trailing segments are dropped. If there is no boundary the whole
-// input is returned as one event (exercises the single-event path).
+// splitSSEEvents splits on "\n\n" and re-appends the terminator, as
+// the orchestrator frames events. No boundary yields one event.
 func splitSSEEvents(data []byte) [][]byte {
 	segs := bytes.Split(data, []byte("\n\n"))
 	out := make([][]byte, 0, len(segs))
@@ -82,17 +59,13 @@ func splitSSEEvents(data []byte) [][]byte {
 		out = append(out, ev)
 	}
 	if len(out) == 0 {
-		// All-empty input: still feed one empty event so FeedEvent's
-		// no-data path is exercised.
+		// Exercise the no-data path.
 		return [][]byte{[]byte("\n\n")}
 	}
 	return out
 }
 
-// readSeedFixture returns the bytes of a testdata fixture, or nil if it
-// cannot be read (seeds are best-effort — the hand-written seeds below
-// keep the corpus non-empty regardless). Named distinctly from the
-// existing testing.T-based readFixture helper in streaming_test.go.
+// readSeedFixture returns a testdata fixture, or nil if unreadable.
 func readSeedFixture(name string) []byte {
 	b, err := os.ReadFile(filepath.Join("testdata", name))
 	if err != nil {
@@ -122,9 +95,6 @@ var handWrittenStreamSeeds = [][]byte{
 	[]byte("data: {\"type\":\n data: \"ping\"}\n\n"),
 }
 
-// FuzzAnthropicFeedEvent feeds arbitrary bytes (split into events) to a
-// fresh AnthropicAccumulator. Property: FeedEvent never panics and
-// always returns.
 func FuzzAnthropicFeedEvent(f *testing.F) {
 	for _, name := range []string{
 		"anthropic_streaming_single_tool_use.txt",
@@ -151,17 +121,12 @@ func FuzzAnthropicFeedEvent(f *testing.F) {
 			}
 			ev := ev // capture for closure
 			callWithinTimeout(t, feedTimeout, "AnthropicAccumulator.FeedEvent", func() {
-				// Return value and error are both acceptable outcomes;
-				// only a panic or hang is a failure.
 				_, _ = acc.FeedEvent(ev)
 			})
 		}
 	})
 }
 
-// FuzzOpenAIFeedEvent feeds arbitrary bytes (split into events) to a
-// fresh OpenAIToolCallAccumulator. Property: FeedEvent never panics and
-// always returns.
 func FuzzOpenAIFeedEvent(f *testing.F) {
 	for _, name := range []string{
 		"openai_streaming_single_tool_call.txt",

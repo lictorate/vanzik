@@ -3,13 +3,11 @@ package llmproxy
 // Contract tests for the nil-PolicyCheck behaviour, the llmproxy
 // twin of pkg/mcpgw/policy_hook_contract_test.go.
 //
-// Same posture: these are tripwires, not cages. They pin the current
-// fail-open-when-unwired default and, more importantly, the two guarantees that
-// make it survivable — the allow is identifiable, and the duplicate-JSON-key
-// hard deny fires even with NO hook wired.
-//
-// If a future change makes the unwired server fail closed (the recommended B5
-// direction), these SHOULD fail and be updated alongside a CHANGELOG entry.
+// Tripwires, not cages: they pin the fail-open-when-unwired default and
+// the two guarantees that make it survivable: the allow is identifiable,
+// and the duplicate-JSON-key deny fires even with no hook. Making the
+// unwired server fail closed (the recommended direction) should break
+// them, alongside a CHANGELOG entry.
 
 import (
 	"context"
@@ -80,17 +78,10 @@ func TestRunPolicyCheck_NilHookIsIdentifiable(t *testing.T) {
 	}
 }
 
-// TestRunPolicyCheck_DuplicateKeysDenyEvenWithNilHook is the most important of
-// these. The duplicate-JSON-key refusal is a parser-differential defense (audit
-// H3): the gate projects from a Go map (last-wins) while the ALLOW path replays
-// raw argument bytes, so a first-wins downstream executor would act on a
-// different value than the one gated.
-//
-// It is implemented as a HARD deny placed BEFORE the nil-hook check precisely
-// so it cannot be bypassed by an unwired deployment. Order-dependent
-// guarantees rot silently under refactor, so pin it: if someone moves the nil
-// check above the duplicate-key check, an unwired proxy starts forwarding the
-// exact payload this defense exists to stop.
+// TestRunPolicyCheck_DuplicateKeysDenyEvenWithNilHook: the duplicate-key
+// deny (a parser-differential defense; see argcheck.go) sits before the
+// nil-hook check so an unwired deployment cannot bypass it. Moving the nil
+// check first would let an unwired proxy forward exactly that payload.
 func TestRunPolicyCheck_DuplicateKeysDenyEvenWithNilHook(t *testing.T) {
 	s := hookContractServer(t)
 
@@ -111,10 +102,8 @@ func TestRunPolicyCheck_DuplicateKeysDenyEvenWithNilHook(t *testing.T) {
 	}
 }
 
-// TestRunPolicyCheck_DuplicateKeysDenyOverrideWiredAllow is the companion: the
-// hard deny must also beat a WIRED hook that says allow. It is documented as
-// "fail closed regardless of the wired PolicyCheck", i.e. not subject to
-// --fail-mode allow.
+// TestRunPolicyCheck_DuplicateKeysDenyOverridesWiredAllow: the deny also
+// beats a wired hook that allows, and is not subject to --fail-mode allow.
 func TestRunPolicyCheck_DuplicateKeysDenyOverridesWiredAllow(t *testing.T) {
 	s := hookContractServer(t)
 	s.PolicyCheck = func(ctx context.Context, tc *ToolCallCheck) (Decision, error) {

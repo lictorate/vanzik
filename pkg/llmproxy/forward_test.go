@@ -17,10 +17,8 @@ import (
 	"lictorate.com/vanzik/v2/pkg/metrics"
 )
 
-// TestForward_BodyRoundTripsByteIdentical confirms the proxy's forward
-// path preserves the request body verbatim across a range of sizes.
-// docs/LLM_API_PROXY.md § 3.2 ("Forward the original bytes (not
-// re-encoded JSON ...)").
+// TestForward_BodyRoundTripsByteIdentical: request bodies are forwarded
+// verbatim, never re-encoded (docs/LLM_API_PROXY.md § 3.2).
 func TestForward_BodyRoundTripsByteIdentical(t *testing.T) {
 	sizes := []int{0, 1, 100, 4096, 65536, 256 * 1024}
 	for _, size := range sizes {
@@ -82,9 +80,8 @@ func TestForward_UpstreamErrorPassthrough(t *testing.T) {
 	}
 }
 
-// TestForward_UpstreamUnreachableReturns502 confirms a network failure
-// (upstream URL with no listener) produces 502. The proxy should NOT
-// hang indefinitely.
+// TestForward_UpstreamUnreachableReturns502: an upstream with no
+// listener yields 502 without hanging.
 func TestForward_UpstreamUnreachableReturns502(t *testing.T) {
 	cfg := &Config{
 		Listen:            "127.0.0.1:0",
@@ -121,12 +118,9 @@ func TestForward_UpstreamUnreachableReturns502(t *testing.T) {
 	}
 }
 
-// TestForward_PropagatesRequestContextToUpstream verifies that the
-// proxy's upstream call is built on top of the inbound request's
-// context, so cancellation flows through. We invoke forwardOpenAI
-// directly with a known-cancelled context and assert that the upstream
-// call returns a context error rather than racing on TCP-level
-// disconnect detection (which is platform-dependent and flaky in CI).
+// TestForward_PropagatesRequestContextToUpstream: the upstream call uses
+// the inbound context. A pre-cancelled context is used instead of a TCP
+// disconnect, whose detection is platform-dependent and flaky.
 func TestForward_PropagatesRequestContextToUpstream(t *testing.T) {
 	upstreamHit := make(chan struct{}, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -134,8 +128,6 @@ func TestForward_PropagatesRequestContextToUpstream(t *testing.T) {
 		case upstreamHit <- struct{}{}:
 		default:
 		}
-		// Block until the request context fires (which it will,
-		// because we cancel before issuing the call).
 		<-r.Context().Done()
 	}))
 	defer upstream.Close()
@@ -154,16 +146,11 @@ func TestForward_PropagatesRequestContextToUpstream(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error from pre-cancelled context, got nil")
 	}
-	// Either the explicit ctx.Err() bubbled up, or net/http surfaced
-	// it wrapped. Either is acceptable; the key property is "the
-	// upstream call did not silently succeed."
 	if !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "context canceled") {
 		t.Errorf("expected context.Canceled, got %v", err)
 	}
 }
 
-// TestForward_NoBodyForGET checks /v1/models GET is forwarded with
-// no body and produces no spurious Content-Length confusion.
 func TestForward_NoBodyForGET(t *testing.T) {
 	gotMethod := ""
 	gotBodyLen := -1
@@ -214,13 +201,11 @@ func TestForward_ResponseHeadersFiltered(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	// X-Application should pass through.
 	if resp.Header.Get("X-Application") != "ok" {
 		t.Errorf("X-Application missing")
 	}
-	// Connection header from the upstream should be filtered.
-	// (Go's http client may inject its own Connection header; we
-	// verify the value isn't the upstream's "close" leaked through.)
+	// Go's client may set its own Connection header; only the
+	// upstream's "close" must not leak.
 }
 
 // TestForward_QueryStringPreserved ensures query parameters on the
@@ -248,11 +233,10 @@ func TestForward_QueryStringPreserved(t *testing.T) {
 	}
 }
 
-// ----- F9 (B2) — non-streaming tool_call gating tests -----
+// ----- non-streaming tool_call gating -----
 
-// newGatedTestServer builds a Server pointed at the supplied upstream
-// with a PolicyCheck hook installed for the non-streaming gating tests.
-// Returns the base URL + a teardown func.
+// newGatedTestServer builds a proxy for upstream with the given
+// PolicyCheck hook.
 func newGatedTestServer(
 	t *testing.T,
 	upstreamOpenAI, upstreamAnthropic *httptest.Server,
@@ -267,8 +251,6 @@ func newGatedTestServer(
 	return srv, base, teardown
 }
 
-// makeOpenAIResponse helper: build a non-streaming chat.completion JSON
-// body with the supplied tool_calls.
 func makeOpenAIResponse(t *testing.T, model string, toolCalls []ChatCompletionToolCallEcho) []byte {
 	t.Helper()
 	resp := ChatCompletionResponse{
@@ -294,8 +276,6 @@ func makeOpenAIResponse(t *testing.T, model string, toolCalls []ChatCompletionTo
 	return b
 }
 
-// makeAnthropicResponse helper: build a non-streaming Messages JSON body
-// with the supplied content blocks.
 func makeAnthropicResponse(t *testing.T, model string, content []AnthropicContentBlock) []byte {
 	t.Helper()
 	resp := AnthropicMessagesResponse{
@@ -313,9 +293,6 @@ func makeAnthropicResponse(t *testing.T, model string, content []AnthropicConten
 	return b
 }
 
-// TestForwardChatCompletion_NonStreamingAllowPath_ByteIdentity confirms
-// that when PolicyCheck returns ALLOW for every tool_call the upstream
-// response body reaches the client byte-identical.
 func TestForwardChatCompletion_NonStreamingAllowPath_ByteIdentity(t *testing.T) {
 	upstreamBody := makeOpenAIResponse(t, "gpt-4", nil)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -352,9 +329,6 @@ func TestForwardChatCompletion_NonStreamingAllowPath_ByteIdentity(t *testing.T) 
 	}
 }
 
-// TestForwardChatCompletion_NonStreamingAllowPath_WithToolCall_ByteIdentity
-// confirms a response that DOES contain tool_calls passes through
-// byte-identical when every gate decision is ALLOW.
 func TestForwardChatCompletion_NonStreamingAllowPath_WithToolCall_ByteIdentity(t *testing.T) {
 	upstreamBody := makeOpenAIResponse(t, "gpt-4", []ChatCompletionToolCallEcho{
 		{
@@ -399,9 +373,8 @@ func TestForwardChatCompletion_NonStreamingAllowPath_WithToolCall_ByteIdentity(t
 	}
 }
 
-// TestForwardChatCompletion_NonStreamingDenyPath_RewritesToRefusal
-// confirms a DENY decision rewrites the upstream response into a
-// synthetic refusal that decodes as a valid ChatCompletionResponse.
+// TestForwardChatCompletion_NonStreamingDenyPath_RewritesToRefusal: the
+// refusal decodes as a valid ChatCompletionResponse.
 func TestForwardChatCompletion_NonStreamingDenyPath_RewritesToRefusal(t *testing.T) {
 	upstreamBody := makeOpenAIResponse(t, "gpt-4", []ChatCompletionToolCallEcho{
 		{
@@ -476,16 +449,12 @@ func TestForwardChatCompletion_NonStreamingDenyPath_RewritesToRefusal(t *testing
 	if !strings.Contains(content, "deny:shell:rm_rf") {
 		t.Errorf("refusal content missing rule: %q", content)
 	}
-	// Refusal must echo the original model name so SDKs that index
-	// responses by model see the right value.
+	// SDKs that index responses by model need the original name.
 	if refusal.Model != "gpt-4" {
 		t.Errorf("refusal model = %q, want gpt-4", refusal.Model)
 	}
 }
 
-// TestForwardChatCompletion_NonStreamingApprovalPath_IncludesApprovalURL
-// confirms a REQUIRE_APPROVAL decision surfaces the approval URL +
-// approval_id in the synthetic refusal text.
 func TestForwardChatCompletion_NonStreamingApprovalPath_IncludesApprovalURL(t *testing.T) {
 	upstreamBody := makeOpenAIResponse(t, "gpt-4", []ChatCompletionToolCallEcho{
 		{
@@ -514,8 +483,7 @@ func TestForwardChatCompletion_NonStreamingApprovalPath_IncludesApprovalURL(t *t
 		}, nil
 	})
 	defer teardown()
-	// Wire BuildRefusalRich so the test exercises the operator-grade
-	// refusal builder (the default fallback omits approval fields).
+	// The default builder omits approval fields.
 	srv.BuildRefusal = BuildRefusalRich
 
 	resp, err := http.Post(base+"/v1/chat/completions", "application/json",
@@ -541,9 +509,6 @@ func TestForwardChatCompletion_NonStreamingApprovalPath_IncludesApprovalURL(t *t
 	}
 }
 
-// TestForwardChatCompletion_NonStreamingMultipleToolCalls_AllAllow
-// confirms a response with multiple tool_calls passes through verbatim
-// when every gate decision is ALLOW.
 func TestForwardChatCompletion_NonStreamingMultipleToolCalls_AllAllow(t *testing.T) {
 	upstreamBody := makeOpenAIResponse(t, "gpt-4", []ChatCompletionToolCallEcho{
 		{ID: "call_1", Type: "function", Function: ChatCompletionToolEcho{Name: "read_file", Arguments: `{"path":"/a"}`}},
@@ -579,9 +544,8 @@ func TestForwardChatCompletion_NonStreamingMultipleToolCalls_AllAllow(t *testing
 	}
 }
 
-// TestForwardChatCompletion_NonStreamingMultipleToolCalls_OneDenied
-// confirms that if any tool_call in a multi-call response is denied,
-// the entire response is rewritten — no partial leak of allowed calls.
+// TestForwardChatCompletion_NonStreamingMultipleToolCalls_OneDenied: one
+// denied call replaces the whole response; no allowed call leaks.
 func TestForwardChatCompletion_NonStreamingMultipleToolCalls_OneDenied(t *testing.T) {
 	upstreamBody := makeOpenAIResponse(t, "gpt-4", []ChatCompletionToolCallEcho{
 		{ID: "call_safe_1", Type: "function", Function: ChatCompletionToolEcho{Name: "read_file", Arguments: `{"path":"/a"}`}},
@@ -611,9 +575,7 @@ func TestForwardChatCompletion_NonStreamingMultipleToolCalls_OneDenied(t *testin
 	got, _ := io.ReadAll(resp.Body)
 	gotStr := string(got)
 
-	// None of the upstream tool_call ids may leak — even the safe ones,
-	// because the agent must not see any partial result when the call
-	// is denied.
+	// Not even the allowed calls' ids.
 	for _, id := range []string{"call_safe_1", "call_dangerous", "call_safe_2"} {
 		if strings.Contains(gotStr, id) {
 			t.Errorf("tool_call id %q leaked into refusal: %q", id, gotStr)
@@ -629,9 +591,8 @@ func TestForwardChatCompletion_NonStreamingMultipleToolCalls_OneDenied(t *testin
 	}
 }
 
-// TestForwardChatCompletion_NonStreamingOverflow_BufferLimit confirms
-// upstream responses larger than --max-buffer-bytes are converted to
-// synthetic refusals and the non-streaming overflow metric increments.
+// TestForwardChatCompletion_NonStreamingOverflow_BufferLimit: a response
+// over --max-buffer-bytes becomes a refusal and bumps the overflow metric.
 func TestForwardChatCompletion_NonStreamingOverflow_BufferLimit(t *testing.T) {
 	// Build a response larger than the cap.
 	bigArgs := strings.Repeat("X", 2048)
@@ -678,10 +639,8 @@ func TestForwardChatCompletion_NonStreamingOverflow_BufferLimit(t *testing.T) {
 	}
 }
 
-// TestForwardChatCompletion_NonStreamingMalformedUpstream_PassesThroughVerbatim
-// confirms that when the upstream returns invalid JSON, the proxy does
-// not try to gate — it passes the bytes through unmodified with the
-// upstream's status code.
+// TestForwardChatCompletion_NonStreamingMalformedUpstream_PassesThroughVerbatim:
+// invalid JSON with no tool call passes through with the upstream status.
 func TestForwardChatCompletion_NonStreamingMalformedUpstream_PassesThroughVerbatim(t *testing.T) {
 	upstreamBody := []byte(`{this is not valid json`)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -714,9 +673,6 @@ func TestForwardChatCompletion_NonStreamingMalformedUpstream_PassesThroughVerbat
 	}
 }
 
-// TestForwardAnthropicMessages_NonStreamingDenyPath confirms the
-// Anthropic shape gates tool_use blocks and rewrites to a synthetic
-// AnthropicMessagesResponse.
 func TestForwardAnthropicMessages_NonStreamingDenyPath(t *testing.T) {
 	upstreamBody := makeAnthropicResponse(t, "claude-3-5-sonnet-20241022", []AnthropicContentBlock{
 		{Type: "text", Text: "I'll help with that."},
@@ -799,9 +755,6 @@ func TestForwardAnthropicMessages_NonStreamingDenyPath(t *testing.T) {
 	}
 }
 
-// TestForwardAnthropicMessages_NonStreamingAllowPath_ByteIdentity
-// confirms an Anthropic non-streaming response with ALLOWed tool_use
-// passes through byte-identical.
 func TestForwardAnthropicMessages_NonStreamingAllowPath_ByteIdentity(t *testing.T) {
 	upstreamBody := makeAnthropicResponse(t, "claude-3-5-sonnet-20241022", []AnthropicContentBlock{
 		{
@@ -840,20 +793,16 @@ func TestForwardAnthropicMessages_NonStreamingAllowPath_ByteIdentity(t *testing.
 	}
 }
 
-// makeJSONBody creates a syntactically-valid JSON body of approximately
-// the requested size. Used to test byte-identity over a range of sizes.
+// makeJSONBody returns a valid JSON body of roughly size bytes.
 func makeJSONBody(t *testing.T, size int) []byte {
 	t.Helper()
 	if size == 0 {
-		// Even with zero size we want to produce something that
-		// reads as zero bytes — empty body is fine for the proxy.
 		return []byte{}
 	}
 	prefix := []byte(`{"model":"gpt-4","data":"`)
 	suffix := []byte(`"}`)
 	overhead := len(prefix) + len(suffix)
 	if size <= overhead {
-		// Pad up to a usable minimum.
 		return append(append(append([]byte{}, prefix...), 'x'), suffix...)
 	}
 	fillSize := size - overhead
@@ -861,8 +810,6 @@ func makeJSONBody(t *testing.T, size int) []byte {
 	if _, err := rand.Read(fill); err != nil {
 		t.Fatalf("rand: %v", err)
 	}
-	// Replace with a JSON-safe character (random bytes won't be
-	// JSON-string-valid). Use base32-style digits.
 	for i := range fill {
 		fill[i] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[int(fill[i])%36]
 	}

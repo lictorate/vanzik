@@ -3,22 +3,14 @@ package main
 // wiring_test.go guards the single most consequential line in this binary:
 // `server.PolicyCheck = gate.Check`.
 //
-// A Server with no PolicyCheck wired ALLOWS every tools/call (pkg/mcpgw's
-// nil-safe default, pinned in policy_hook_contract_test.go). That default is
-// fine for library ergonomics and catastrophic in a shipped firewall: the
-// proxy would forward every tool call unevaluated, and the only trace would
-// be an `allow:llm_api_proxy:no_hook` rule string on decisions nobody is reading.
+// A Server with no PolicyCheck ALLOWS every tool call (llmproxy's nil-safe
+// default, pinned in pkg/llmproxy/policy_hook_contract_test.go), leaving
+// only an `allow:llm_api_proxy:no_hook` rule string as a trace. Nothing
+// refuses to serve unwired, so every code path must assign the hook.
 //
-// There is no startup guard that refuses to serve unwired, so the
-// binary's correctness rests entirely on every code path assigning the hook.
-// Until now nothing enforced that — this package had no tests at all.
-//
-// Deliberately a STRUCTURAL test, not a behavioural one: main() is not
-// callable, and extracting it would be a refactor this task has no mandate for.
-// It is written to be permissive about everything that does not matter —
-// variable names, ordering, formatting, added flags, extra branches — and
-// strict about the one thing that does: no path may construct a policy gate
-// without wiring it in.
+// A structural test because main() is not callable: permissive about
+// names, ordering and extra branches, strict that no path constructs a
+// policy gate without wiring it.
 
 import (
 	"go/ast"
@@ -29,13 +21,11 @@ import (
 	"testing"
 )
 
-// gateConstructor is the call that builds the policy gate. If it is ever
-// renamed, these tests fail loudly rather than silently passing on a
-// no-longer-matching name — a rename is a deliberate act and should update
-// this constant with it.
+// gateConstructor builds the policy gate. A rename makes these tests fail
+// loudly; update this constant with it.
 const gateConstructor = "NewHTTPPolicyClient"
 
-// hookField is the Server/Bridge field that must receive the gate.
+// hookField is the Server field that must receive the gate.
 const hookField = "PolicyCheck"
 
 func parseMain(t *testing.T) (*token.FileSet, *ast.File) {
@@ -90,8 +80,7 @@ func countHookAssignments(f *ast.File) int {
 	return n
 }
 
-// TestMain_WiresPolicyCheck is the blunt one: the hook must be assigned at all.
-// Catches outright deletion during a refactor.
+// TestMain_WiresPolicyCheck: the hook is assigned at all.
 func TestMain_WiresPolicyCheck(t *testing.T) {
 	_, f := parseMain(t)
 
@@ -106,17 +95,10 @@ func TestMain_WiresPolicyCheck(t *testing.T) {
 	}
 }
 
-// TestMain_EveryBranchConstructingAGateHasASibling is the invariant that
-// actually catches the realistic regression: someone adds a new mode (a third
-// policy-source branch, a fast-path shortcut) and wires the gate on the path
-// they were thinking about, but not the other.
-//
-// Rule: if any arm of an if/else constructs a policy gate, EVERY arm must —
-// including the final else. An `if` that builds a gate with no `else` at all
-// means the else-path runs gate-less.
-//
-// Permissive by design: it says nothing about which variable holds the gate,
-// what order things happen in, or how many branches exist.
+// TestMain_EveryBranchConstructingAGateHasASibling: if any arm of an
+// if/else constructs a policy gate, every arm must, including the final
+// else. Catches a new branch (another policy source, a shortcut) that
+// builds no gate.
 func TestMain_EveryBranchConstructingAGateHasASibling(t *testing.T) {
 	fset, f := parseMain(t)
 
@@ -175,24 +157,16 @@ func countHookAssignmentsIn(n ast.Node) int {
 	return count
 }
 
-// TestMain_HookWiringIsUniformAcrossGateBranches closes the hole that branch
-// parity alone leaves open.
-//
-// Constructing a gate in every branch is not the invariant — WIRING it is. A
-// branch can build a gate and simply forget to assign it, which is the precise
-// regression this file exists to catch, and construction-parity sails right
-// past it.
-//
-// Two wiring shapes are legitimate and this test permits both:
+// TestMain_HookWiringIsUniformAcrossGateBranches: a branch can build a
+// gate and forget to assign it, which construction parity misses. Two
+// wiring shapes are legitimate:
 //
 //	per-branch  — each arm assigns the hook itself (vanzik-mcp-gateway)
 //	post-branch — arms only build the gate; one assignment follows the if/else
 //	              (this binary)
 //
-// What is NOT legitimate is a mixture: if some gate-building arms wire and
-// others do not, the un-wired arm reaches Run() with a nil hook and silently
-// allows everything. So the rule is all-or-nothing, which stays agnostic about
-// which shape the binary uses while making a half-migration fail loudly.
+// A mixture is not: an arm that builds without wiring reaches Run() with a
+// nil hook and allows everything. So the rule is all-or-nothing.
 func TestMain_HookWiringIsUniformAcrossGateBranches(t *testing.T) {
 	fset, f := parseMain(t)
 

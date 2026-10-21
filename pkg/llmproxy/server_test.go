@@ -16,9 +16,8 @@ import (
 	"lictorate.com/vanzik/v2/pkg/internal/gateclient"
 )
 
-// newTestServer builds a Server pointed at the given upstream test
-// servers. Returns the server and a func that starts it on a random
-// loopback port and a teardown func.
+// newTestServer starts a Server on a random loopback port in front of the
+// given upstreams.
 func newTestServer(t *testing.T, openai, anthropic *httptest.Server, mutators ...func(*Config)) (*Server, string, func()) {
 	t.Helper()
 
@@ -104,12 +103,8 @@ func TestServer_Healthz(t *testing.T) {
 
 // ----- streaming routes to the streaming pipeline -----
 
-// Streaming requests route through pkg/llmproxy/streaming.go which
-// pause/resume/rewrites tool_calls and forwards content deltas byte-
-// identical to the client. Detailed streaming behaviour (byte-identity,
-// deny path, overflow) lives in streaming_test.go; here we only verify
-// the wire-up: the upstream is hit with stream:true and the proxy
-// returns the upstream bytes.
+// Only the wiring is checked here; streaming behaviour is in
+// streaming_test.go.
 func TestServer_StreamingRoutesThroughUpstream(t *testing.T) {
 	upstreamCalled := false
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -316,11 +311,8 @@ func TestServer_PassThroughModels(t *testing.T) {
 
 func TestServer_HopByHopHeadersStripped(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Connection / Keep-Alive / etc. must not propagate.
-		// http.Server may set its own Connection header on the
-		// upstream side, so we only check that ours wasn't
-		// forwarded — i.e., the value "should-be-stripped" doesn't
-		// appear.
+		// Hop-by-hop headers must not propagate. Go may set its own
+		// Connection header, so only our value is checked.
 		if v := r.Header.Get("Keep-Alive"); v != "" {
 			t.Errorf("Keep-Alive forwarded with value %q", v)
 		}
@@ -389,7 +381,6 @@ func TestServer_BodyTooLarge(t *testing.T) {
 	})
 	defer teardown()
 
-	// 512-byte body, more than 256.
 	body := `{"model":"gpt-4","messages":[{"role":"user","content":"` + strings.Repeat("x", 512) + `"}]}`
 	resp, err := http.Post(base+"/v1/chat/completions", "application/json", strings.NewReader(body))
 	if err != nil {
@@ -405,7 +396,6 @@ func TestServer_BodyTooLarge(t *testing.T) {
 
 func TestServer_ProxyAPIKeyAuth(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Should never be called when auth fails.
 		if r.Header.Get(ProxyAuthHeader) != "" {
 			t.Errorf("ProxyAuthHeader leaked to upstream: %q", r.Header.Get(ProxyAuthHeader))
 		}
@@ -476,8 +466,7 @@ func TestServer_ProxyAPIKeyAuth(t *testing.T) {
 	})
 
 	t.Run("healthz-bypasses-auth", func(t *testing.T) {
-		// /healthz must remain reachable without proxy auth so
-		// load balancers and supervisors can probe it.
+		// /healthz needs no proxy auth, so load balancers can probe it.
 		resp, err := http.Get(base + "/healthz")
 		if err != nil {
 			t.Fatalf("get: %v", err)
@@ -492,9 +481,6 @@ func TestServer_ProxyAPIKeyAuth(t *testing.T) {
 // ----- Method-not-allowed (mux pattern fast-fail) -----
 
 func TestServer_GET_OnPostOnlyRoute_404(t *testing.T) {
-	// /v1/chat/completions is registered with method-prefix POST.
-	// A GET should miss the pattern and return 405 (Go 1.22+ mux
-	// returns 405 for known paths with wrong method).
 	_, base, teardown := newTestServer(t, nil, nil)
 	defer teardown()
 
@@ -547,7 +533,6 @@ func TestServer_NewServer_RejectsInvalidURLs(t *testing.T) {
 	}
 }
 
-// Ensure the server's URLs preserve the path prefix when set.
 func TestServer_URLPathJoining(t *testing.T) {
 	if got := joinPath("", "/v1/x"); got != "/v1/x" {
 		t.Errorf("joinPath(\"\", \"/v1/x\") = %q", got)
@@ -566,8 +551,7 @@ func TestServer_URLPathJoining(t *testing.T) {
 	}
 }
 
-// Ensure the server URL with a path prefix routes correctly. Some
-// OpenAI-compatible upstreams (Azure OpenAI, vLLM proxies) insert a
+// Some OpenAI-compatible upstreams (Azure OpenAI, vLLM proxies) use a
 // path prefix.
 func TestServer_UpstreamWithPathPrefix(t *testing.T) {
 	gotPath := ""
@@ -616,8 +600,6 @@ func TestServer_UpstreamWithPathPrefix(t *testing.T) {
 	}
 }
 
-// Sanity-check that the test server's URL parsing is compatible with
-// our Validate() rules.
 func TestServer_TestServerURLValidates(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -626,7 +608,6 @@ func TestServer_TestServerURLValidates(t *testing.T) {
 	if err := gateclient.ValidateBaseURL("--upstream-openai", upstream.URL); err != nil {
 		t.Errorf("ValidateBaseURL: %v", err)
 	}
-	// And the parsed URL should have a host and scheme.
 	u, _ := url.Parse(upstream.URL)
 	if u.Host == "" || u.Scheme == "" {
 		t.Errorf("test upstream URL missing host/scheme: %v", u)

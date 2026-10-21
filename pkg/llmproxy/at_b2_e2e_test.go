@@ -1,17 +1,8 @@
 package llmproxy
 
-// at_b2_e2e_test.go — AT (Test Wrangler) audit-fixup verification.
-//
-// F9 closed audit blocker B2 by wiring non-streaming /v1/chat/completions
-// and /v1/messages to inspect responses for tool_calls/tool_use, gate
-// each through the policy hook, and replace the response with a synthetic
-// refusal on non-ALLOW. F9's tests use a direct PolicyCheck stub. AT
-// adds full-stack E2E that drives the proxy server with the production
-// HTTPPolicyClient pointed at a mock central server (so every layer of
-// /v1/check wire shape, transport tag, and audit instrumentation flows
-// through the seam where the bug originally lived). Only the central
-// server itself is mocked at the /v1/check seam (the only allowed mock,
-// since the central server is not the SUT here).
+// Full-stack tests of non-streaming tool-call gating: the real proxy and
+// production HTTPPolicyClient, with only the central server's /v1/check
+// mocked, so the wire shape and transport tag are exercised end to end.
 
 import (
 	"bytes"
@@ -29,10 +20,8 @@ import (
 	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
-// atCentralRecorder is a minimal mock of the Vanzik central server's
-// /v1/check endpoint used by AT's full-stack tests. It records every
-// ActionRequest the proxy POSTs and lets the test pick a CheckResult to
-// return per request.
+// atCentralRecorder mocks the central /v1/check: it records every
+// ActionRequest and returns a test-chosen CheckResult.
 type atCentralRecorder struct {
 	srv      *httptest.Server
 	mu       sync.Mutex
@@ -46,9 +35,8 @@ func newATCentralRecorder(t *testing.T, respond func(policy.ActionRequest) polic
 	rec := &atCentralRecorder{respond: respond}
 	rec.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec.calls.Add(1)
-		// Accept both legacy /v1/check and tenant-aware /v1/t/{tenant}/check
-		// shapes the proxy might emit (HTTPPolicyClient uses the tenant-
-		// aware shape per A24).
+		// Accept both /v1/check and the tenant-scoped
+		// /v1/t/{tenant}/check.
 		if r.Method != http.MethodPost {
 			http.Error(w, "method", http.StatusMethodNotAllowed)
 			return
@@ -80,11 +68,8 @@ func (r *atCentralRecorder) Requests() []policy.ActionRequest {
 	return out
 }
 
-// newATFullStackProxy stands up a real LLM proxy Server (via
-// newTestServer) wired to the production HTTPPolicyClient pointed at
-// the supplied central recorder. This exercises the full stack:
-// upstream → forwardChatCompletion / forwardWithToolCallGating →
-// HTTPPolicyClient.Check → mock central → refusal builder → client.
+// newATFullStackProxy wires a real Server to the production
+// HTTPPolicyClient pointed at central.
 func newATFullStackProxy(
 	t *testing.T,
 	upstreamOpenAI *httptest.Server,
@@ -105,12 +90,9 @@ func newATFullStackProxy(
 	return base, teardown
 }
 
-// TestAT_B2_NonStreamingFullServer_AllowPath drives a non-streaming
-// /v1/chat/completions through the full proxy. Upstream returns a
-// tool_call response; central returns ALLOW. The client must receive
-// the byte-identical upstream body (B2's invariant: ALLOW path is a
-// pass-through). The central recorder must show exactly one /v1/check
-// request with transport=llm_api_proxy.
+// TestAT_B2_NonStreamingFullServer_AllowPath: on ALLOW the client gets the
+// upstream body byte-identical, after exactly one /v1/check with
+// transport=llm_api_proxy.
 func TestAT_B2_NonStreamingFullServer_AllowPath(t *testing.T) {
 	upstreamBody := makeOpenAIResponse(t, "gpt-4", []ChatCompletionToolCallEcho{
 		{
@@ -171,11 +153,9 @@ func TestAT_B2_NonStreamingFullServer_AllowPath(t *testing.T) {
 	}
 }
 
-// TestAT_B2_NonStreamingFullServer_DenyPath drives a non-streaming
-// chat completion through the full proxy with the central returning
-// DENY. The client must receive a synthetic refusal whose
-// chat.completion shape decodes correctly and whose content carries
-// the rule string. No upstream tool_call id or arguments may leak.
+// TestAT_B2_NonStreamingFullServer_DenyPath: the refusal decodes as a
+// chat.completion carrying the rule; no upstream tool_call id or
+// arguments leak.
 func TestAT_B2_NonStreamingFullServer_DenyPath(t *testing.T) {
 	upstreamBody := makeOpenAIResponse(t, "gpt-4", []ChatCompletionToolCallEcho{
 		{
@@ -250,11 +230,8 @@ func TestAT_B2_NonStreamingFullServer_DenyPath(t *testing.T) {
 	}
 }
 
-// TestAT_B2_NonStreamingFullServer_ApprovalPath drives a non-streaming
-// chat completion through the full proxy with the central returning
-// REQUIRE_APPROVAL. The client refusal must include the approval URL
-// and approval id so an SDK observing the response can prompt the
-// human to approve.
+// TestAT_B2_NonStreamingFullServer_ApprovalPath: the refusal includes the
+// approval URL and approval id.
 func TestAT_B2_NonStreamingFullServer_ApprovalPath(t *testing.T) {
 	upstreamBody := makeOpenAIResponse(t, "gpt-4", []ChatCompletionToolCallEcho{
 		{
@@ -307,17 +284,10 @@ func TestAT_B2_NonStreamingFullServer_ApprovalPath(t *testing.T) {
 	}
 }
 
-// TestAT_B2_NonStreamingFullServer_MaxConcurrentStreams_DoesNotLimitNonStreaming
-// asserts that F6's --max-concurrent-streams cap (R-Sec H3) does NOT
-// apply to the non-streaming path. The non-streaming code path
-// (forwardChatCompletion → forwardWithToolCallGating) does not call
-// admitStream / releaseStream. Setting the cap to 2 and firing 25
-// concurrent non-streaming requests must let all 25 succeed.
-//
-// This guards against a future regression where someone adds the
-// admission gate to the non-streaming forwarder by mistake (it would
-// fix nothing — non-streaming buffer ceilings are bounded per request
-// — and would silently throttle batch-eval workloads).
+// TestAT_B2_NonStreamingFullServer_MaxConcurrentStreams_DoesNotLimitNonStreaming:
+// --max-concurrent-streams must not apply to non-streaming requests. Their
+// memory is already bounded per request, and the cap would only throttle
+// batch-eval workloads.
 func TestAT_B2_NonStreamingFullServer_MaxConcurrentStreams_DoesNotLimitNonStreaming(t *testing.T) {
 	upstreamBody := makeOpenAIResponse(t, "gpt-4", nil) // No tool_calls; ALLOW shouldn't even fire central
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

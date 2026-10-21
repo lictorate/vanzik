@@ -1,8 +1,6 @@
 package llmproxy
 
-// security_audit_test.go holds regression tests for the 2026-06 internal
-// security audit findings (docs/audit/2026-06-INTERNAL-AUDIT.md). Each test
-// fails against the pre-fix code and passes after the corresponding fix.
+// Parser-differential and gate-bypass cases in the streaming parsers.
 
 import (
 	"context"
@@ -15,16 +13,9 @@ import (
 	"lictorate.com/vanzik/v2/pkg/metrics"
 )
 
-// H1: an Anthropic stream that opens a SECOND tool_use content block before
-// closing the first must not let the second block reach the client ungated.
-//
-// Pre-fix: the accumulator only gates the first (active) tool_use; on ALLOW
-// the orchestrator flushes all buffered bytes (including the second block's
-// start) and Reset()s, after which the second block's remaining deltas/stop
-// pass through ungated. So the denied `bash` call's bytes reach the client.
-//
-// Post-fix: the second tool_use start signals a ProtocolViolation and the
-// whole stream is refused fail-closed — the client never sees `bash`.
+// An Anthropic stream that opens a second tool_use before closing the
+// first is refused whole. Gating only the first would flush the second's
+// start on ALLOW, and its remaining deltas would pass ungated after Reset.
 func TestAudit_H1_AnthropicInterleavedToolUse_DoesNotBypassGate(t *testing.T) {
 	// Interleaved: tool_use idx0 (read_file) opens and gets a delta, THEN
 	// tool_use idx1 (bash) opens before idx0 closes.
@@ -56,8 +47,7 @@ func TestAudit_H1_AnthropicInterleavedToolUse_DoesNotBypassGate(t *testing.T) {
 
 	base, teardown := newStreamingTestServer(t, upstream, func(s *Server) {
 		s.PolicyCheck = func(ctx context.Context, tc *ToolCallCheck) (Decision, error) {
-			// read_file is fine; bash is denied. The whole point is that
-			// bash must never reach the client.
+			// bash is denied and must never reach the client.
 			if tc.ToolName == "bash" {
 				return Decision{Allow: false, Reason: "shell denied", Rule: "deny:shell"}, nil
 			}
@@ -92,16 +82,9 @@ func TestAudit_H1_AnthropicInterleavedToolUse_DoesNotBypassGate(t *testing.T) {
 	}
 }
 
-// H2: an Anthropic tool_use whose real arguments are delivered in the
-// content_block_start.input field (with no input_json_delta) must be gated on
-// those arguments, not on an empty {}.
-//
-// Pre-fix: the parser discarded content_block.input and accumulated only
-// input_json_delta fragments; with none present the gate saw "{}" → ALLOW,
-// while the client executed the real (start-provided) arguments.
-//
-// Post-fix: the start input seeds the buffer, so the gate evaluates the real
-// arguments and the deny fires.
+// A tool_use whose real arguments arrive in content_block_start.input,
+// with no input_json_delta, is gated on those arguments, which the client
+// executes, not on an empty {}.
 func TestAudit_H2_AnthropicStartInputGated(t *testing.T) {
 	// Real dangerous args live in the start block's `input`; NO delta follows.
 	const startOnly = "event: message_start\n" +
@@ -156,9 +139,8 @@ func TestAudit_H2_AnthropicStartInputGated(t *testing.T) {
 	}
 }
 
-// H2 negative: a conformant stream (start input == {}, args via deltas) must
-// still be gated exactly as before — start-seeding must not change the
-// common-case behavior or the ALLOW-path byte identity.
+// A conformant stream (start input {}, arguments via deltas) is gated on
+// the deltas and replayed byte-identical on ALLOW.
 func TestAudit_H2_ConformantStreamStillGatesViaDeltas(t *testing.T) {
 	const conformant = "event: content_block_start\n" +
 		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_c","name":"bash","input":{}}}` + "\n\n" +
@@ -197,14 +179,9 @@ func TestAudit_H2_ConformantStreamStillGatesViaDeltas(t *testing.T) {
 	}
 }
 
-// H3: tool-call arguments containing duplicate JSON keys must be refused
-// fail-closed. Go decodes them last-wins into the map the gate projects from,
-// but the raw bytes replayed on ALLOW could be parsed first-wins by a
-// downstream executor — a parser-differential bypass.
-//
-// Pre-fix: the gate evaluates path="/tmp/ok" (last-wins) → ALLOW → the raw
-// tool_call (carrying both keys) is replayed to the client.
-// Post-fix: runPolicyCheck rejects the duplicate-key arguments before policy.
+// Arguments with duplicate JSON keys are refused before policy: the gate
+// would evaluate the last value while a first-wins executor runs the
+// first.
 func TestAudit_H3_DuplicateKeyArguments_Refused(t *testing.T) {
 	// arguments string has the key "path" twice.
 	const dupKeyStream = `data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_dup","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"/etc/shadow\",\"path\":\"/tmp/ok\"}"}}]},"finish_reason":null}]}` + "\n\n" +
@@ -248,8 +225,7 @@ func TestAudit_H3_DuplicateKeyArguments_Refused(t *testing.T) {
 	}
 }
 
-// H3 unit: the detector must catch duplicates at any nesting depth and not
-// false-positive on legitimate JSON.
+// The detector catches duplicates at any depth without false positives.
 func TestAudit_H3_hasDuplicateJSONKeys(t *testing.T) {
 	cases := []struct {
 		name string
@@ -274,9 +250,8 @@ func TestAudit_H3_hasDuplicateJSONKeys(t *testing.T) {
 	}
 }
 
-// M1: the OpenAI accumulator must take the FIRST function name across
-// fragments for a given tool_calls index, matching a spec-conformant
-// (first-wins) client, not the last.
+// The OpenAI accumulator keeps the first function name for an index, as
+// first-wins clients do.
 func TestAudit_M1_OpenAIToolNameFirstWins(t *testing.T) {
 	acc := NewOpenAIToolCallAccumulator(0)
 
@@ -284,7 +259,6 @@ func TestAudit_M1_OpenAIToolNameFirstWins(t *testing.T) {
 	ev1 := []byte(`data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{}"}}]},"finish_reason":null}]}` + "\n\n")
 	// Fragment 2: a SECOND, different name "bash" for the same index.
 	ev2 := []byte(`data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"bash"}}]},"finish_reason":null}]}` + "\n\n")
-	// Finish.
 	ev3 := []byte(`data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n")
 
 	if _, err := acc.FeedEvent(ev1); err != nil {

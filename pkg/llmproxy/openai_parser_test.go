@@ -11,10 +11,8 @@ import (
 	"testing"
 )
 
-// readFixtureEvents reads an SSE fixture file and returns one byte
-// slice per complete event (each entry ends with the blank-line
-// terminator "\n"). Mirrors how the streaming orchestrator chunks the
-// stream so parser tests exercise the same input shape as production.
+// readFixtureEvents returns a fixture's events, each with its blank-line
+// terminator, as the orchestrator chunks them.
 func readFixtureEvents(t *testing.T, name string) [][]byte {
 	t.Helper()
 	path := filepath.Join("testdata", name)
@@ -43,8 +41,7 @@ func readFixtureEvents(t *testing.T, name string) [][]byte {
 	}
 }
 
-// stripCommentEvents drops SSE events that are pure ":..." comment
-// lines (used to embed provenance metadata in fixtures).
+// stripCommentEvents drops ":..." comment events (fixture provenance).
 func stripCommentEvents(events [][]byte) [][]byte {
 	out := make([][]byte, 0, len(events))
 	for _, ev := range events {
@@ -116,10 +113,8 @@ func TestOpenAIParser_SingleToolCallAccumulates(t *testing.T) {
 	if cmd, _ := completed[0].Arguments["cmd"].(string); cmd != "ls -la" {
 		t.Errorf("args.cmd = %v, want ls -la", completed[0].Arguments["cmd"])
 	}
-	// Buffered events should include the role-set event at the start
-	// (which arrived BEFORE the first tool_call delta) — wait, it
-	// doesn't: the role event is content-only and passes through. Only
-	// from the first tool_call delta do events buffer.
+	// Buffering starts at the first tool_call delta; the earlier role
+	// event passed through.
 	if len(acc.BufferedEvents()) == 0 {
 		t.Errorf("BufferedEvents = 0, want > 0 (tool_call deltas + finish_reason)")
 	}
@@ -215,12 +210,9 @@ func TestOpenAIParser_ContentBeforeToolCall(t *testing.T) {
 			completedCount++
 		}
 	}
-	// Two text deltas + final [DONE] = 3 pass-through (note: [DONE]
-	// after a tool_call buffer flush is technically passthrough only
-	// when not active; the orchestrator flushes the buffer on
-	// Completed and resets, so [DONE] then passes through).
-	// Two tool_call deltas (first carries the name, second carries
-	// finish_reason) = 1 accumulating + 1 completed.
+	// The two text deltas pass through ([DONE] would too after the
+	// orchestrator's Reset); the two tool_call deltas give one
+	// Accumulating and one Completed.
 	if passThroughCount < 2 {
 		t.Errorf("PassThrough count = %d, want >= 2", passThroughCount)
 	}
@@ -245,12 +237,10 @@ func TestOpenAIParser_DoneTerminatorWhileIdle(t *testing.T) {
 	}
 }
 
-// TestOpenAIParser_ArgsAndFinishReasonInSameEvent_AssemblesCorrectly pins
-// the fix for audit blocker B3: when an event carries BOTH the closing
-// argument fragment AND finish_reason: "tool_calls" in a single envelope,
-// the parser MUST apply the fragment to the accumulator BEFORE deciding
-// completion. Otherwise the assembled arguments string would lose its
-// final fragment and PolicyCheck would see truncated arguments.
+// TestOpenAIParser_ArgsAndFinishReasonInSameEvent_AssemblesCorrectly: an
+// event carrying both the closing fragment and finish_reason must apply
+// the fragment before completing, or PolicyCheck sees truncated
+// arguments.
 func TestOpenAIParser_ArgsAndFinishReasonInSameEvent_AssemblesCorrectly(t *testing.T) {
 	events := stripCommentEvents(readFixtureEvents(t, "openai_streaming_args_and_finish_in_one_event.txt"))
 	acc := NewOpenAIToolCallAccumulator(0)
@@ -284,11 +274,9 @@ func TestOpenAIParser_ArgsAndFinishReasonInSameEvent_AssemblesCorrectly(t *testi
 	}
 }
 
-// TestOpenAIParser_ArgsAndFinishReasonInSameEvent_FiresCompletion pins
-// that Completed is signalled exactly once after the bundling event,
-// rather than the accumulator silently dropping the cycle (the original
-// B3 bug shape: Accumulating returned, never closed, [DONE] consumed
-// while still active, EOF reached without ever firing the gate).
+// TestOpenAIParser_ArgsAndFinishReasonInSameEvent_FiresCompletion:
+// Completed is signalled exactly once after the bundled event, so the
+// gate fires instead of the cycle staying open to EOF.
 func TestOpenAIParser_ArgsAndFinishReasonInSameEvent_FiresCompletion(t *testing.T) {
 	events := stripCommentEvents(readFixtureEvents(t, "openai_streaming_args_and_finish_in_one_event.txt"))
 	acc := NewOpenAIToolCallAccumulator(0)

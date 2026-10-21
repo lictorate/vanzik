@@ -1,20 +1,10 @@
 package llmproxy
 
-// Audit B6: a non-streaming upstream body that fails strict decode but
-// still carries a tool call must be refused, not forwarded ungated.
-//
-// The gap being closed: encoding/json aborts on a type-mismatched field
-// the target struct declares, while a lenient client SDK ignores that
-// field and executes the tool_calls sitting beside it. So the proxy's
-// "I can't decode this, pass it through untouched" rule handed the agent
-// a call the firewall never evaluated.
-//
-// The pre-existing contract is deliberately preserved and re-asserted
-// here: a body with NO tool call still passes through verbatim with the
-// policy hook untouched. This change narrows the passthrough, it does not
-// reverse it — which is why
-// TestForwardChatCompletion_NonStreamingMalformedUpstream_PassesThroughVerbatim
-// still passes unmodified.
+// A non-streaming body that fails strict decode but still carries a tool
+// call must be refused, not forwarded ungated: encoding/json aborts on a
+// type-mismatched field that a lenient client SDK ignores while executing
+// the tool call beside it. An undecodable body with no tool call still
+// passes through verbatim, with the policy hook untouched.
 
 import (
 	"bytes"
@@ -68,13 +58,9 @@ const shimBodyOpenAI = `{
 // Same idea for Anthropic: stop_reason arrives as a number instead of a
 // string, tool_use block intact.
 //
-// Note it must be a genuine TYPE MISMATCH, not null. encoding/json treats
-// a JSON null as a no-op for a non-pointer field — it leaves the zero
-// value in place and returns no error — so a nulled field decodes fine
-// and does not reproduce B6 at all. Only a value of the wrong type aborts
-// the decode. TestProbeSucceedsWhereStrictDecodeFails guards this
-// distinction, and caught exactly this mistake in an earlier draft of
-// this fixture.
+// It must be a type mismatch, not null: encoding/json leaves the zero
+// value for a null and returns no error, so the body would decode.
+// TestProbeSucceedsWhereStrictDecodeFails guards this.
 const shimBodyAnthropic = `{
   "id": "msg_shim",
   "type": "message",
@@ -134,21 +120,16 @@ func TestNonStreaming_UndecodableBodyWithToolCall_IsRefused(t *testing.T) {
 	if got := metrics.LLMProxyUndecodableToolCallFor("openai") - before; got != 1 {
 		t.Errorf("undecodable-tool-call counter moved by %d, want 1 (operators must be able to see these)", got)
 	}
-	// The hook fires exactly once, and NOT to decide anything — the body
-	// did not decode, so there is no tool call to evaluate. It runs to
-	// drive the audit trail, the nil-RecordForcedAudit fallback that
-	// auditDeniedToolCalls documents. Its verdict is ignored, which
-	// TestNonStreaming_UndecodableToolCall_RefusedEvenWhenPolicyWouldAllow
-	// proves: this hook returns Allow and the response is still a refusal.
+	// The hook fires once, only for the audit entry (nil
+	// RecordForcedAudit fallback); its verdict is ignored.
 	if hookCalls.Load() != 1 {
 		t.Errorf("PolicyCheck fired %d times; want 1 (the audit-trail fallback)", hookCalls.Load())
 	}
 }
 
-// A B6 refusal must never be silent. The llmproxy's metrics registry has
-// no scrape endpoint, so the audit trail is the only place an operator
-// can see that a call was refused — the same reasoning that made F1 wire
-// RecordForcedAudit for malformed streaming completions.
+// The refusal must be audited: the proxy's metrics registry has no
+// scrape endpoint, so the audit trail is the only place an operator sees
+// it.
 func TestNonStreaming_UndecodableToolCall_IsAudited(t *testing.T) {
 	upstream := upstreamServing(t, shimBodyOpenAI)
 	srv, base, teardown := newGatedTestServer(t, upstream, nil, func(ctx context.Context, tc *ToolCallCheck) (Decision, error) {
@@ -178,8 +159,8 @@ func TestNonStreaming_UndecodableToolCall_IsAudited(t *testing.T) {
 	if len(recorded) != 1 {
 		t.Fatalf("RecordForcedAudit called %d times, want 1 — a refusal with no audit entry is invisible", len(recorded))
 	}
-	// The entry must carry the DENY the client received, not a policy
-	// verdict (the F1/C3 fidelity rule).
+	// The entry carries the DENY the client received, not a policy
+	// verdict.
 	if recorded[0].Allow {
 		t.Error("audited decision must be the forced DENY")
 	}
@@ -231,10 +212,9 @@ func TestNonStreaming_UndecodableBodyWithToolUse_IsRefused_Anthropic(t *testing.
 	}
 }
 
-// The refusal is unconditional: --fail-mode allow governs "the guard is
-// unreachable", not "the guard cannot see what the client will execute".
-// Honouring it here would reopen the bypass, so it must not apply —
-// matching the duplicate-JSON-key hard deny in streaming.go.
+// --fail-mode allow covers an unreachable guard, not a guard that cannot
+// see what the client will execute, so it must not apply here (like the
+// duplicate-JSON-key deny).
 func TestNonStreaming_UndecodableToolCall_IgnoresFailModeAllow(t *testing.T) {
 	upstream := upstreamServing(t, shimBodyOpenAI)
 	srv, base, teardown := newGatedTestServer(t, upstream, nil,
@@ -257,10 +237,8 @@ func TestNonStreaming_UndecodableToolCall_IgnoresFailModeAllow(t *testing.T) {
 	}
 }
 
-// A tool call the policy WOULD have allowed is still refused. The
-// refusal is about not being able to gate reliably, not about the
-// verdict — a body we cannot parse is a body whose arguments we cannot
-// trust ourselves to have read the same way the client will.
+// A tool call the policy would allow is still refused: the proxy cannot
+// be sure it read the arguments the way the client will.
 func TestNonStreaming_UndecodableToolCall_RefusedEvenWhenPolicyWouldAllow(t *testing.T) {
 	body := strings.Replace(shimBodyOpenAI, `{\"command\":\"rm -rf /\"}`, `{\"command\":\"ls -la\"}`, 1)
 	upstream := upstreamServing(t, body)
@@ -282,10 +260,8 @@ func TestNonStreaming_UndecodableToolCall_RefusedEvenWhenPolicyWouldAllow(t *tes
 	}
 }
 
-// The counterweight, and the reason this change is a narrowing rather
-// than a reversal: an undecodable body with NO tool call keeps its
-// verbatim passthrough, the policy hook stays untouched, and the counter
-// does not move.
+// An undecodable body with no tool call passes through verbatim; no hook
+// call, no counter change.
 func TestNonStreaming_UndecodableBodyWithoutToolCall_StillPassesThrough(t *testing.T) {
 	cases := []struct {
 		name string
@@ -329,8 +305,7 @@ func TestNonStreaming_UndecodableBodyWithoutToolCall_StillPassesThrough(t *testi
 	}
 }
 
-// A body that decodes cleanly must never reach the probe. This is the
-// latency guarantee in test form: the success path is untouched.
+// A body that decodes cleanly never reaches the probe.
 func TestNonStreaming_WellFormedBodyIsUnaffected(t *testing.T) {
 	upstreamBody := makeOpenAIResponse(t, "gpt-4", []ChatCompletionToolCallEcho{{
 		ID: "call_ok", Type: "function",
@@ -395,9 +370,8 @@ func TestHasLenientToolCall(t *testing.T) {
 	}
 }
 
-// The probe must succeed on exactly the bodies the strict decoder
-// rejects — that divergence is the entire bug. If both agreed there
-// would be nothing to fix, so pin it.
+// The probe must succeed on bodies the strict decoder rejects; that
+// divergence is what the refusal exists for.
 func TestProbeSucceedsWhereStrictDecodeFails(t *testing.T) {
 	var strict ChatCompletionResponse
 	if err := json.Unmarshal([]byte(shimBodyOpenAI), &strict); err == nil {

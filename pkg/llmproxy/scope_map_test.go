@@ -1,19 +1,8 @@
 package llmproxy
 
-// Tests for the LLM API Proxy's tool-name → scope mapping. Pins:
-//   1. Default-map coverage for each scope category (shell, fs,
-//      network, browser).
-//   2. The browser glob pattern (`playwright_*` etc.) actually
-//      matches concrete tool names a real model might emit.
-//   3. Unmapped tool names return UnmappedScope so the policy
-//      engine can fail closed.
-//   4. Operator entries beat defaults on collision (the spec calls
-//      this out as the central correctness invariant).
-//   5. NewLLMToolScopeMap handles nil/empty operator policy without
-//      surprising the caller.
-//
-// These tests are independent of A24's gate wiring — they exercise
-// the pure mapping layer A23 owns.
+// Tool-name to scope mapping: default coverage per scope, browser globs,
+// UnmappedScope for unknown names, operator entries beating defaults, and
+// nil/empty policies.
 
 import (
 	"testing"
@@ -96,10 +85,6 @@ func TestMapLLMToolScope_NetworkTools(t *testing.T) {
 }
 
 func TestMapLLMToolScope_BrowserGlob(t *testing.T) {
-	// Browser-family tool names tend to be prefix-shaped
-	// (`playwright_click`, `browser_navigate`); the default map
-	// uses `<family>_*` glob patterns, and we pin that the matcher
-	// resolves them correctly through MapLLMToolScope.
 	cases := []struct {
 		tool string
 		want string
@@ -130,8 +115,7 @@ func TestMapLLMToolScope_Unmapped(t *testing.T) {
 		"unknown_tool",
 		"my_company_internal_thing",
 		"random_function",
-		// MCP-shaped names should NOT match the bare LLM defaults
-		// (the namespace prefix prevents accidental matching).
+		// Namespaced MCP names must not match the bare defaults.
 		"fs:read_file",
 		"github:create_issue",
 	}
@@ -164,11 +148,7 @@ func TestMapLLMToolScope_EmptyMappings(t *testing.T) {
 }
 
 func TestMapLLMToolScope_OperatorOverride(t *testing.T) {
-	// Operator policy maps `read_file` → `data` (e.g. an LLM that
-	// embeds PII into "read_file" requests because it's actually a
-	// document fetcher). The default map says `read_file` →
-	// `filesystem`. The merged-list semantics mandate that the
-	// operator wins.
+	// The operator remaps `read_file` (default filesystem) to data.
 	pol := &policy.Policy{
 		ToolScopeMap: []policy.ToolScopeMapping{
 			{Pattern: "read_file", Scope: "data"},
@@ -180,16 +160,12 @@ func TestMapLLMToolScope_OperatorOverride(t *testing.T) {
 		t.Errorf("operator override: MapLLMToolScope(read_file) = %q, want data", got)
 	}
 
-	// Default `bash` mapping still resolves to shell — operator
-	// override doesn't blank out the rest of the map.
 	if got := MapLLMToolScope("bash", mappings); got != "shell" {
 		t.Errorf("default fallthrough after override: MapLLMToolScope(bash) = %q, want shell", got)
 	}
 }
 
 func TestMapLLMToolScope_OperatorAddsNewTool(t *testing.T) {
-	// Operator adds a tool name that's not in the default map.
-	// Verify it resolves and that defaults still work.
 	pol := &policy.Policy{
 		ToolScopeMap: []policy.ToolScopeMapping{
 			{Pattern: "deploy_to_prod", Scope: "shell"},
@@ -204,7 +180,6 @@ func TestMapLLMToolScope_OperatorAddsNewTool(t *testing.T) {
 	if got := MapLLMToolScope("send_email", mappings); got != "network" {
 		t.Errorf("operator-added tool: send_email = %q, want network", got)
 	}
-	// Defaults are still active.
 	if got := MapLLMToolScope("read_file", mappings); got != "filesystem" {
 		t.Errorf("default after operator-add: read_file = %q, want filesystem", got)
 	}
@@ -212,11 +187,9 @@ func TestMapLLMToolScope_OperatorAddsNewTool(t *testing.T) {
 
 func TestNewLLMToolScopeMap_NilPolicy(t *testing.T) {
 	got := NewLLMToolScopeMap(nil)
-	// nil policy returns the default map directly (no allocation).
 	if len(got) != len(DefaultLLMToolScopeMap) {
 		t.Fatalf("nil policy: got %d entries, want %d", len(got), len(DefaultLLMToolScopeMap))
 	}
-	// Sanity-check: same first entry as the default.
 	if got[0].Pattern != DefaultLLMToolScopeMap[0].Pattern {
 		t.Errorf("nil policy: first entry pattern = %q, want %q",
 			got[0].Pattern, DefaultLLMToolScopeMap[0].Pattern)
@@ -224,8 +197,6 @@ func TestNewLLMToolScopeMap_NilPolicy(t *testing.T) {
 }
 
 func TestNewLLMToolScopeMap_EmptyPolicyMap(t *testing.T) {
-	// An operator policy with no tool_scope_map: section is identical
-	// to nil for our purposes — we want the bare defaults.
 	pol := &policy.Policy{Version: "1", Name: "x"}
 	got := NewLLMToolScopeMap(pol)
 	if len(got) != len(DefaultLLMToolScopeMap) {
@@ -235,9 +206,7 @@ func TestNewLLMToolScopeMap_EmptyPolicyMap(t *testing.T) {
 }
 
 func TestNewLLMToolScopeMap_MergeOrder(t *testing.T) {
-	// Operator entries MUST appear before defaults in the merged
-	// list — that's how first-match-wins gives the operator the
-	// override. This is the central invariant of the merge.
+	// Operator entries come first, so first-match-wins favors them.
 	pol := &policy.Policy{
 		ToolScopeMap: []policy.ToolScopeMapping{
 			{Pattern: "read_file", Scope: "data"},
@@ -246,21 +215,17 @@ func TestNewLLMToolScopeMap_MergeOrder(t *testing.T) {
 	}
 	got := NewLLMToolScopeMap(pol)
 
-	// Length: operator (2) + defaults (everything in
-	// DefaultLLMToolScopeMap).
 	wantLen := 2 + len(DefaultLLMToolScopeMap)
 	if len(got) != wantLen {
 		t.Fatalf("merged length = %d, want %d", len(got), wantLen)
 	}
 
-	// First two entries are the operator's, in order.
 	if got[0].Pattern != "read_file" || got[0].Scope != "data" {
 		t.Errorf("got[0] = %+v, want {read_file data}", got[0])
 	}
 	if got[1].Pattern != "custom_tool" || got[1].Scope != "shell" {
 		t.Errorf("got[1] = %+v, want {custom_tool shell}", got[1])
 	}
-	// Third entry is the first default ("bash"/shell).
 	if got[2].Pattern != DefaultLLMToolScopeMap[0].Pattern {
 		t.Errorf("got[2].Pattern = %q, want %q (first default)",
 			got[2].Pattern, DefaultLLMToolScopeMap[0].Pattern)
@@ -268,9 +233,8 @@ func TestNewLLMToolScopeMap_MergeOrder(t *testing.T) {
 }
 
 func TestNewLLMToolScopeMap_DoesNotMutateInput(t *testing.T) {
-	// The merge must NOT mutate the operator's policy slice — it's
-	// a live snapshot from policy.Provider, and a callee scribbling
-	// on it would race with the watcher.
+	// The merge must not mutate the operator's slice: it is a live
+	// snapshot shared with the policy watcher.
 	pol := &policy.Policy{
 		ToolScopeMap: []policy.ToolScopeMapping{
 			{Pattern: "deploy", Scope: "shell"},
@@ -287,20 +251,16 @@ func TestNewLLMToolScopeMap_DoesNotMutateInput(t *testing.T) {
 			originalLen, len(pol.ToolScopeMap))
 	}
 	if cap(pol.ToolScopeMap) != originalCap {
-		// cap change implies a hidden append-extend.
 		t.Errorf("operator slice cap mutated: was %d, now %d",
 			originalCap, cap(pol.ToolScopeMap))
 	}
-	// And the slice header itself wasn't reseated.
 	if &pol.ToolScopeMap[0] != &original[0] {
 		t.Errorf("operator backing array reseated")
 	}
 }
 
 func TestDefaultLLMToolScopeMap_NoEmptyEntries(t *testing.T) {
-	// Defensive: an empty pattern or scope in the default map would
-	// fail policy.validateToolScopeMap if an operator pasted it
-	// into their YAML. Pin that the bundled defaults are clean.
+	// Bundled defaults must pass policy.validateToolScopeMap.
 	for i, m := range DefaultLLMToolScopeMap {
 		if m.Pattern == "" {
 			t.Errorf("DefaultLLMToolScopeMap[%d]: empty pattern (scope=%q)", i, m.Scope)
@@ -312,10 +272,7 @@ func TestDefaultLLMToolScopeMap_NoEmptyEntries(t *testing.T) {
 }
 
 func TestDefaultLLMToolScopeMap_OnlyKnownScopes(t *testing.T) {
-	// The default map must only point at scopes the engine
-	// recognises; an operator's `vanzik validate` will reject
-	// anything else, but our bundled defaults have to be clean from
-	// day one.
+	// Defaults may only use scopes the engine recognises.
 	known := map[string]bool{
 		"shell":      true,
 		"filesystem": true,

@@ -1,37 +1,11 @@
 package llmproxy
 
-// forward.go is the non-streaming forward path. It inspects and
-// gates tool_calls in the upstream response so the wire-level
-// firewall claim holds for stream=false agents (batch evals, non-
-// interactive workflows, frameworks that don't enable streaming by
-// default).
-//
-// Algorithm (mirrors streaming.go's pause/resume/rewrite, synchronous):
-//
-//   1. POST the request body to upstream verbatim.
-//   2. Read the upstream response into memory bounded by
-//      --max-buffer-bytes (an extra byte is read so overflow is
-//      unambiguous; the streaming path uses the same +1 trick).
-//   3. If the body overflows the cap → IncLLMProxyNonStreamingOverflow,
-//      synthesize a refusal with Rule="deny:llm_api_proxy:non_streaming_buffer_overflow",
-//      respond 200 with the refusal bytes (SDKs expect 200 + a
-//      decodable response shape; non-200 short-circuits SDK-side error
-//      paths).
-//   4. Parse the body as the provider's non-streaming response shape.
-//      Malformed JSON → pass through verbatim with the upstream's
-//      original status (we never inject our own bytes onto an
-//      already-corrupt wire).
-//   5. Walk the response for tool_calls (OpenAI choices[*].message.tool_calls)
-//      or tool_use blocks (Anthropic content[i].type == "tool_use").
-//      Run each through Server.PolicyCheck. First non-ALLOW (DENY,
-//      REQUIRE_APPROVAL, or PolicyCheck error under fail-closed) →
-//      synthesize a refusal that replaces the entire response. We
-//      do NOT preserve any other content — partial leaks would let
-//      the agent see the model's reasoning behind the denied call.
-//   6. If every tool_call ALLOWed → forward the upstream body
-//      byte-identical with the upstream's status code. The byte
-//      identity invariant from the streaming path applies here too:
-//      no JSON re-encoding, no whitespace normalisation.
+// Non-streaming forward path. The gated forwarders buffer the upstream
+// response (bounded by --max-buffer-bytes), gate every tool call, and
+// either forward the upstream bytes unchanged (all ALLOW) or replace the
+// whole response with a 200 synthetic refusal. Nothing of a denied
+// response is kept: partial content would leak the model's reasoning
+// behind the denied call.
 
 import (
 	"bytes"
@@ -47,15 +21,10 @@ import (
 	"lictorate.com/vanzik/v2/pkg/metrics"
 )
 
-// hopByHopHeaders are the HTTP/1.1 headers that MUST NOT be forwarded
-// across a proxy per RFC 7230 § 6.1. Everything else passes through.
-//
-// "Host" is also stripped because Go's http.Request honours the URL
-// authority; an explicit Host header would break upstream routing.
-//
-// Content-Length is stripped because the upstream client computes
-// its own from the io.Reader body length — emitting both can cause
-// chunked-vs-fixed-length negotiation confusion on some intermediaries.
+// hopByHopHeaders are never forwarded (RFC 7230 § 6.1). Host is also
+// dropped (an explicit Host breaks upstream routing) and Content-Length
+// (net/http computes its own; sending both confuses chunked-vs-fixed
+// negotiation on some intermediaries).
 var hopByHopHeaders = map[string]struct{}{
 	"Connection":          {},
 	"Proxy-Connection":    {},
@@ -71,50 +40,30 @@ var hopByHopHeaders = map[string]struct{}{
 	"Content-Length":      {},
 }
 
-// forwardOpenAI forwards a request to the OpenAI upstream, copying
-// the response back to the client. path is the upstream URL path
-// (e.g. "/v1/chat/completions"). body is the original request bytes
-// (preserved verbatim — re-encoding would break byte-identity).
-//
-// This is the pass-through forwarder used by endpoints that never
-// emit tool_calls (/v1/embeddings, /v1/models, /v1/completions). For
-// non-streaming /v1/chat/completions use forwardChatCompletion which
-// adds tool_call gating per F9 (B2).
+// forwardOpenAI forwards body verbatim to the OpenAI upstream at path,
+// ungated. Only for endpoints without tool calls (/v1/embeddings,
+// /v1/models, /v1/completions); chat goes through forwardChatCompletion.
 func (s *Server) forwardOpenAI(ctx context.Context, w http.ResponseWriter, r *http.Request, body []byte, path string) error {
 	return s.forwardTo(ctx, w, r, body, s.openaiURL, path)
 }
 
-// forwardChatCompletion is the non-streaming /v1/chat/completions
-// forwarder with tool_call gating. It POSTs the request to OpenAI,
-// reads the response into memory bounded by --max-buffer-bytes,
-// extracts any tool_calls, runs each through PolicyCheck, and either
-// forwards the original bytes verbatim (all ALLOW) or rewrites the
-// response to a synthetic refusal (any DENY/REQUIRE_APPROVAL or
-// overflow). req carries the original request's model name so the
-// synthetic refusal can echo it.
+// forwardChatCompletion is the gated non-streaming /v1/chat/completions
+// forwarder.
 func (s *Server) forwardChatCompletion(ctx context.Context, w http.ResponseWriter, r *http.Request, body []byte, req *ChatCompletionRequest) error {
 	return s.forwardWithToolCallGating(ctx, w, r, body, s.openaiURL, "/v1/chat/completions", "openai", req.Model)
 }
 
-// forwardAnthropicMessages is the non-streaming /v1/messages forwarder
-// with tool_use gating. Mirrors forwardChatCompletion for the
-// Anthropic shape.
+// forwardAnthropicMessages is the gated non-streaming /v1/messages
+// forwarder.
 func (s *Server) forwardAnthropicMessages(ctx context.Context, w http.ResponseWriter, r *http.Request, body []byte, req *AnthropicMessagesRequest) error {
 	return s.forwardWithToolCallGating(ctx, w, r, body, s.anthropicURL, "/v1/messages", "anthropic", req.Model)
 }
 
-// forwardWithToolCallGating is the shared implementation for the
-// non-streaming gated forwarders. provider is "openai" or "anthropic"
-// — picks the response-shape parser and the synthetic-refusal builder.
-// reqModel is the model name from the parsed request body, surfaced
-// into the synthetic refusal when the proxy rewrites the response.
-//
-// On any error before the response status is written (upstream POST
-// failure, body read failure other than overflow), an error is returned
-// for the caller to translate into a 502. Once the proxy has decided
-// to write a 200 + synthetic refusal or pass through verbatim, errors
-// are swallowed (we cannot retract a response that's already on the
-// wire).
+// forwardWithToolCallGating is the shared gated forwarder. provider
+// ("openai" or "anthropic") selects the parser and refusal shape;
+// reqModel is echoed in a synthetic refusal. Errors are returned only
+// before anything is written (the caller sends 502); after that they
+// are swallowed.
 func (s *Server) forwardWithToolCallGating(
 	ctx context.Context,
 	w http.ResponseWriter,
@@ -154,9 +103,8 @@ func (s *Server) forwardWithToolCallGating(
 	}
 	defer resp.Body.Close()
 
-	// Non-2xx responses pass through verbatim. SDK clients rely on
-	// receiving the upstream's error envelope unchanged so retry/
-	// rate-limit logic kicks in.
+	// Non-2xx passes through verbatim so SDK retry/rate-limit logic sees
+	// the upstream's error envelope.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		copyForwardableHeaders(resp.Header, w.Header())
 		w.WriteHeader(resp.StatusCode)
@@ -166,10 +114,7 @@ func (s *Server) forwardWithToolCallGating(
 		return nil
 	}
 
-	// Read upstream body bounded by --max-buffer-bytes. Read one extra
-	// byte so we can tell "exactly cap bytes" from "overflowed". The
-	// streaming path uses the same +1 trick (readRequestBody in
-	// server.go).
+	// Read cap+1 bytes so "exactly cap" and "overflowed" differ.
 	cap := s.cfg.MaxBufferBytes
 	if cap <= 0 {
 		cap = DefaultMaxBufferBytes
@@ -180,11 +125,8 @@ func (s *Server) forwardWithToolCallGating(
 	}
 
 	if len(bodyBytes) > cap {
-		// Overflow: the response body is too large to safely inspect
-		// for tool_calls. Refuse with a synthetic JSON object so the
-		// SDK doesn't see partial bytes (which would race with the
-		// reader we already consumed). The metric distinguishes this
-		// from the streaming-path overflow.
+		// Too large to inspect for tool calls: refuse rather than
+		// forward ungated.
 		metrics.IncLLMProxyNonStreamingOverflow(provider)
 		decision := Decision{
 			Allow:  false,
@@ -195,18 +137,12 @@ func (s *Server) forwardWithToolCallGating(
 		return nil
 	}
 
-	// Parse the response. Malformed JSON passes through verbatim — we
-	// never inject our own bytes into an already-corrupt wire. If the
-	// model wasn't going to call a tool the parser still works (empty
-	// tool_calls / tool_use slice).
-	//
-	// One exception: a body that fails strict decode but still carries a
-	// tool call is NOT forwarded. Go rejects a type-mismatched field that
-	// a lenient client SDK ignores, so "we can't decode it" does not imply
-	// "the client can't execute it", and that gap would let an ungated
-	// tool call reach the agent. hasLenientToolCall answers the narrower
-	// question, and only on this failure branch, so a body that decodes
-	// normally pays nothing for the check.
+	// Malformed JSON passes through verbatim with the upstream status,
+	// except a body that still carries a tool call: Go rejects a
+	// type-mismatched field that a lenient client SDK ignores, so "we
+	// can't decode it" does not mean "the client can't execute it".
+	// hasLenientToolCall runs only on this failure branch, so normal
+	// bodies pay nothing for it.
 	switch provider {
 	case "openai":
 		var parsed ChatCompletionResponse
@@ -246,31 +182,23 @@ func (s *Server) forwardWithToolCallGating(
 		}
 	}
 
-	// All tool_calls (if any) ALLOWed → forward upstream bytes verbatim.
+	// All ALLOW: forward byte-identical (no re-encoding).
 	passThroughResponse(w, resp.Header, resp.StatusCode, bodyBytes)
 	return nil
 }
 
-// passThroughResponse copies upstream headers (filtered for hop-by-hop)
-// + the upstream status + body to the client byte-identical. The
-// Content-Length header is filtered (hop-by-hop set already drops it)
-// so Go's http stack computes its own.
+// passThroughResponse writes the upstream status and body byte-identical,
+// with headers filtered by copyForwardableHeaders.
 func passThroughResponse(w http.ResponseWriter, srcHeader http.Header, status int, body []byte) {
 	copyForwardableHeaders(srcHeader, w.Header())
 	w.WriteHeader(status)
 	_, _ = w.Write(body)
 }
 
-// writeNonStreamingRefusal writes a synthetic refusal JSON object to
-// the client with HTTP 200. Provider-specific shape (OpenAI
-// ChatCompletionResponse, Anthropic Messages response) is picked by
-// Server.buildRefusal via the NonStreaming flag on RefusalContext.
-//
-// Status 200 (not 4xx/5xx) is intentional: SDKs expect a normal
-// chat.completion shape and short-circuit on non-2xx into client-side
-// error paths that wouldn't surface the refusal text to the agent.
-// The refusal payload itself signals the deny via assistant content
-// + finish_reason=stop / stop_reason=end_turn.
+// writeNonStreamingRefusal writes a provider-shaped synthetic refusal
+// with HTTP 200. Not 4xx/5xx: SDKs turn non-2xx into client-side errors
+// that never show the refusal text to the agent. The deny is carried by
+// the assistant text and finish_reason=stop / stop_reason=end_turn.
 func writeNonStreamingRefusal(
 	s *Server,
 	w http.ResponseWriter,
@@ -280,9 +208,7 @@ func writeNonStreamingRefusal(
 	originalCall ToolCallCheck,
 	model string,
 ) {
-	// Copy upstream headers (filtered) so Content-Type and other
-	// metadata flow through, then drop Content-Length explicitly —
-	// the refusal is a different length than the upstream body.
+	// The refusal's length differs from the upstream body's.
 	copyForwardableHeaders(srcHeader, w.Header())
 	w.Header().Del("Content-Length")
 	if w.Header().Get("Content-Type") == "" {
@@ -301,12 +227,10 @@ func writeNonStreamingRefusal(
 	_, _ = w.Write(refusal)
 }
 
-// gateOpenAINonStreaming walks the response choices[*].message.tool_calls
-// and runs each through PolicyCheck. Returns (decision, denied, deniedCall).
-// On the first non-ALLOW result, denied=true and the loop exits — partial
-// allow is not safe (the agent must not see the assistant's tool_call
-// arguments for any subsequent ALLOWed call when an earlier one was
-// denied; the entire response is replaced).
+// gateOpenAINonStreaming gates choices[*].message.tool_calls and stops
+// at the first non-ALLOW, returning denied=true and that call. The
+// caller then replaces the whole response, so no ALLOWed sibling's
+// arguments reach the agent.
 func (s *Server) gateOpenAINonStreaming(
 	ctx context.Context,
 	r *http.Request,
@@ -339,16 +263,12 @@ func (s *Server) gateOpenAINonStreaming(
 	return Decision{Allow: true}, false, ToolCallCheck{}
 }
 
-// buildOpenAINonStreamingCheck builds a ToolCallCheck for one entry in
-// the non-streaming response's tool_calls array. Mirrors the streaming
-// path's shape (see streaming.go's gateAndFlushOpenAI) so PolicyCheck
-// sees identical inputs whether the request was streamed or not.
+// buildOpenAINonStreamingCheck matches the streaming path's check
+// (gateAndFlushOpenAI) so PolicyCheck sees identical inputs either way.
 func buildOpenAINonStreamingCheck(s *Server, r *http.Request, resp *ChatCompletionResponse, tc *ChatCompletionToolCallEcho) ToolCallCheck {
 	var args map[string]interface{}
 	if len(tc.Function.Arguments) > 0 {
-		// Best-effort: invalid JSON arguments leave args nil and the
-		// gate sees an empty map. The same forgiving behaviour is in
-		// the streaming accumulator.
+		// Invalid JSON leaves args nil, as in the streaming accumulator.
 		_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
 	}
 	agent := strings.TrimSpace(r.Header.Get("X-Agent-ID"))
@@ -371,8 +291,8 @@ func buildOpenAINonStreamingCheck(s *Server, r *http.Request, resp *ChatCompleti
 	}
 }
 
-// gateAnthropicNonStreaming walks the response content[] for tool_use
-// blocks. Same first-non-ALLOW-stops semantics as the OpenAI sibling.
+// gateAnthropicNonStreaming gates content[] tool_use blocks, stopping
+// at the first non-ALLOW like gateOpenAINonStreaming.
 func (s *Server) gateAnthropicNonStreaming(
 	ctx context.Context,
 	r *http.Request,
@@ -406,11 +326,7 @@ func (s *Server) gateAnthropicNonStreaming(
 	return Decision{Allow: true}, false, ToolCallCheck{}
 }
 
-// buildAnthropicNonStreamingCheck builds a ToolCallCheck from a
-// tool_use content_block in the non-streaming Anthropic response.
-// Anthropic's input is already a decoded JSON object on the wire
-// (json.RawMessage), so we re-decode into a map for the ToolCallCheck
-// arguments field.
+// buildAnthropicNonStreamingCheck builds the check for one tool_use block.
 func buildAnthropicNonStreamingCheck(s *Server, r *http.Request, resp *AnthropicMessagesResponse, block *AnthropicContentBlock) ToolCallCheck {
 	var args map[string]interface{}
 	if len(block.Input) > 0 {
@@ -436,25 +352,13 @@ func buildAnthropicNonStreamingCheck(s *Server, r *http.Request, resp *Anthropic
 	}
 }
 
-// forwardTo is the shared forwarder. Per docs/LLM_API_PROXY.md § 3.1:
-//
-//   - Headers (including Authorization, x-api-key, OpenAI-Organization)
-//     pass through verbatim except for hop-by-hop and Host.
-//   - User-Agent is rewritten to include the proxy's identity so
-//     server-side logs at OpenAI/Anthropic can identify proxied
-//     traffic. Spec-compliant per RFC 7231.
-//   - The request body is re-attached as a fresh io.Reader on each
-//     call so retries (currently none) would be safe.
-//   - The response body is streamed back via io.Copy — the
-//     non-streaming JSON shape is small enough that this is fine.
-//     The streaming path uses a separate routine in streaming.go
-//     that pauses/resumes per tool call.
+// forwardTo is the ungated verbatim forwarder (header rules:
+// docs/LLM_API_PROXY.md § 3.1).
 func (s *Server) forwardTo(ctx context.Context, w http.ResponseWriter, r *http.Request, body []byte, upstream *url.URL, path string) error {
 	if upstream == nil {
 		return errors.New("upstream URL not configured")
 	}
 
-	// Build the upstream URL: <scheme>://<host>[:port]<path><query>
 	target := *upstream
 	target.Path = joinPath(upstream.Path, path)
 	target.RawQuery = r.URL.RawQuery
@@ -471,15 +375,10 @@ func (s *Server) forwardTo(ctx context.Context, w http.ResponseWriter, r *http.R
 	copyForwardableHeaders(r.Header, req.Header)
 	rewriteUserAgent(req.Header, r.Header.Get("User-Agent"))
 
-	// Setting Host on req is the way to override the SNI / Host
-	// header for the upstream connection. http.Client honours
-	// req.Host when it's non-empty.
 	req.Host = upstream.Host
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		// Distinguish ctx cancel from network failure so the
-		// caller's status mapping can stay correct.
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
@@ -487,54 +386,29 @@ func (s *Server) forwardTo(ctx context.Context, w http.ResponseWriter, r *http.R
 	}
 	defer resp.Body.Close()
 
-	// Copy response headers (filtered for hop-by-hop) before
-	// writing the status — once WriteHeader is called the header
-	// map freezes.
 	copyForwardableHeaders(resp.Header, w.Header())
 	w.WriteHeader(resp.StatusCode)
 
-	// Stream body back. For non-streaming responses this is one
-	// contiguous JSON document; io.Copy is the right primitive.
-	//
-	// The non-streaming response may contain tool_calls (OpenAI) or
-	// tool_use blocks (Anthropic) that need gating; the inspect-and-
-	// rewrite step is in forwardChatCompletion / forwardAnthropicMessages.
-	// This helper is the verbatim pass-through used by /v1/embeddings
-	// and /v1/models. The contract is documented in
-	// docs/LLM_API_PROXY.md § 3.2 ("Non-streaming").
 	_, err = io.Copy(w, resp.Body)
 	if err != nil {
-		// If the client disconnected mid-copy that's not really
-		// our error, but io.Copy returns it anyway. Headers and a
-		// partial body are already on the wire, so the handler must
-		// NOT append an error envelope — that would concatenate JSON
-		// onto a partial body and hand the client malformed bytes
-		// Tagging with errResponseCommitted makes
-		// writeJSONError a no-op for exactly this case; the handler
-		// keeps its existing `return err` shape.
+		// Headers and part of the body are already sent; the tag makes
+		// writeJSONError skip the envelope.
 		return fmt.Errorf("copy response body: %w: %w", errResponseCommitted, err)
 	}
 	return nil
 }
 
-// copyForwardableHeaders copies src into dst, dropping hop-by-hop
-// headers. Header keys are case-insensitive in HTTP; Go's http.Header
-// canonicalises on Add, so the lookup table above uses canonical
-// names.
-//
-// The Authorization header is explicitly forwarded — the proxy never
-// reads it. The proxy's own auth uses ProxyAuthHeader.
+// copyForwardableHeaders copies src into dst minus hop-by-hop headers
+// and the inbound-only ProxyAuthHeader and ApprovalIDHeader.
+// Authorization is forwarded; the proxy never reads it.
 func copyForwardableHeaders(src, dst http.Header) {
 	for k, vs := range src {
 		if _, hop := hopByHopHeaders[http.CanonicalHeaderKey(k)]; hop {
 			continue
 		}
-		// Explicitly DO NOT propagate the proxy's own auth header
-		// to the upstream — it's an inbound-only credential.
 		if http.CanonicalHeaderKey(k) == http.CanonicalHeaderKey(ProxyAuthHeader) {
 			continue
 		}
-		// Same for the approval id: it is meant for /v1/check only.
 		if http.CanonicalHeaderKey(k) == http.CanonicalHeaderKey(ApprovalIDHeader) {
 			continue
 		}
@@ -544,9 +418,8 @@ func copyForwardableHeaders(src, dst http.Header) {
 	}
 }
 
-// rewriteUserAgent sets a User-Agent that identifies the proxy.
-// Original UA is preserved as a suffix so upstream logs can still
-// see what client kicked off the call (e.g. "openai-python/1.x").
+// rewriteUserAgent prefixes the proxy's identity, keeping the original
+// UA as a suffix for upstream logs.
 func rewriteUserAgent(h http.Header, original string) {
 	original = strings.TrimSpace(original)
 	if original == "" {
@@ -556,9 +429,7 @@ func rewriteUserAgent(h http.Header, original string) {
 	h.Set("User-Agent", "vanzik-llm-proxy/"+BuildVersion+" "+original)
 }
 
-// joinPath concatenates a base URL path with a route path. Avoids
-// "//" sequences when base ends with "/" or route starts with "/".
-// Returns "/" if both are empty.
+// joinPath joins URL paths without doubling "/"; both empty gives "/".
 func joinPath(base, route string) string {
 	switch {
 	case base == "" || base == "/":

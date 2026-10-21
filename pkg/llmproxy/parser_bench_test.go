@@ -1,13 +1,9 @@
 package llmproxy
 
-// parser_bench_test.go benchmarks the two SSE accumulators' FeedEvent,
-// which CLAUDE.md enumerates as hot path: every byte of every streaming
-// response passes through one of them, once per event.
-//
-// The first benchmark is the one that governs review of parser changes:
-// an idle text delta is the single most frequent event on the wire — a
-// streaming text response is nothing but thousands of them — so anything
-// added to that branch is paid per token, not per request.
+// Benchmarks for the two accumulators' FeedEvent, a hot path: every
+// streaming event passes through one of them. The idle text delta matters
+// most: it is the most frequent event, so anything added to that branch
+// is paid per token.
 
 import (
 	"testing"
@@ -36,9 +32,8 @@ var (
 		`data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n")
 )
 
-// BenchmarkAnthropicFeedEvent_IdleTextDelta measures the branch audit B7
-// added a check to: idle, non-tool deltas, the overwhelming majority of
-// events in a streaming text response.
+// BenchmarkAnthropicFeedEvent_IdleTextDelta measures idle non-tool
+// deltas, which carry the orphaned-input check.
 func BenchmarkAnthropicFeedEvent_IdleTextDelta(b *testing.B) {
 	acc := NewAnthropicAccumulator(0)
 	b.ReportAllocs()
@@ -52,7 +47,7 @@ func BenchmarkAnthropicFeedEvent_IdleTextDelta(b *testing.B) {
 }
 
 // BenchmarkAnthropicFeedEvent_ToolUseCycle measures a whole gating cycle:
-// start (where audit B21's empty-seed check runs), one input delta, stop.
+// start (with the empty-seed check), one input delta, stop.
 func BenchmarkAnthropicFeedEvent_ToolUseCycle(b *testing.B) {
 	acc := NewAnthropicAccumulator(0)
 	b.ReportAllocs()
@@ -86,8 +81,8 @@ func BenchmarkOpenAIFeedEvent_IdleContentDelta(b *testing.B) {
 	}
 }
 
-// BenchmarkOpenAIFeedEvent_ToolCallCycle covers the branch audit B18
-// guards: the per-choice scan plus argument accumulation, then close.
+// BenchmarkOpenAIFeedEvent_ToolCallCycle covers the per-choice scan plus
+// argument accumulation, then close.
 func BenchmarkOpenAIFeedEvent_ToolCallCycle(b *testing.B) {
 	acc := NewOpenAIToolCallAccumulator(0)
 	b.ReportAllocs()

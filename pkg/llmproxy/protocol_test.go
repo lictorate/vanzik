@@ -33,10 +33,8 @@ func TestProtocol_ChatCompletionRequest_StreamingDetection(t *testing.T) {
 	}
 }
 
-// TestProtocol_ChatCompletionRequest_ToolDefinitions verifies the
-// `tools` array decodes with name + parameters preserved as raw
-// JSON. Parameters are not parsed — A23's scope mapping operates
-// on the tool name; the schema is forwarded untouched.
+// TestProtocol_ChatCompletionRequest_ToolDefinitions: tool names decode
+// and parameters stay raw JSON.
 func TestProtocol_ChatCompletionRequest_ToolDefinitions(t *testing.T) {
 	body := `{
 		"model": "gpt-4",
@@ -186,11 +184,8 @@ func TestProtocol_AnthropicMessagesResponse_Fixture(t *testing.T) {
 	}
 }
 
-// TestProtocol_RoundTrip_Tools confirms a request with tool
-// definitions can be unmarshalled and re-marshalled without losing
-// fields. The proxy NEVER re-encodes the body in production (it
-// forwards the original bytes), but the inspection types should
-// still be self-consistent.
+// TestProtocol_RoundTrip_Tools: the inspection types round-trip tool
+// definitions (production never re-encodes bodies).
 func TestProtocol_RoundTrip_Tools(t *testing.T) {
 	original := ChatCompletionRequest{
 		Model:  "gpt-4",

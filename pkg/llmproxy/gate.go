@@ -1,40 +1,13 @@
 package llmproxy
 
-// gate.go wires the LLM API Proxy's PolicyCheck hook against the central
-// Vanzik server's /v1/check endpoint. The proxy loads the same
-// policy YAML the central server reads so the bundled
-// DefaultLLMToolScopeMap can be overridden by operator entries
-// (Policy.ToolScopeMap, see pkg/llmproxy/scope_map.go § "Source-of-truth
-// decision"). Hot-reload is wired through the FilePolicyProvider's
-// Watch callback in main.go so subsequent gate calls see the operator's
-// fresh map without restarting the proxy.
+// The PolicyCheck hook against the central server's /v1/check.
 //
-// Single-check semantics (docs/PROXY_ARCHITECTURE.md § 4):
-//
-//   - The LLM API Proxy maps each tool_call directly to ONE existing
-//     policy scope (shell|filesystem|network|browser|data|cost) — no
-//     dual-check (no synthetic mcp_tool layer like the MCP gateway).
-//     Bare LLM tool names live in a disjoint pattern space from
-//     namespaced MCP names so the policy author writes one
-//     `tool_scope_map:` table and Vanzik dispatches correctly per
-//     transport tag.
-//   - Tools not covered by the merged map fall back to the sentinel
-//     scope `unmapped`. The policy engine has no built-in handling for
-//     `unmapped` so the gate fails closed by default unless the operator
-//     opts into an explicit `scope: unmapped` rule.
-//
-// Fail-mode (docs/PROXY_ARCHITECTURE.md § 6.1):
-//
-//   - --fail-mode deny (default): /v1/check unreachable → synthetic
-//     DENY with Rule="deny:llm_api_proxy:fail_closed".
-//   - --fail-mode fail-closed-with-audit: same DENY shape but the
-//     synthetic Rule is "deny:llm_api_proxy:fail_closed_audit" so
-//     dashboards can break out the two failure modes, and the denial
-//     is appended to the local --fail-audit-log JSONL file so the
-//     outage window stays reconstructable without the central server.
-//   - --fail-mode allow: /v1/check unreachable → synthetic ALLOW.
-//     Useful for dev / failover scenarios where availability beats
-//     enforcement; NOT a production posture.
+// Each tool call maps to exactly one existing scope (no mcp_tool
+// dual-check as in the MCP gateway): bare LLM tool names and namespaced
+// MCP names never collide, so one `tool_scope_map:` table serves both.
+// Unmapped tools get scope `unmapped`, which the engine denies unless a
+// `scope: unmapped` rule exists. Fail modes: docs/PROXY_ARCHITECTURE.md
+// § 6.1.
 
 import (
 	"context"
@@ -54,10 +27,8 @@ import (
 // applies when the operator does not pass a custom http.Client.
 const DefaultGuardHTTPTimeout = gateclient.DefaultGuardHTTPTimeout
 
-// FailModeRuleClosed and friends are the synthetic Rule strings the
-// gate stamps on fail-mode decisions so operators can alert on them
-// without confusing them with real policy verdicts. Stable string
-// contracts — referenced from tests + dashboard.
+// Synthetic Rule strings for fail-mode and invalid-response decisions,
+// distinct from real policy verdicts. Stable: dashboards alert on them.
 const (
 	FailModeRuleClosed      = "deny:llm_api_proxy:fail_closed"
 	FailModeRuleClosedAudit = "deny:llm_api_proxy:fail_closed_audit"
@@ -65,8 +36,6 @@ const (
 	InvalidResponseRule     = "deny:llm_api_proxy:invalid_response"
 )
 
-// llmFailModeRules feeds the proxy's synthetic-rule contract to the
-// shared gate client.
 var llmFailModeRules = gateclient.FailModeRules{
 	Open:        FailModeRuleOpen,
 	Closed:      FailModeRuleClosed,
@@ -74,43 +43,30 @@ var llmFailModeRules = gateclient.FailModeRules{
 	Invalid:     InvalidResponseRule,
 }
 
-// HTTPPolicyClient is the LLM API Proxy's connection to the central
-// Vanzik server's /v1/check endpoint. One instance per proxy
-// process; the underlying http.Client (and its connection pool) is
-// reused.
-//
-// The /v1/check wire contract and fail-mode translation live in
-// pkg/internal/gateclient (shared with the MCP gateway). This client
-// adds the proxy-specific parts: single-check scope mapping (no
-// dual-check — the mapped scope IS the gate scope), per-scope argument
-// projection, source-side secret redaction, and
-// meta.transport="llm_api_proxy" stamping so the central server's
-// audit log attributes entries to this proxy.
+// HTTPPolicyClient is the proxy's client for the central server's
+// /v1/check; one per process. The wire contract and fail-mode
+// translation live in pkg/internal/gateclient; this adds scope mapping,
+// per-scope argument projection, source-side secret redaction and
+// meta.transport="llm_api_proxy".
 type HTTPPolicyClient struct {
 	GuardURL string // e.g. "http://127.0.0.1:8080"
 	APIKey   string // bearer token; empty if --api-key not set
 	TenantID string // tenant ID; "local" with the bundled FilePolicyProvider
 	FailMode string // "deny" | "allow" | "fail-closed-with-audit"
 
-	// HTTPClient is reused across calls. Set to a custom client in
-	// tests; otherwise the constructor defaults to a 5s-timeout client.
+	// HTTPClient defaults to a DefaultGuardHTTPTimeout client.
 	HTTPClient *http.Client
 
-	// policy holds the active *policy.Policy via atomic load/store so
-	// the hot path doesn't take a lock. nil is safe — falls back to the
-	// bundled DefaultLLMToolScopeMap.
+	// policy is atomic so the hot path takes no lock; nil means the
+	// bundled DefaultLLMToolScopeMap only.
 	policy atomic.Pointer[policy.Policy]
 
-	// mappings caches the merged []policy.ToolScopeMapping derived from
-	// the active policy so MapScope doesn't re-merge on every call. The
-	// pointer is replaced atomically by SetPolicy.
+	// mappings caches the merged map for MapScope; replaced by SetPolicy.
 	mappings atomic.Pointer[[]policy.ToolScopeMapping]
 
-	// redactor is the secret-scrubber applied to argument values before
-	// they land in /v1/check meta (and thus the audit log). Built once
-	// at construction time from notify.DefaultRedactor() — the central
-	// server does its own redaction at notification dispatch but the
-	// audit log itself does not, so the proxy redacts at the source.
+	// redactor scrubs argument values before they reach /v1/check meta.
+	// The central server redacts notifications but not the audit log, so
+	// the proxy redacts at the source.
 	redactor *notify.Redactor
 
 	// fallback records local audit entries for fail-closed-with-audit
@@ -119,9 +75,8 @@ type HTTPPolicyClient struct {
 	fallback *gateclient.FallbackAuditWriter
 }
 
-// NewHTTPPolicyClient constructs a gate against cfg + an initial policy
-// snapshot. The caller is expected to subscribe to the policy provider's
-// Watch and call SetPolicy on every reload.
+// NewHTTPPolicyClient builds a gate client from cfg and an initial
+// policy. The caller should call SetPolicy on every policy reload.
 func NewHTTPPolicyClient(cfg *Config, pol *policy.Policy) *HTTPPolicyClient {
 	c := &HTTPPolicyClient{
 		GuardURL:   cfg.GuardURL,
@@ -138,19 +93,16 @@ func NewHTTPPolicyClient(cfg *Config, pol *policy.Policy) *HTTPPolicyClient {
 	return c
 }
 
-// SetPolicy atomically updates the cached policy snapshot and the
-// derived mapping list. Called from main.go's provider.Watch callback
-// for hot-reload. nil is accepted (resets to default mappings only).
+// SetPolicy atomically swaps the policy and its merged tool-scope
+// map. nil resets to the default mappings.
 func (c *HTTPPolicyClient) SetPolicy(pol *policy.Policy) {
 	c.policy.Store(pol)
 	merged := NewLLMToolScopeMap(pol)
 	c.mappings.Store(&merged)
 }
 
-// MapScope returns the existing-scope assignment for a tool name.
-// Wired into Server.ScopeMap. Tools not covered by the merged map
-// return UnmappedScope; the policy engine fails closed on this
-// scope unless an explicit `scope: unmapped` rule is configured.
+// MapScope returns the policy scope for a tool name, or UnmappedScope.
+// Suitable for Server.ScopeMap.
 func (c *HTTPPolicyClient) MapScope(toolName string) string {
 	mappings := c.mappings.Load()
 	if mappings == nil {
@@ -159,19 +111,9 @@ func (c *HTTPPolicyClient) MapScope(toolName string) string {
 	return MapLLMToolScope(toolName, *mappings)
 }
 
-// Check is the function wired into Server.PolicyCheck. Builds an
-// ActionRequest from the ToolCallCheck and POSTs to /v1/check.
-//
-// Closes the streaming gate: A22 calls this per assembled tool_call
-// in either provider's stream; this returns an llmproxy.Decision the
-// streaming orchestrator branches on (ALLOW → flush buffered events;
-// DENY/REQUIRE_APPROVAL → synthesize refusal).
-//
-// Errors from /v1/check (network, malformed response, non-2xx status)
-// are translated into the configured fail-mode decision; the err is
-// returned alongside so callers that need to log/instrument the
-// underlying cause can do so. The streaming orchestrator (A22)
-// already inspects err for fail-mode-allow short-circuiting.
+// Check implements Server.PolicyCheck: it builds an ActionRequest and
+// POSTs it to /v1/check. On a /v1/check failure it returns the
+// fail-mode decision together with the error.
 func (c *HTTPPolicyClient) Check(ctx context.Context, req *ToolCallCheck) (Decision, error) {
 	if req == nil {
 		return Decision{Allow: false, Reason: "nil tool call request", Rule: "deny:llm_api_proxy:invalid_request"}, nil
@@ -206,22 +148,15 @@ func (c *HTTPPolicyClient) Check(ctx context.Context, req *ToolCallCheck) (Decis
 	return dec, nil
 }
 
-// RecordForcedAudit records a proxy-manufactured fail-closed refusal in the
-// central audit trail with the verdict the client actually received (e.g. the
-// malformed-tool-call DENY), rather than the engine verdict a /v1/check would
-// log. Wired into Server.RecordForcedAudit (F1 audit-verdict fidelity / C3).
+// RecordForcedAudit implements Server.RecordForcedAudit: it records a
+// proxy-manufactured refusal in the central audit trail via /v1/audit,
+// with the verdict the client received rather than the engine's. The
+// ActionRequest is built exactly as in Check so the entry looks like a
+// normal gate entry. Best-effort: a failure never changes what the
+// client got.
 //
-// It builds the SAME ActionRequest shape Check builds (scope mapping, argument
-// projection, redacted meta with the transport tag) so the recorded entry sits
-// in the trail indistinguishable from a real gate entry, then POSTs it to
-// /v1/audit via the shared gate client. Best-effort: on failure it logs and
-// returns — the client already received the refusal, so an audit-record failure
-// must never change client-visible behavior.
-//
-// The ActionRequest construction is intentionally duplicated from Check rather
-// than shared via a helper: Check runs on every gated tool call (the happy hot
-// path) and must stay byte-identical, whereas this path is the rare
-// malformed-completion one where the duplication costs nothing.
+// The ActionRequest construction is duplicated from Check on purpose:
+// Check is the hot path and must stay byte-identical.
 func (c *HTTPPolicyClient) RecordForcedAudit(ctx context.Context, req *ToolCallCheck, decision Decision) {
 	if req == nil {
 		return
@@ -257,19 +192,11 @@ func (c *HTTPPolicyClient) RecordForcedAudit(ctx context.Context, req *ToolCallC
 		HTTPClient: c.HTTPClient,
 	}
 	if err := caller.RecordForcedAudit(ctx, ar, decision.Reason, decision.Rule); err != nil {
-		// The forced-audit POST failed. The canonical case: the central server
-		// runs with --api-key but this proxy has none, so the (open) /v1/check
-		// works while the (auth-gated) POST /v1/audit returns 401. Without a
-		// fallback the refusal would leave NO audit entry at all — strictly
-		// worse than the pre-F1 behavior, which at least wrote a low-fidelity
-		// entry via /v1/check. So best-effort replay the ALREADY-BUILT
-		// ActionRequest through /v1/check: that reproduces the pre-F1 path and
-		// keeps the trail from going dark. The returned decision is ignored —
-		// the client already received the forced refusal, so nothing here may
-		// change client-visible behavior. Fidelity degrades (the engine verdict,
-		// not the DENY the client saw, is recorded); coverage never does. The
-		// --api-key remedy is in the log so full fidelity is one flag away
-		// (docs/LLM_API_PROXY.md § Audit fidelity).
+		// Typically the central server is keyed and this proxy has no
+		// --api-key: /v1/check is open but /v1/audit returns 401. Replay
+		// through /v1/check so an entry still exists, with the engine
+		// verdict instead of the client's DENY; the decision is ignored
+		// (docs/LLM_API_PROXY.md § 5.4 Audit fidelity).
 		log.Printf("vanzik-llm-proxy: forced-audit record failed (client refusal already sent); "+
 			"falling back to /v1/check low-fidelity audit — give this proxy --api-key when the central server is keyed for full fidelity: %v", err)
 		if _, ferr := c.callV1Check(ctx, ar); ferr != nil {
@@ -278,9 +205,8 @@ func (c *HTTPPolicyClient) RecordForcedAudit(ctx context.Context, req *ToolCallC
 	}
 }
 
-// buildLLMMeta builds the meta map sent on the /v1/check call. Argument
-// values are redacted via notify.DefaultRedactor before stringifying
-// so secrets in tool-call args don't reach the audit log.
+// buildLLMMeta builds the /v1/check meta map, with argument values
+// redacted so secrets don't reach the audit log.
 func buildLLMMeta(req *ToolCallCheck, scope string, red *notify.Redactor) map[string]string {
 	out := map[string]string{
 		"transport":    "llm_api_proxy",
@@ -304,10 +230,8 @@ func buildLLMMeta(req *ToolCallCheck, scope string, red *notify.Redactor) map[st
 	return out
 }
 
-// projectPath returns the path-like argument value for filesystem-scope
-// gating. Common LLM tool conventions: path, file_path, target,
-// target_path, filename, file. Returns "" for non-filesystem scopes
-// or when no recognised key is present.
+// projectPath returns the first path-like argument for filesystem
+// scope, else "".
 func projectPath(scope string, args map[string]interface{}) string {
 	if scope != "filesystem" {
 		return ""
@@ -322,9 +246,8 @@ func projectPath(scope string, args map[string]interface{}) string {
 	return ""
 }
 
-// projectURL returns the URL-like arg value for network/browser scope
-// gating. The same key set covers both — browser tools commonly emit
-// `url`, network tools commonly emit `url`/`uri`/`endpoint`.
+// projectURL returns the first URL-like argument for network and
+// browser scopes, else "".
 func projectURL(scope string, args map[string]interface{}) string {
 	if scope != "network" && scope != "browser" {
 		return ""
@@ -364,9 +287,8 @@ func projectDomain(scope string, args map[string]interface{}) string {
 	return u.Hostname()
 }
 
-// formatLLMCommand renders the tool_call as a string the policy engine
-// can match against rule patterns. Different scopes use different
-// projections so existing rule-author conventions still apply:
+// formatLLMCommand renders the tool call as the string rule patterns
+// match, per scope, following existing rule-author conventions:
 //
 //   - shell:      `<command_arg>` (or `<tool_name>` if no command)
 //   - filesystem: `<tool_name> <path>`
@@ -376,15 +298,14 @@ func projectDomain(scope string, args map[string]interface{}) string {
 //   - cost:       `<tool_name>` (cost gating uses est_cost separately)
 //   - unmapped:   `<tool_name>`
 //
-// Args are redacted via notify.DefaultRedactor before stringifying.
+// Arguments are redacted.
 func formatLLMCommand(req *ToolCallCheck, scope string, red *notify.Redactor) string {
 	switch scope {
 	case "shell":
 		if cmd := gateclient.FirstStringArg(req.Arguments, "command", "cmd", "script", "code"); cmd != "" {
 			return redactSingle(red, cmd)
 		}
-		// Fall back to tool name + serialised args so shell rules that
-		// match on a wrapper tool's invocation still fire.
+		// Tool name + args, so rules on a wrapper tool still fire.
 		if argStr := gateclient.FirstStringArg(req.Arguments, "args"); argStr != "" {
 			return redactSingle(red, req.ToolName+" "+argStr)
 		}
@@ -405,8 +326,7 @@ func formatLLMCommand(req *ToolCallCheck, scope string, red *notify.Redactor) st
 		return req.ToolName
 
 	case "data":
-		// Data scope: prefer the value being submitted so existing
-		// data rules can match on it. Sensitive args go in meta only.
+		// The submitted value, so data rules can match on it.
 		if v := gateclient.FirstStringArg(req.Arguments, "value", "content", "text", "data"); v != "" {
 			return redactSingle(red, v)
 		}
@@ -417,10 +337,8 @@ func formatLLMCommand(req *ToolCallCheck, scope string, red *notify.Redactor) st
 	}
 }
 
-// projectMetaArgs returns a redacted, string-valued copy of all args
-// for the audit log's meta map. Non-string values are JSON-encoded.
-// All values are individually scrubbed via the supplied redactor before
-// being written to the map.
+// projectMetaArgs returns a redacted, string-valued copy of args for
+// audit meta; non-strings are JSON-encoded.
 func projectMetaArgs(args map[string]interface{}, red *notify.Redactor) map[string]string {
 	if len(args) == 0 {
 		return nil
@@ -443,11 +361,8 @@ func projectMetaArgs(args map[string]interface{}, red *notify.Redactor) map[stri
 		if red != nil {
 			s = redactSingle(red, s)
 		}
-		// Also redact `key=value` shape against the key name itself for
-		// args literally called "password"/"token"/"api_key" — the
-		// regex in DefaultRedactor only fires when the key+value are
-		// stringified together, not when the value is bare. Keep raw
-		// value if no redaction occurred.
+		// DefaultRedactor matches `key=value`, not a bare value, so
+		// secret-named keys are redacted by name.
 		if isSecretKeyName(k) {
 			s = "[REDACTED]"
 		}
@@ -456,9 +371,7 @@ func projectMetaArgs(args map[string]interface{}, red *notify.Redactor) map[stri
 	return out
 }
 
-// isSecretKeyName matches argument names that are known to carry
-// secrets (regardless of value shape) so we redact the whole field
-// even when the value alone wouldn't trigger DefaultRedactor.
+// isSecretKeyName reports whether an argument name implies a secret.
 func isSecretKeyName(k string) bool {
 	lk := strings.ToLower(k)
 	for _, needle := range []string{"password", "token", "secret", "api_key", "apikey", "auth"} {
@@ -469,9 +382,8 @@ func isSecretKeyName(k string) bool {
 	return false
 }
 
-// redactSingle pushes a string through the redactor by wrapping it in a
-// synthetic notify.Event (Redactor's public API). Empty strings short-
-// circuit to avoid synthesising a useless event.
+// redactSingle redacts one string by wrapping it in a notify.Event, the
+// Redactor's only API.
 func redactSingle(red *notify.Redactor, s string) string {
 	if s == "" || red == nil {
 		return s
@@ -484,8 +396,6 @@ func redactSingle(red *notify.Redactor, s string) string {
 	return red.Redact(ev).Request.Command
 }
 
-// callV1Check delegates to the shared gate client with the proxy's
-// identity stamped on the User-Agent.
 func (c *HTTPPolicyClient) callV1Check(ctx context.Context, ar policy.ActionRequest) (Decision, error) {
 	caller := gateclient.Caller{
 		GuardURL:   c.GuardURL,
@@ -497,10 +407,8 @@ func (c *HTTPPolicyClient) callV1Check(ctx context.Context, ar policy.ActionRequ
 	return caller.CallV1Check(ctx, ar, llmFailModeRules)
 }
 
-// failModeDecision translates a /v1/check failure into the configured
-// fail-mode verdict. In fail-closed-with-audit mode the denial is also
-// recorded locally (--fail-audit-log) so operators can reconstruct the
-// deny chain for the outage window without the central server.
+// failModeDecision maps a /v1/check failure to the fail-mode verdict;
+// with fail-closed-with-audit it is also written to --fail-audit-log.
 func (c *HTTPPolicyClient) failModeDecision(ar policy.ActionRequest, err error) Decision {
 	d := gateclient.FailModeDecision(c.FailMode, err, llmFailModeRules)
 	c.fallback.Record(ar, d, "llm_api_proxy", c.TenantID)

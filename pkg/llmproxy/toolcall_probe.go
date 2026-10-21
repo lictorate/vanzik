@@ -1,47 +1,19 @@
 package llmproxy
 
-// Lenient tool-call detection for bodies the typed decoders reject.
+// Lenient tool-call detection for non-streaming bodies the typed
+// decoders reject.
 //
-// The non-streaming gated path decodes an upstream response into
-// ChatCompletionResponse / AnthropicMessagesResponse and gates whatever
-// tool calls it finds. When that decode fails the body is forwarded
-// verbatim, on the deliberate principle that Vanzik never rewrites an
-// already-corrupt wire.
+// Such bodies are normally forwarded verbatim, but encoding/json fails
+// on a type-mismatched field (`"created":"1730000000"`) that a Python or
+// TypeScript SDK ignores while executing the tool_calls next to it. An
+// OpenAI-compatible shim (vLLM, Ollama, LiteLLM) that stringifies one
+// numeric field is enough; no attacker needed. (A JSON null or an extra
+// field does not fail the decode, so only wrong-typed values land here.)
 //
-// The gap is that "fails Go's strict decode" is a NARROWER condition than
-// "the client cannot use it". encoding/json aborts on a type-mismatched
-// field the target struct declares — `"created":"1730000000"` where
-// Created is an int64, `"stop_reason":5` where it is a string — while a
-// Python or TypeScript SDK parsing the same bytes ignores the odd field
-// and happily executes the tool_calls sitting next to it. The result is
-// a tool call the firewall never evaluates. No attacker is required: an
-// OpenAI-compatible shim (vLLM, Ollama, LiteLLM, a cloud gateway) that
-// stringifies one numeric field is enough, and pointing the proxy at one
-// is a supported configuration via --upstream-openai.
-//
-// Worth knowing precisely which bodies this covers: a JSON null is NOT a
-// type error. encoding/json treats null as a no-op for a non-pointer
-// field, leaving the zero value and returning no error, so a nulled field
-// still decodes and reaches the normal gate. Only a wrong-typed value
-// diverts flow here. An unknown extra field is likewise ignored, so a
-// provider ADDING fields never trips this path.
-//
-// So before falling back to passthrough, ask a narrower question: does
-// this body carry a tool call at all? The probe types below declare ONLY
-// the path down to the tool-call array. Every sibling field is
-// undeclared, and encoding/json ignores undeclared fields, so nothing
-// outside that path can impose a type constraint or fail the decode.
-// That is precisely why the probe succeeds where the full struct fails,
-// and why it cannot disagree with a lenient client about what is
-// executable: it constrains nothing the client would ignore either.
-//
-// A substring search for `"tool_calls"` would be cheaper and wrong — it
-// fires on any model reply that merely mentions the phrase in its prose,
-// turning ordinary answers into refusals.
-//
-// Cost: this runs ONLY on the decode-failure branch. A body that decodes
-// normally never reaches it, so the success path pays nothing — no extra
-// parse, no extra allocation.
+// The probe types declare only the path to the tool-call array, so no
+// sibling field can fail the decode: the probe constrains nothing a
+// lenient client wouldn't. A substring search for "tool_calls" would
+// also match model prose and refuse ordinary answers.
 
 import (
 	"encoding/json"
@@ -49,9 +21,7 @@ import (
 	"strings"
 )
 
-// openAIToolCallProbe mirrors just choices[].message.tool_calls from the
-// OpenAI chat-completion response. json.RawMessage keeps each entry
-// unparsed: presence is the only question being asked.
+// openAIToolCallProbe declares only choices[].message.tool_calls.
 type openAIToolCallProbe struct {
 	Choices []struct {
 		Message struct {
@@ -60,26 +30,16 @@ type openAIToolCallProbe struct {
 	} `json:"choices"`
 }
 
-// anthropicToolUseProbe mirrors just content[].type from the Anthropic
-// messages response. Only the discriminator is needed; the block body is
-// irrelevant to the presence question.
+// anthropicToolUseProbe declares only content[].type.
 type anthropicToolUseProbe struct {
 	Content []struct {
 		Type string `json:"type"`
 	} `json:"content"`
 }
 
-// hasLenientToolCall reports whether body carries at least one tool call
-// under a permissive decode, for a body the strict decoder already
-// rejected.
-//
-// False means one of two things, and both are handled the same way by the
-// caller (forward verbatim, as before): the body has no tool call, or it
-// is so malformed that even the probe cannot read it — in which case a
-// client SDK cannot reliably execute a tool call from it either.
-//
-// An unknown provider returns false, keeping the pre-existing passthrough
-// for any transport this function has not been taught about.
+// hasLenientToolCall reports whether a body the strict decoder rejected
+// still carries a tool call. False (no tool call, unreadable even to the
+// probe, or unknown provider) means the caller forwards verbatim.
 func hasLenientToolCall(body []byte, provider string) bool {
 	switch provider {
 	case "openai":
@@ -111,14 +71,10 @@ func hasLenientToolCall(body []byte, provider string) bool {
 	}
 }
 
-// undecodableToolCallDecision is the refusal returned when a body that
-// failed strict decode turns out to carry a tool call.
-//
-// Deliberately NOT subject to --fail-mode allow, matching the
-// duplicate-JSON-key refusal in streaming.go. --fail-mode answers "what
-// should happen when the guard is unreachable"; here the guard is healthy
-// and the problem is that it cannot see what the client will execute.
-// Letting `allow` through would reopen exactly the bypass this closes.
+// undecodableToolCallDecision refuses an undecodable body that carries
+// a tool call. Not subject to --fail-mode allow (like the duplicate-key
+// refusal): fail-mode covers an unreachable guard, not a guard that
+// cannot see what the client will execute.
 func undecodableToolCallDecision(provider string) Decision {
 	return Decision{
 		Allow: false,
@@ -128,27 +84,12 @@ func undecodableToolCallDecision(provider string) Decision {
 	}
 }
 
-// auditUndecodableToolCall records the refusal in the central audit trail,
-// mirroring auditMalformedToolCalls (the F1/C3 fidelity fix) for the
-// non-streaming undecodable case.
-//
-// Without this the refusal would be invisible from every angle: the
-// llmproxy's process-local metrics registry has no scrape endpoint (see
-// docs/OBSERVABILITY.md), so the counter alone tells an operator nothing,
-// and a refused call that leaves no trace is exactly the "firewall goes
-// dark when it manufactures its own refusal" gap F1 closed for streams.
-//
-// The recorded ToolCallCheck is deliberately thin — the body did not
-// decode, so there is no tool name or arguments to report. What matters
-// is that a refusal happened, under which rule, for which tenant and
-// agent. When RecordForcedAudit is wired (both shipped binaries do) the
-// entry carries the forced DENY the client actually received. When it is
-// not (tests, embedders), it falls back to the normal PolicyCheck path,
-// which still writes a transport-tagged entry — lower fidelity, as
-// auditDeniedToolCalls documents, but not silence. The fallback's verdict
-// is ignored: the refusal is unconditional either way.
-//
-// Runs only on this rare branch, never on a body that decodes.
+// auditUndecodableToolCall records the refusal centrally, like
+// auditMalformedToolCalls. The proxy's metrics registry has no scrape
+// endpoint (docs/OBSERVABILITY.md), so otherwise it leaves no trace.
+// The entry has no tool name or arguments (nothing decoded), only rule,
+// tenant and agent. With a nil RecordForcedAudit it falls back to
+// PolicyCheck (engine verdict, ignored).
 func (s *Server) auditUndecodableToolCall(r *http.Request, provider, model string) {
 	check := ToolCallCheck{
 		Provider:        provider,

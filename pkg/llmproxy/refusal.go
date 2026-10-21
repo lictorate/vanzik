@@ -1,36 +1,9 @@
 package llmproxy
 
-// refusal.go ships the operator-grade synthetic refusal builder A24
-// wires into Server.BuildRefusal — replacing A22's minimal default
-// (defaultRefusalBytes in streaming.go) with text the agent reads,
-// the human reviewer reads, and the audit log preserves.
-//
-// Differences vs the default:
-//
-//   - Includes the rule that fired ("deny:shell:rm_rf", ...) so the
-//     agent's logs explain the verdict without operators having to
-//     cross-reference the audit JSONL by approval id.
-//   - On REQUIRE_APPROVAL, embeds BOTH the approval URL the human
-//     visits AND the approval_id with a hint to send it back in the
-//     X-Vanzik-Approval-ID header on retry. Closes the
-//     "approve once, model proceeds" loop with the central-server
-//     approval_id round-trip.
-//   - Provider-specific shape:
-//       OpenAI:   assistant-text content delta + finish_reason: "stop"
-//                 + [DONE]. NOT role: "tool" (rejected: the OpenAI
-//                 SDKs hang on missing `tool_call_id` when role: "tool"
-//                 is synthesized).
-//       Anthropic: text content_block at the buffered tool_use's index
-//                  + message_delta with stop_reason: end_turn +
-//                  message_stop. The buffered content_block_start was
-//                  discarded on the DENY path (streaming.go drops it
-//                  with the rest of the buffered events) so the
-//                  synthetic emits a fresh content_block_start at the
-//                  same index.
-//
-// The buffer-overflow refusal (Rule="deny:llm_api_proxy:buffer_overflow")
-// gets a tailored message that names the operator-tunable cap so
-// recovery is mechanical rather than mysterious.
+// Production refusal builder (shapes: docs/LLM_API_PROXY.md § 5.4).
+// Unlike defaultRefusalBytes, the text names the rule that fired and,
+// for REQUIRE_APPROVAL, the approval URL and the approval id to send
+// back in ApprovalIDHeader on retry.
 
 import (
 	"bytes"
@@ -40,16 +13,9 @@ import (
 	"time"
 )
 
-// BuildRefusalRich is wired into Server.BuildRefusal. Called by
-// streaming.go's gateAndFlush* on DENY / REQUIRE_APPROVAL or by the
-// overflow path with a synthetic Decision (see streaming.go's
-// runOpenAIStreamLoop / runAnthropicStreamLoop). Also called by the
-// non-streaming forwarder via the same hook — the ctx.NonStreaming
-// flag picks the shape.
-//
-// Always returns a non-nil byte slice: an empty refusal would leave
-// the SSE stream open (or yield a zero-length response on the
-// non-streaming path) and SDK clients would hang.
+// BuildRefusalRich implements Server.BuildRefusal for both streaming
+// and non-streaming (ctx.NonStreaming) refusals. It never returns an
+// empty slice: that would leave the stream open and hang SDK clients.
 func BuildRefusalRich(provider string, decision Decision, ctx *RefusalContext) []byte {
 	msg := buildRefusalMessage(decision)
 	nonStreaming := ctx != nil && ctx.NonStreaming
@@ -74,10 +40,7 @@ func BuildRefusalRich(provider string, decision Decision, ctx *RefusalContext) [
 		}
 		return buildAnthropicRefusalSSE(msg, idx)
 	default:
-		// Defensive: callers always pass "openai" or "anthropic". If a
-		// new provider lands without updating this switch, fall back
-		// to the OpenAI shape — most upstreams accept it as a
-		// degenerate text-completion (or chat.completion) response.
+		// Unknown provider: the OpenAI shape is the most widely accepted.
 		if nonStreaming {
 			return buildOpenAIRefusalNonStreaming(msg, model)
 		}
@@ -85,10 +48,8 @@ func BuildRefusalRich(provider string, decision Decision, ctx *RefusalContext) [
 	}
 }
 
-// buildRefusalMessage assembles the human-readable text that goes
-// inside the synthetic SSE event. The exact string is asserted on by
-// the refusal tests so the operator-facing copy is reviewable in
-// version control rather than buried in test fixtures.
+// buildRefusalMessage builds the refusal text. Tests assert the exact
+// copy.
 func buildRefusalMessage(d Decision) string {
 	if d.Rule == "deny:llm_api_proxy:buffer_overflow" {
 		return buildOverflowMessage(d)
@@ -128,9 +89,7 @@ func buildRefusalMessage(d Decision) string {
 	return b.String()
 }
 
-// buildOverflowMessage renders the dedicated copy for the
-// buffer-overflow refusal. Includes the operator-tunable knob name so
-// recovery is mechanical.
+// buildOverflowMessage names --max-buffer-bytes so the fix is obvious.
 func buildOverflowMessage(d Decision) string {
 	var b strings.Builder
 	b.WriteString("Vanzik refused this tool call: its accumulated arguments exceeded the gating buffer cap.")
@@ -149,8 +108,6 @@ func buildOverflowMessage(d Decision) string {
 }
 
 // refusalReasonOrDefault returns d.Reason when non-empty, else fallback.
-// Keeps copy uniform when the central server returns a deny without a
-// human-readable reason (rare; defensive).
 func refusalReasonOrDefault(d Decision, fallback string) string {
 	if d.Reason != "" {
 		return d.Reason
@@ -158,15 +115,11 @@ func refusalReasonOrDefault(d Decision, fallback string) string {
 	return fallback
 }
 
-// buildOpenAIRefusalSSE emits the OpenAI-shape synthetic refusal: one
-// assistant-role content delta carrying the message, a finish_reason of
-// "stop", followed by the canonical [DONE] sentinel. SDKs treat this
-// as a normal stream termination — no client-side hang because the
-// finish_reason resets any in-flight tool_call accumulation state in
-// SDK clients that observe one.
+// buildOpenAIRefusalSSE emits one assistant content delta with
+// finish_reason "stop", then [DONE]. Not role "tool": SDKs hang on the
+// missing tool_call_id.
 func buildOpenAIRefusalSSE(message string) []byte {
 	payload := map[string]interface{}{
-		// Synthetic id; SDKs accept any non-empty string.
 		"id":      "vanzik-refusal",
 		"object":  "chat.completion.chunk",
 		"created": 0,
@@ -183,27 +136,16 @@ func buildOpenAIRefusalSSE(message string) []byte {
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {
-		// Marshal of a known-shape map cannot fail in practice; the
-		// fallback keeps the stream well-formed if it ever does.
+		// Unreachable for this map; keeps the stream well-formed.
 		fallback, _ := json.Marshal(map[string]string{"error": "vanzik refusal marshal failed"})
 		return []byte("data: " + string(fallback) + "\n\ndata: [DONE]\n\n")
 	}
 	return []byte("data: " + string(b) + "\n\ndata: [DONE]\n\n")
 }
 
-// buildOpenAIRefusalNonStreaming emits the synthetic refusal as a
-// single non-streaming OpenAI ChatCompletionResponse JSON object — the
-// shape SDK clients decode when they POST with stream=false. F9 (B2)
-// wires this path; the streaming path stays on buildOpenAIRefusalSSE.
-//
-// The response intentionally omits tool_calls (the model's tool_call is
-// dropped on the deny path) and sets finish_reason="stop" so SDK
-// clients treat the synthetic message as a normal assistant turn that
-// completes the conversation cleanly.
-//
-// model is the original request's model name when available; empty
-// falls back to "vanzik-refusal" so the response is still a valid
-// JSON object the SDK can decode without errors on the model field.
+// buildOpenAIRefusalNonStreaming emits a chat.completion object with no
+// tool_calls and finish_reason "stop", so SDKs see a normal final
+// assistant turn. Empty model becomes "vanzik-refusal".
 func buildOpenAIRefusalNonStreaming(message, model string) []byte {
 	if model == "" {
 		model = "vanzik-refusal"
@@ -231,20 +173,14 @@ func buildOpenAIRefusalNonStreaming(message, model string) []byte {
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {
-		// Marshal of a known-shape map cannot fail in practice; the
-		// fallback keeps the response decodable as a minimal JSON
-		// object.
+		// Unreachable for this map; keeps the response decodable.
 		return []byte(`{"id":"vanzik-refusal","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"Vanzik refusal"},"finish_reason":"stop"}]}`)
 	}
 	return b
 }
 
-// buildAnthropicRefusalNonStreaming emits the synthetic refusal as a
-// single non-streaming AnthropicMessagesResponse JSON object. Mirrors
-// buildOpenAIRefusalNonStreaming for the Anthropic shape: the
-// content array carries one text block (no tool_use, since the
-// upstream's tool_use is dropped on the deny path) and stop_reason is
-// "end_turn" so the SDK does not expect a tool result to follow.
+// buildAnthropicRefusalNonStreaming emits a message with one text block
+// and stop_reason "end_turn", so the SDK expects no tool result.
 func buildAnthropicRefusalNonStreaming(message, model string) []byte {
 	if model == "" {
 		model = "vanzik-refusal"
@@ -273,27 +209,17 @@ func buildAnthropicRefusalNonStreaming(message, model string) []byte {
 	return b
 }
 
-// buildAnthropicRefusalSSE emits the Anthropic-shape synthetic refusal:
-//
-//  1. content_block_start (text) at toolUseIndex — the buffered
-//     tool_use's content_block_start was discarded on the DENY path,
-//     so this is the first start event the client sees at this index.
-//  2. content_block_delta (text_delta) carrying the message body.
-//  3. content_block_stop closing the text block.
-//  4. message_delta with stop_reason: end_turn — overrides any
-//     tool_use stop_reason that would have otherwise come from
-//     upstream and tells the SDK no tool result is needed.
-//  5. message_stop terminating the message.
-//
-// Each event is `event: <name>\ndata: <json>\n\n` per the Anthropic
-// streaming wire format (docs/LLM_API_PROXY.md § 5.2).
+// buildAnthropicRefusalSSE emits a text block at toolUseIndex (the
+// tool_use's own content_block_start was discarded with the buffer, so
+// the client sees this start first), then message_delta with
+// stop_reason "end_turn" so no tool result is expected, then
+// message_stop.
 func buildAnthropicRefusalSSE(message string, toolUseIndex int) []byte {
 	var buf bytes.Buffer
 
 	emit := func(eventName string, payload map[string]interface{}) {
 		body, err := json.Marshal(payload)
 		if err != nil {
-			// Defensive fallback (see buildOpenAIRefusalSSE rationale).
 			body = []byte(`{"error":"vanzik refusal marshal failed"}`)
 		}
 		fmt.Fprintf(&buf, "event: %s\ndata: %s\n\n", eventName, string(body))

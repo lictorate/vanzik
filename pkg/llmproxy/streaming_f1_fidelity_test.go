@@ -1,17 +1,9 @@
 package llmproxy
 
-// streaming_f1_fidelity_test.go pins the F1 audit-verdict FIDELITY fix (C3),
-// the follow-up to the F1 fail-closed fix in streaming_f1_test.go.
-//
-// Before this fix, a malformed-completion tool_call was refused to the client
-// (a forced malformed_tool_call DENY) but its AUDIT entry was written by the
-// normal /v1/check path, which records the POLICY engine's verdict — often
-// ALLOW. So the audit trail could read ALLOW while the agent got DENY: a
-// compliance hazard for a firewall. With Server.RecordForcedAudit wired, the
-// malformed call's audit entry now carries the DENY the client actually
-// received, and the policy gate is NOT consulted for that call (no fidelity-
-// blind /v1/check), while a LATER valid call in the same stream still gates
-// normally.
+// With Server.RecordForcedAudit wired, a malformed-completion refusal is
+// audited with the DENY the client received, not the engine verdict
+// /v1/check would record (often ALLOW). PolicyCheck is not consulted for
+// that call; a later valid call in the same stream still gates normally.
 
 import (
 	"context"
@@ -23,9 +15,8 @@ import (
 	"testing"
 )
 
-// forcedAuditSpy captures the decisions passed to Server.RecordForcedAudit. It
-// stands in for the central /v1/audit ingest, so a captured entry is the
-// observable proxy for "what verdict the audit trail recorded for this call".
+// forcedAuditSpy stands in for /v1/audit, capturing what
+// Server.RecordForcedAudit records.
 type forcedAuditSpy struct {
 	mu    sync.Mutex
 	calls []forcedAuditCall
@@ -34,10 +25,8 @@ type forcedAuditSpy struct {
 type forcedAuditCall struct {
 	toolCallID string
 	decision   Decision
-	// call is the whole request as it would reach /v1/audit. The structural
-	// refusals in stream_refusal_audit_test.go assert on its identity fields
-	// (tenant, agent, session, provider), which are what make an entry
-	// actionable for an operator.
+	// call is the request as it would reach /v1/audit; its identity fields
+	// make an entry actionable.
 	call ToolCallCheck
 }
 
@@ -55,11 +44,10 @@ func (f *forcedAuditSpy) recorded() []forcedAuditCall {
 	return out
 }
 
-// TestStreaming_OpenAI_MalformedCompletion_AuditRecordsMalformedDeny drives an
-// OpenAI stream whose first tool_call finalizes with invalid JSON, followed by a
-// valid tool_call. PolicyCheck is wired to ALLOW (the fidelity-gap scenario).
-// The audit record for the malformed call must carry the malformed_tool_call
-// DENY, and PolicyCheck must NOT fire for it — only for the later valid call.
+// TestStreaming_OpenAI_MalformedCompletion_AuditRecordsMalformedDeny: with
+// PolicyCheck returning ALLOW, the malformed call's audit record carries
+// the malformed_tool_call DENY, and PolicyCheck fires only for the later
+// valid call.
 func TestStreaming_OpenAI_MalformedCompletion_AuditRecordsMalformedDeny(t *testing.T) {
 	malformedDelta := `data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_bad","type":"function","function":{"name":"bash","arguments":"{\"cmd\":\"ls"}}]},"finish_reason":null}]}` + "\n\n"
 	finish := `data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n"
@@ -102,8 +90,6 @@ func TestStreaming_OpenAI_MalformedCompletion_AuditRecordsMalformedDeny(t *testi
 		t.Errorf("malformed tool_call leaked into client output: %q", string(got))
 	}
 
-	// Fidelity: the audit record for the malformed call carries the DENY, NOT
-	// the policy verdict.
 	rec := auditSpy.recorded()
 	if len(rec) != 1 || rec[0].toolCallID != "call_bad" {
 		t.Fatalf("forced-audit records = %+v, want exactly one for call_bad", rec)
@@ -115,8 +101,6 @@ func TestStreaming_OpenAI_MalformedCompletion_AuditRecordsMalformedDeny(t *testi
 		t.Errorf("audit recorded rule = %q, want deny:llm_api_proxy:malformed_tool_call (not the policy verdict)", rec[0].decision.Rule)
 	}
 
-	// The policy gate must NOT be consulted for the malformed call (no
-	// fidelity-blind /v1/check), but MUST still gate the later valid call.
 	if ids := spy.ids(); len(ids) != 1 || ids[0] != "call_good" {
 		t.Fatalf("PolicyCheck ids = %v, want [call_good] only (malformed call audited via forced path; valid call gated normally)", ids)
 	}
@@ -180,10 +164,9 @@ func TestStreaming_Anthropic_MalformedCompletion_AuditRecordsMalformedDeny(t *te
 	}
 }
 
-// TestStreaming_MalformedCompletion_NilHook_FallsBackToPolicyAudit pins the
-// nil-hook fallback: with RecordForcedAudit unwired, the malformed call is still
-// audited via the normal /v1/check path (lower fidelity, but no silent gap) —
-// exactly the pre-C3 behavior the existing F1 tests rely on.
+// TestStreaming_MalformedCompletion_NilHook_FallsBackToPolicyAudit: with
+// RecordForcedAudit nil, the malformed call is audited through PolicyCheck
+// (engine verdict, but no silent gap).
 func TestStreaming_MalformedCompletion_NilHook_FallsBackToPolicyAudit(t *testing.T) {
 	malformedDelta := `data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_bad","type":"function","function":{"name":"bash","arguments":"{\"cmd\":\"ls"}}]},"finish_reason":null}]}` + "\n\n"
 	finish := `data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n"
@@ -219,8 +202,6 @@ func TestStreaming_MalformedCompletion_NilHook_FallsBackToPolicyAudit(t *testing
 	if !strings.Contains(string(got), "malformed tool call arguments") {
 		t.Errorf("expected malformed refusal to client; got %q", string(got))
 	}
-	// Fallback: the policy gate IS consulted for the malformed call (that is the
-	// audit mechanism when the forced-audit hook is not wired).
 	if ids := spy.ids(); len(ids) != 1 || ids[0] != "call_bad" {
 		t.Fatalf("PolicyCheck ids = %v, want [call_bad] (nil-hook fallback audits via /v1/check)", ids)
 	}

@@ -1,12 +1,8 @@
 package llmproxy
 
-// hardening_test.go covers two v0.5 R-Sec audit fixes:
-//
-//   - H2: recoverPanic middleware on every registered handler so a
-//     panic in a per-request goroutine returns 500 instead of crashing
-//     the proxy process.
-//   - H3: --max-concurrent-streams global cap on simultaneously-active
-//     streaming requests; refused with 503 + Retry-After when at cap.
+// Covers recoverPanic (a handler panic returns 500 instead of crashing
+// the process, and never corrupts a committed response) and the
+// --max-concurrent-streams cap (503 + Retry-After at the cap).
 
 import (
 	"context"
@@ -23,7 +19,7 @@ import (
 	"lictorate.com/vanzik/v2/pkg/metrics"
 )
 
-// ----- H2: recoverPanic middleware -----
+// ----- recoverPanic middleware -----
 
 // TestServer_RecoverPanic_PerRequestIsolation verifies that a panic in
 // one handler returns 500 to the client, doesn't crash the process,
@@ -49,11 +45,7 @@ func TestServer_RecoverPanic_PerRequestIsolation(t *testing.T) {
 	}
 	srv.startTime = time.Now()
 
-	// Build a mux with both a panicking handler (wrapped via
-	// recoverPanic) and the standard healthz so we can prove the
-	// process survives. We avoid touching srv.routes() because the
-	// real routes are already wired; we want a synthetic panic
-	// handler that the test owns end-to-end.
+	// A test-owned mux with panicking handlers next to healthy ones.
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /panic", srv.recoverPanic(func(w http.ResponseWriter, r *http.Request) {
 		panic("synthetic panic for test")
@@ -140,14 +132,8 @@ func TestServer_RecoverPanic_PerRequestIsolation(t *testing.T) {
 	resp.Body.Close()
 }
 
-// TestServer_RecoverPanic_RoutesWired sanity-checks that the routes()
-// builder applies recoverPanic to every entry. We verify by directly
-// injecting a panicking handler into a fresh mux that mirrors routes()
-// and asserting it doesn't tear down the test runner.
-//
-// Coupled with the integration test above, this confirms the wrapping
-// invariant: any future route added without recoverPanic is a
-// regression.
+// TestServer_RecoverPanic_RoutesWired sanity-checks the invariant that
+// every route is wrapped in recoverPanic.
 func TestServer_RecoverPanic_RoutesWired(t *testing.T) {
 	cfg := &Config{
 		Listen:               "127.0.0.1:0",
@@ -169,16 +155,14 @@ func TestServer_RecoverPanic_RoutesWired(t *testing.T) {
 	}
 	srv.startTime = time.Now()
 
-	// Smoke-test: routes() returns without panicking and /healthz is
-	// still wrapped (it's intentionally auth-bypassed but must still
-	// be panic-safe).
+	// /healthz skips auth but must still be panic-safe.
 	mux := srv.routes()
 	if mux == nil {
 		t.Fatalf("routes returned nil")
 	}
 }
 
-// ----- B20: never append an error envelope onto a committed response -----
+// ----- never append an error envelope onto a committed response -----
 
 // newPanicTestServer builds a minimal Server for exercising recoverPanic.
 func newPanicTestServer(t *testing.T) *Server {
@@ -205,17 +189,10 @@ func newPanicTestServer(t *testing.T) *Server {
 	return srv
 }
 
-// TestServer_RecoverPanic_DoesNotAppendToCommittedBody is the B20 regression
-// test for the panic path.
-//
-// A panic AFTER the handler has flushed bytes used to append a JSON error
-// object onto the partial response: net/http drops the superfluous
-// WriteHeader but still writes the body that follows, so the client received
-// `<partial SSE stream><JSON error envelope>` concatenated. For a streaming
-// response that is malformed output the SDK cannot parse.
-//
-// The correct behaviour once the wire is committed is to write NOTHING and let
-// the truncated body close, which SDKs already treat as a disconnect.
+// TestServer_RecoverPanic_DoesNotAppendToCommittedBody: a panic after
+// bytes were flushed must write nothing more. net/http drops the second
+// WriteHeader but still writes the body after it, which would hand the
+// client `<partial SSE stream><JSON error envelope>`.
 func TestServer_RecoverPanic_DoesNotAppendToCommittedBody(t *testing.T) {
 	srv := newPanicTestServer(t)
 
@@ -246,9 +223,8 @@ func TestServer_RecoverPanic_DoesNotAppendToCommittedBody(t *testing.T) {
 	}
 }
 
-// TestServer_RecoverPanic_UncommittedStillGets500 guards the other direction:
-// suppressing the envelope must apply ONLY once the wire is committed. A panic
-// before any write still owes the client a clean 500.
+// TestServer_RecoverPanic_UncommittedStillGets500: a panic before any
+// write still returns a clean 500.
 func TestServer_RecoverPanic_UncommittedStillGets500(t *testing.T) {
 	srv := newPanicTestServer(t)
 
@@ -270,10 +246,8 @@ func TestServer_RecoverPanic_UncommittedStillGets500(t *testing.T) {
 	}
 }
 
-// TestServer_RecoverPanic_ImplicitWriteCommits covers the subtle case: a bare
-// Write with no explicit WriteHeader sends an implicit 200, which commits the
-// response just as surely. If committedWriter only tracked WriteHeader, this
-// handler's panic would still corrupt the body.
+// TestServer_RecoverPanic_ImplicitWriteCommits: a bare Write (implicit
+// 200) commits the response just as WriteHeader does.
 func TestServer_RecoverPanic_ImplicitWriteCommits(t *testing.T) {
 	srv := newPanicTestServer(t)
 
@@ -290,16 +264,10 @@ func TestServer_RecoverPanic_ImplicitWriteCommits(t *testing.T) {
 	}
 }
 
-// TestPassThrough_UpstreamAbortsMidBodyAppendsNoEnvelope is the B20 regression
-// test for the path the original fix actually targeted: forwardTo's io.Copy.
-//
-// The Wave-1 fix tagged that error with errResponseCommitted so writeJSONError
-// no-ops — but nothing exercised it. The bug: forwardTo writes upstream headers
-// + status, starts copying, and if the upstream resets mid-body io.Copy returns
-// an error. The handler then called writeJSONError(502), whose second
-// WriteHeader net/http drops as superfluous while the JSON body it writes still
-// lands appended to the partial response. The client received
-// `<partial valid body><Vanzik JSON error>` — malformed.
+// TestPassThrough_UpstreamAbortsMidBodyAppendsNoEnvelope: when the
+// upstream resets mid-body in forwardTo's io.Copy, the handler's
+// writeJSONError(502) must no-op (errResponseCommitted) instead of
+// appending an error envelope to the partial body.
 func TestPassThrough_UpstreamAbortsMidBodyAppendsNoEnvelope(t *testing.T) {
 	const partial = `{"data":[{"embedding":[0.1,0.2`
 
@@ -343,11 +311,8 @@ func TestPassThrough_UpstreamAbortsMidBodyAppendsNoEnvelope(t *testing.T) {
 	}
 }
 
-// TestServer_RecoverPanic_PreservesFlusher is the compatibility guard for the
-// wrapper. Every streaming path does `w.(http.Flusher)` and bails out with
-// "response writer does not support flushing" if the assertion fails — so a
-// wrapper that did not forward Flush would silently disable SSE on every
-// route. This asserts the wrapper stays flushable.
+// TestServer_RecoverPanic_PreservesFlusher: every streaming path asserts
+// http.Flusher, so a wrapper without Flush would disable SSE everywhere.
 func TestServer_RecoverPanic_PreservesFlusher(t *testing.T) {
 	srv := newPanicTestServer(t)
 
@@ -372,49 +337,35 @@ func TestServer_RecoverPanic_PreservesFlusher(t *testing.T) {
 	}
 }
 
-// ----- H3: --max-concurrent-streams enforcement -----
+// ----- --max-concurrent-streams enforcement -----
 
-// streamingProxyHelper builds a streaming-capable proxy whose upstream
-// emits a single SSE event then BLOCKS on a release channel. That lets
-// the test hold streams open while another request is fired against
-// the cap.
+// streamingProxyHelper builds a proxy whose upstream emits one SSE event
+// then blocks until `release` closes, holding streams open.
 func streamingProxyHelper(t *testing.T, mutators ...func(*Config)) (proxyURL string, release chan struct{}, admitted chan struct{}, teardown func()) {
 	t.Helper()
 	release = make(chan struct{})
-	// admitted carries one signal per request that reaches the upstream.
-	// A request only reaches the upstream AFTER the proxy's admitStream
-	// has incremented the active-streams gauge and forwarded it (a
-	// capped-out request gets a 503 and never arrives here), so draining
-	// N signals is a deterministic "N streams are now active" barrier —
-	// far more robust than polling the gauge against a wall-clock
-	// deadline, which starves under full-suite parallel load. Buffer is
-	// generous so the non-blocking send below never drops a signal for
-	// the fan-outs these tests fire.
+	// admitted gets one signal per request reaching the upstream, which
+	// happens only after admitStream counted it. Draining N signals is a
+	// deterministic barrier; polling the gauge against a deadline starves
+	// under parallel load. Buffered so the non-blocking send never drops.
 	admitted = make(chan struct{}, 64)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		flusher, _ := w.(http.Flusher)
-		// One byte-identity-friendly content delta, then we block
-		// until the test releases. The test releases by closing
-		// `release`.
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"},\"finish_reason\":null}]}\n\n"))
 		if flusher != nil {
 			flusher.Flush()
 		}
-		// Signal that this stream has been admitted + forwarded.
-		// Non-blocking so a slow/undrained test can never stall the
-		// upstream handler.
+		// Non-blocking so an undrained test cannot stall the handler.
 		select {
 		case admitted <- struct{}{}:
 		default:
 		}
-		// Block until release OR client disconnect.
 		select {
 		case <-release:
 		case <-r.Context().Done():
 		}
-		// Send terminator so the loop exits cleanly.
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 		if flusher != nil {
 			flusher.Flush()
@@ -446,8 +397,7 @@ func streamingProxyHelper(t *testing.T, mutators ...func(*Config)) (proxyURL str
 
 	httpSrv := httptest.NewServer(srv.routes())
 	teardown = func() {
-		// Best-effort: release any blocked upstreams so the test
-		// servers can shut down promptly.
+		// Release blocked upstreams so the servers shut down promptly.
 		select {
 		case <-release:
 		default:
@@ -459,11 +409,8 @@ func streamingProxyHelper(t *testing.T, mutators ...func(*Config)) (proxyURL str
 	return httpSrv.URL, release, admitted, teardown
 }
 
-// waitForAdmitted blocks until n streams have reached the upstream
-// (i.e. been admitted + forwarded by the proxy), or fails the test.
-// Deterministic replacement for polling LLMProxyStreamsActive against a
-// wall-clock deadline. The safety-net timeout is generous because it
-// only trips on a real hang, never on scheduler starvation.
+// waitForAdmitted blocks until n streams have reached the upstream, or
+// fails. The timeout is generous: it should only trip on a real hang.
 func waitForAdmitted(t *testing.T, admitted <-chan struct{}, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
@@ -475,10 +422,8 @@ func waitForAdmitted(t *testing.T, admitted <-chan struct{}, n int) {
 	}
 }
 
-// fireStreamingRequest fires a single streaming request and returns
-// the response status + a closer the caller invokes when done reading.
-// The body is partially read so the proxy keeps the slot occupied
-// until the caller is ready to release it.
+// fireStreamingRequest returns the status and the unread body, so the
+// slot stays occupied until the caller closes it.
 func fireStreamingRequest(t *testing.T, base string) (int, io.ReadCloser, error) {
 	t.Helper()
 	body := `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}],"stream":true}`
@@ -491,8 +436,6 @@ func fireStreamingRequest(t *testing.T, base string) (int, io.ReadCloser, error)
 	return resp.StatusCode, resp.Body, nil
 }
 
-// drainAndClose drains a body and closes it; used after assertions on
-// the status code so the proxy goroutine can finish.
 func drainAndClose(rc io.ReadCloser) {
 	if rc == nil {
 		return
@@ -520,8 +463,6 @@ func TestServer_MaxConcurrentStreams_RejectsOverflow(t *testing.T) {
 	}
 	resultsCh := make(chan result, 3)
 
-	// Fire request 1 and 2 (should succeed). Both will block on the
-	// upstream until we close `release`, which keeps the slots held.
 	for i := 0; i < 2; i++ {
 		go func() {
 			body := `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}],"stream":true}`
@@ -536,14 +477,11 @@ func TestServer_MaxConcurrentStreams_RejectsOverflow(t *testing.T) {
 		}()
 	}
 
-	// Wait until both streams have been admitted + forwarded (the gauge
-	// has incremented to 2) before firing the overflow request.
 	waitForAdmitted(t, admitted, 2)
 	if got := metrics.LLMProxyStreamsActive(); got < 2 {
 		t.Fatalf("streamingActive = %d, want ≥ 2 before firing overflow", got)
 	}
 
-	// Now fire request 3 — should be refused with 503.
 	status3, body3, err3 := fireStreamingRequest(t, base)
 	if err3 != nil {
 		t.Fatalf("3rd request: %v", err3)
@@ -554,11 +492,7 @@ func TestServer_MaxConcurrentStreams_RejectsOverflow(t *testing.T) {
 		t.Errorf("3rd request status = %d, want 503", status3)
 	}
 
-	// Read the response to verify Retry-After + body shape. We need
-	// the headers — make a fresh request that we know will be
-	// refused. The fireStreamingRequest helper above lost the headers
-	// in its return shape, so do it inline this time for the headers
-	// check.
+	// fireStreamingRequest drops headers; check Retry-After inline.
 	body := `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}],"stream":true}`
 	req, _ := http.NewRequest("POST", base+"/v1/chat/completions", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -581,16 +515,12 @@ func TestServer_MaxConcurrentStreams_RejectsOverflow(t *testing.T) {
 		t.Errorf("503 body = %q, want contains 'vanzik_error' type", string(respBody))
 	}
 
-	// Metric incremented at least twice (for the two refused
-	// requests we fired).
 	if got := metrics.LLMProxyStreamsRejectedTotal(); got-rejectedBefore < 2 {
 		t.Errorf("LLMProxyStreamsRejectedTotal delta = %d, want ≥ 2", got-rejectedBefore)
 	}
 
-	// Release the held streams so the goroutines wrap up.
 	close(release)
 
-	// Drain the original 2 successful responses.
 	for i := 0; i < 2; i++ {
 		select {
 		case r := <-resultsCh:
@@ -645,9 +575,6 @@ func TestServer_MaxConcurrentStreams_ZeroDisablesCap(t *testing.T) {
 		}()
 	}
 
-	// Wait until all 10 have been admitted + forwarded — proves the cap
-	// really is disabled, not just slow to fire the 11th. Deterministic
-	// barrier (one signal per admitted stream), not a gauge poll.
 	waitForAdmitted(t, admitted, fanout)
 	if got := metrics.LLMProxyStreamsActive(); got < int64(fanout) {
 		t.Errorf("streamingActive = %d, want ≥ %d under disabled cap", got, fanout)
@@ -694,17 +621,13 @@ func TestServer_MaxConcurrentStreams_DecrementsOnRequestEnd(t *testing.T) {
 		}()
 	}
 
-	// Both streams admitted + forwarded (gauge == 2) — deterministic
-	// barrier, not a wall-clock gauge poll.
 	waitForAdmitted(t, admitted, 2)
 	if got := metrics.LLMProxyStreamsActive(); got < 2 {
 		t.Fatalf("streamingActive = %d, want 2 before release", got)
 	}
 
-	// Release upstreams; both held streams complete.
 	close(release)
 
-	// Drain both responses fully so the proxy releases the slots.
 	for i := 0; i < 2; i++ {
 		select {
 		case r := <-resultsCh:
@@ -717,10 +640,7 @@ func TestServer_MaxConcurrentStreams_DecrementsOnRequestEnd(t *testing.T) {
 		}
 	}
 
-	// Wait until streamingActive returns to 0 (proxy goroutine has
-	// hit the defer s.releaseStream()). This is the release path —
-	// bounded and fast once both bodies are drained above — so a short
-	// poll with a safety-net deadline is fine.
+	// Polling is fine here: release is fast once bodies are drained.
 	deadline := time.Now().Add(15 * time.Second)
 	for metrics.LLMProxyStreamsActive() > 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -729,11 +649,7 @@ func TestServer_MaxConcurrentStreams_DecrementsOnRequestEnd(t *testing.T) {
 		t.Fatalf("streamingActive = %d after stream end, want 0 (release didn't fire)", got)
 	}
 
-	// Now fire a 3rd; should succeed because slots are free. Use a
-	// fresh upstream-block channel by tearing down the helper and
-	// rebuilding — but since our helper's release is already closed,
-	// the upstream now drains immediately. So a 3rd request should
-	// just complete cleanly.
+	// release is closed, so this upstream completes immediately.
 	status, body, err := fireStreamingRequest(t, base)
 	if err != nil {
 		t.Fatalf("3rd request after slot release: %v", err)
@@ -744,10 +660,8 @@ func TestServer_MaxConcurrentStreams_DecrementsOnRequestEnd(t *testing.T) {
 	}
 }
 
-// TestAdmitStream_NoCapStillTracksGauge confirms that even with
-// MaxConcurrentStreams=0 the active gauge still increments, so
-// operators on uncapped deployments retain visibility into in-flight
-// streams.
+// TestAdmitStream_NoCapStillTracksGauge: with the cap disabled the gauge
+// still counts in-flight streams.
 func TestAdmitStream_NoCapStillTracksGauge(t *testing.T) {
 	cfg := &Config{
 		Listen:               "127.0.0.1:0",
@@ -782,9 +696,8 @@ func TestAdmitStream_NoCapStillTracksGauge(t *testing.T) {
 	}
 }
 
-// TestConfig_MaxConcurrentStreams_DefaultAndValidation ensures the
-// flag parser accepts the new --max-concurrent-streams flag and rejects
-// negative values. Zero must be permitted (disable-cap sentinel).
+// TestConfig_MaxConcurrentStreams_DefaultAndValidation: negative values
+// are rejected; zero (cap disabled) is accepted.
 func TestConfig_MaxConcurrentStreams_DefaultAndValidation(t *testing.T) {
 	t.Setenv("VANZIK_API_KEY", "")
 

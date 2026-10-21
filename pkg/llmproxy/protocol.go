@@ -1,22 +1,12 @@
 package llmproxy
 
-// protocol.go defines the minimal request/response types the proxy
-// inspects. The proxy is a dumb-forward by design: bodies pass through
-// upstream as the original bytes. These structs exist only for the
-// inspection step (streaming detection + tool definitions for scope
-// mapping). Unknown fields round-trip transparently because we never
-// re-encode the body.
+// Request/response types for inspection only: bodies are forwarded as
+// the original bytes and never re-encoded, so untyped fields survive.
+// Streaming shapes live in the SSE parsers.
 //
-// Wire-format references:
-//
-//   - OpenAI Chat Completions:
-//     https://platform.openai.com/docs/api-reference/chat/create
-//   - Anthropic Messages:
-//     https://platform.claude.com/docs/en/api/messages
-//
-// Streaming-shape types live in the SSE parsers (openai_parser.go,
-// anthropic_parser.go); the non-streaming response shape modelled
-// here is stable and well-known.
+// References:
+//   - https://platform.openai.com/docs/api-reference/chat/create
+//   - https://platform.claude.com/docs/en/api/messages
 
 import (
 	"encoding/json"
@@ -25,10 +15,7 @@ import (
 // ----- OpenAI Chat Completions -----
 
 // ChatCompletionRequest is the OpenAI /v1/chat/completions request
-// body, parsed only to the depth the proxy needs. The Messages slice
-// is kept as raw JSON because the proxy never inspects message
-// content; tools are parsed so the scope-mapping layer can name-match
-// them against the policy scope map.
+// body, typed only as deep as the proxy reads.
 type ChatCompletionRequest struct {
 	Model    string               `json:"model"`
 	Stream   bool                 `json:"stream,omitempty"`
@@ -36,26 +23,20 @@ type ChatCompletionRequest struct {
 	Tools    []ChatCompletionTool `json:"tools,omitempty"`
 }
 
-// ChatCompletionTool models one element of the request's `tools`
-// array. Only "function" type is defined in the OpenAI spec.
+// ChatCompletionTool is one element of the request's `tools` array.
 type ChatCompletionTool struct {
 	Type     string                 `json:"type"`
 	Function ChatCompletionToolFunc `json:"function"`
 }
 
-// ChatCompletionToolFunc carries the function-tool definition. The
-// JSON-Schema parameters object is kept raw — the proxy does not
-// validate arguments, only forwards them.
+// ChatCompletionToolFunc is a function-tool definition.
 type ChatCompletionToolFunc struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	Parameters  json.RawMessage `json:"parameters,omitempty"`
 }
 
-// ChatCompletionResponse is the non-streaming response. Modelled to
-// the depth the gate needs (choices[i].message.tool_calls) plus
-// passthrough-style fields the proxy might surface in audit meta
-// (id, model, usage).
+// ChatCompletionResponse is the non-streaming chat response.
 type ChatCompletionResponse struct {
 	ID      string                 `json:"id"`
 	Object  string                 `json:"object"`
@@ -72,33 +53,29 @@ type ChatCompletionChoice struct {
 	FinishReason string                `json:"finish_reason"`
 }
 
-// ChatCompletionMessage carries the assistant turn — content (string
-// or null when there are tool calls) and zero-or-more tool_calls.
+// ChatCompletionMessage is the assistant turn; Content is null when
+// there are tool calls.
 type ChatCompletionMessage struct {
 	Role      string                       `json:"role"`
 	Content   *string                      `json:"content,omitempty"`
 	ToolCalls []ChatCompletionToolCallEcho `json:"tool_calls,omitempty"`
 }
 
-// ChatCompletionToolCallEcho is the response-side shape of a tool
-// call: the model picked a function and synthesised arguments. The
-// `arguments` field on the wire is a JSON-encoded STRING (yes — a
-// string holding JSON) per the OpenAI spec. The proxy preserves it
-// as-is so re-parsing happens at the policy-gate boundary.
+// ChatCompletionToolCallEcho is a tool call in a response.
 type ChatCompletionToolCallEcho struct {
 	ID       string                 `json:"id"`
 	Type     string                 `json:"type"`
 	Function ChatCompletionToolEcho `json:"function"`
 }
 
-// ChatCompletionToolEcho is the (name, JSON-string-arguments) pair.
+// ChatCompletionToolEcho is a tool call's function. Arguments is a
+// string holding JSON, parsed only at the gate.
 type ChatCompletionToolEcho struct {
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
 }
 
-// ChatCompletionUsage is the token-usage report. Optional in
-// streaming and absent from intermediate chunks.
+// ChatCompletionUsage is the token-usage report.
 type ChatCompletionUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
@@ -107,9 +84,8 @@ type ChatCompletionUsage struct {
 
 // ----- Anthropic Messages -----
 
-// AnthropicMessagesRequest is the /v1/messages request body. Like
-// the OpenAI struct, only fields the proxy reads are typed; the
-// rest passes through in the original bytes.
+// AnthropicMessagesRequest is the /v1/messages request body, typed
+// only as deep as the proxy reads.
 type AnthropicMessagesRequest struct {
 	Model    string            `json:"model"`
 	Stream   bool              `json:"stream,omitempty"`
@@ -124,10 +100,7 @@ type AnthropicTool struct {
 	InputSchema json.RawMessage `json:"input_schema,omitempty"`
 }
 
-// AnthropicMessagesResponse is the non-streaming response. The
-// content array is heterogeneous (text blocks, tool_use blocks); the
-// proxy parses the type discriminator on each block and walks
-// tool_use blocks for gating.
+// AnthropicMessagesResponse is the non-streaming messages response.
 type AnthropicMessagesResponse struct {
 	ID         string                  `json:"id"`
 	Type       string                  `json:"type"`
@@ -138,10 +111,7 @@ type AnthropicMessagesResponse struct {
 	Usage      *AnthropicUsage         `json:"usage,omitempty"`
 }
 
-// AnthropicContentBlock is one element of the response content
-// array. Text blocks carry `text`; tool_use blocks carry
-// `id`, `name`, `input`. Other types (e.g. image) round-trip
-// untouched because the gating logic only acts on tool_use.
+// AnthropicContentBlock is one content block; only tool_use is gated.
 type AnthropicContentBlock struct {
 	Type string `json:"type"`
 

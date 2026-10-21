@@ -1,11 +1,7 @@
 package llmproxy
 
-// Malformed-verdict tests for the gate (review item H1).
-//
-// gate_test.go already covers an UNREACHABLE central server (the fail-mode
-// branches) and a non-2xx status (TestLLMHTTPPolicyClient_Non2xxSurfacesAsFailMode).
-// The dangerous gap these close is a REACHABLE server that answers 200 with
-// bytes the gate cannot trust:
+// A reachable central server that answers 200 with bytes the gate cannot
+// trust (gate_test.go covers unreachable and non-2xx):
 //
 //   - a body that does not decode (garbage / truncated / empty), which must be
 //     treated as a transport failure and resolved by --fail-mode (DENY by

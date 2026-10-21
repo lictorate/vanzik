@@ -4,22 +4,10 @@
 // any tool calls the model emits through the central Vanzik
 // policy engine.
 //
-// Major pieces:
-//
-//   - server.go — HTTP server skeleton, non-streaming forwarding,
-//     protocol types, integration hooks.
-//   - streaming.go — streaming pause/resume/rewrite (SSE parsing for
-//     both providers, byte-identity invariant on ALLOW, synthetic
-//     refusal on DENY / REQUIRE_APPROVAL).
-//   - scope_map.go — tool-call → policy-scope mapping (built-in
-//     defaults + YAML override).
-//   - gate.go — PolicyCheck hook wired against /v1/check, fail-mode
-//     handling.
-//   - refusal.go — synthetic-refusal payload construction.
-//
-// See docs/LLM_API_PROXY.md for the wire format design and
-// docs/PROXY_ARCHITECTURE.md for cross-cutting decisions (audit
-// transport tag, two-binary topology, fail-mode flag parity).
+// Files: server.go (server, hooks), forward.go (non-streaming),
+// streaming.go with openai_parser.go and anthropic_parser.go (SSE
+// gating), gate.go (/v1/check client), scope_map.go, refusal.go.
+// Design: docs/LLM_API_PROXY.md and docs/PROXY_ARCHITECTURE.md.
 package llmproxy
 
 import (
@@ -35,16 +23,13 @@ import (
 	"lictorate.com/vanzik/v2/pkg/internal/gateclient"
 )
 
-// Default flag values. Centralised here so tests can refer to them
-// without re-running the flag parser.
+// Default flag values.
 const (
-	// DefaultListen binds to loopback by design — non-loopback binds
-	// without --proxy-api-key are refused at validation time.
+	// DefaultListen is loopback; Validate refuses non-loopback binds
+	// without --proxy-api-key.
 	DefaultListen = "127.0.0.1:8081"
 
-	// Defaults aligned with docs/LLM_API_PROXY.md § 2 CLI surface.
-	// The gate-side values are the shared contract from
-	// pkg/internal/gateclient (same for the MCP gateway).
+	// Gate-side defaults are shared with the MCP gateway.
 	DefaultUpstreamOpenAI    = "https://api.openai.com"
 	DefaultUpstreamAnthropic = "https://api.anthropic.com"
 	DefaultGuardURL          = gateclient.DefaultGuardURL
@@ -52,41 +37,27 @@ const (
 	DefaultFailMode          = gateclient.DefaultFailMode
 	DefaultLogLevel          = gateclient.DefaultLogLevel
 
-	// DefaultMaxBufferBytes (1 MiB) is the per-stream tool-call
-	// accumulation cap. Mirrors the central server's MaxRequestBodySize
-	// so /v1/check side-channel payloads always fit. The streaming
-	// path enforces this; the configured value is stored here.
+	// DefaultMaxBufferBytes is the per-stream tool-call buffer cap. It
+	// matches the central server's MaxRequestBodySize so /v1/check
+	// payloads always fit.
 	DefaultMaxBufferBytes = 1024 * 1024 // 1 MiB
 
-	// MaxConfigurableBufferBytes refuses pathological values up front.
-	// 64 MiB is the upper bound — beyond that, gating an individual
-	// tool call is no longer the right tool (operators should split
-	// the workload).
+	// MaxConfigurableBufferBytes is the largest accepted
+	// --max-buffer-bytes.
 	MaxConfigurableBufferBytes = 64 * 1024 * 1024 // 64 MiB
 
-	// DefaultMaxConcurrentStreams caps simultaneously-active streaming
-	// requests on the proxy. Each in-flight stream owns a per-request
-	// accumulator + read buffer (up to ~2x --max-buffer-bytes), so a
-	// global cap is the only thing keeping memory bounded under fan-out
-	// load. 100 was picked as a default that balances normal SDK
-	// concurrency (typically <10) against worst-case memory (100 × 1
-	// MiB ≈ 200 MiB read+accumulator territory). Operators with heavy
-	// fan-out should raise this and lower --max-buffer-bytes
-	// proportionally; operators on tiny boxes should lower it.
-	//
-	// 0 disables the cap entirely.
+	// DefaultMaxConcurrentStreams caps simultaneous streams; 0 disables
+	// the cap. Each stream holds up to ~2x --max-buffer-bytes, so this
+	// cap is what bounds memory under fan-out: 100 streams at 1 MiB is
+	// about 200 MiB, while typical SDK concurrency is under 10.
 	DefaultMaxConcurrentStreams = 100
 )
 
-// Config is the parsed CLI/env configuration for one proxy invocation.
-// Populated by ParseConfig. The server reads it once at startup and
-// treats it as immutable thereafter; hot-reload of flags is out of
-// scope.
+// Config is the proxy's parsed flag/env configuration, immutable after
+// startup.
 type Config struct {
-	// Listen is the proxy's HTTP bind address. Default DefaultListen
-	// (loopback). Non-loopback is rejected unless --proxy-api-key
-	// is set (mirrors central server's localhost-only fallback). An
-	// empty host (":8081") binds every interface, so it counts as
+	// Listen is the bind address. Non-loopback requires ProxyAPIKey; an
+	// empty host (":8081") binds every interface and counts as
 	// non-loopback.
 	Listen string
 
@@ -98,73 +69,49 @@ type Config struct {
 	// (/v1/messages).
 	UpstreamAnthropic string
 
-	// GuardURL is the central Vanzik server's base URL — the
-	// PolicyCheck hook calls <GuardURL>/v1/check.
+	// GuardURL is the central Vanzik server's base URL.
 	GuardURL string
 
-	// APIKey is the bearer token sent on the /v1/check side channel.
-	// Falls back to VANZIK_API_KEY env var when the flag is empty.
-	// Distinct from the user's upstream Authorization header (which
-	// is forwarded verbatim, never read).
+	// APIKey is the bearer for /v1/check and /v1/audit (falls back to
+	// VANZIK_API_KEY). Unrelated to the upstream Authorization header,
+	// which is forwarded unread.
 	APIKey string
 
-	// ProxyAPIKey is the OPTIONAL bearer the proxy enforces on inbound
-	// requests via the X-Vanzik-Proxy-Auth header. Empty disables
-	// proxy-level auth (safe on loopback). Sent in a separate header
-	// from Authorization so the upstream's own bearer token can be
-	// forwarded unambiguously.
+	// ProxyAPIKey, if set, is enforced on inbound requests via
+	// ProxyAuthHeader. Empty disables proxy auth (loopback only).
 	ProxyAPIKey string
 
-	// TenantID is plumbed through to /v1/check and audit entries.
+	// TenantID is sent to /v1/check and recorded in audit entries.
 	TenantID string
 
-	// FailMode mirrors the SDK / MCP gateway contract from
-	// docs/PROXY_ARCHITECTURE.md § 6.1: "deny" | "allow" |
-	// "fail-closed-with-audit". The gate honours this on /v1/check
-	// failures.
+	// FailMode is "deny", "allow" or "fail-closed-with-audit"
+	// (docs/PROXY_ARCHITECTURE.md § 6.1).
 	FailMode string
 
-	// FailAuditLog is the local JSONL file the gate appends a deny
-	// record to when /v1/check is unreachable in fail-closed-with-audit
-	// mode (the central server can't write the audit entry itself).
-	// Empty disables the local record. Unused in other fail modes.
+	// FailAuditLog is the local JSONL file for denials made while
+	// /v1/check is unreachable in fail-closed-with-audit mode. Empty
+	// disables it.
 	FailAuditLog string
 
-	// MaxBufferBytes caps the per-stream tool-call accumulation
-	// buffer (default 1 MiB). The streaming pipeline enforces it.
+	// MaxBufferBytes caps the per-stream tool-call buffer.
 	MaxBufferBytes int
 
-	// MaxConcurrentStreams caps simultaneously-active streaming
-	// requests across the whole proxy. When the cap is reached, new
-	// streaming requests are refused with 503 + Retry-After: 5 instead
-	// of being processed (which would otherwise allocate another
-	// per-stream accumulator + read buffer pair). 0 disables the cap.
-	// Default: DefaultMaxConcurrentStreams.
-	//
-	// Without this cap the streaming memory ceiling is unbounded; the
-	// per-stream cap (--max-buffer-bytes) only constrains a single
-	// in-flight call.
+	// MaxConcurrentStreams caps simultaneous streams process-wide;
+	// excess requests get 503 + Retry-After: 5. 0 disables the cap.
 	MaxConcurrentStreams int
 
-	// LogLevel controls stderr verbosity. "info" or "debug".
+	// LogLevel is "info" or "debug".
 	LogLevel string
 
-	// PolicyPath points at the policy YAML the proxy reads to resolve
-	// the LLM tool→scope mapping locally (operators run the same YAML
-	// the central server loads — typically a shared file path).
-	//
-	// Optional: when unset, the gate falls back to the bundled
-	// DefaultLLMToolScopeMap and skips hot-reload. main.go logs a
-	// WARNING in that case because operator overrides won't apply.
-	// Cross-host deployments must mount the file on a shared volume
-	// (or replicate the YAML out-of-band) so the proxy and the
-	// central server stay in lockstep.
+	// PolicyPath is the policy YAML (the central server's) read for
+	// tool_scope_map overrides. Unset means DefaultLLMToolScopeMap only
+	// and no hot-reload. Cross-host deployments must share or replicate
+	// the file so both sides agree.
 	PolicyPath string
 }
 
-// ParseConfig parses CLI args (without the leading binary name) and
-// returns a Config. Errors are returned for the caller to surface.
-// API-key resolution: explicit --api-key wins over VANZIK_API_KEY.
+// ParseConfig parses CLI args (without the binary name) and validates
+// the result. --api-key wins over VANZIK_API_KEY.
 func ParseConfig(args []string) (*Config, error) {
 	return ParseConfigWithOutput(args, os.Stderr)
 }
@@ -180,8 +127,7 @@ var proxyFlagGroups = []clihelp.Group{
 	{Title: "Logging", Names: []string{"log-level"}},
 }
 
-// ParseConfigWithOutput is ParseConfig with the usage stream pluggable
-// for tests. Mirrors mcpgw.ParseConfigWithOutput.
+// ParseConfigWithOutput is ParseConfig with usage written to errOut.
 func ParseConfigWithOutput(args []string, errOut io.Writer) (*Config, error) {
 	fs := flag.NewFlagSet("vanzik-llm-proxy", flag.ContinueOnError)
 	fs.SetOutput(errOut)
@@ -253,9 +199,7 @@ Environment:
 	return cfg, nil
 }
 
-// Validate enforces invariants on a parsed Config. Exposed for tests
-// that build a Config struct directly without going through the
-// flag parser.
+// Validate checks a Config, including one built without ParseConfig.
 func (c *Config) Validate() error {
 	if c.Listen == "" {
 		return errors.New("--listen must not be empty")
@@ -294,9 +238,7 @@ func (c *Config) Validate() error {
 		return errors.New("--tenant-id must not be empty")
 	}
 
-	// Non-loopback bind without --proxy-api-key is refused per
-	// docs/LLM_API_PROXY.md § 8.1: avoids accidental
-	// internet-exposed proxies.
+	// No unauthenticated non-loopback binds (docs/LLM_API_PROXY.md § 8.1).
 	if !isLoopbackHost(host) && c.ProxyAPIKey == "" {
 		if strings.TrimSpace(host) == "" {
 			return fmt.Errorf("--listen %q has no host, so it binds every interface (non-loopback) without --proxy-api-key; refuse to start to avoid exposing an unauthenticated proxy (use 127.0.0.1:%s for loopback only)", c.Listen, port)
@@ -307,10 +249,8 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// isLoopbackHost returns true for "localhost", "127.x.x.x", "::1" and
-// "[::1]". Used by Validate to detect loopback binds. An empty host is
-// NOT loopback: net/http treats ":8081" as "listen on every interface",
-// the same as "0.0.0.0:8081".
+// isLoopbackHost reports whether host is localhost or a loopback IP.
+// An empty host is not: ":8081" listens on every interface.
 func isLoopbackHost(host string) bool {
 	host = strings.TrimSpace(host)
 	if host == "" {
@@ -319,9 +259,7 @@ func isLoopbackHost(host string) bool {
 	if host == "localhost" {
 		return true
 	}
-	// Strip brackets from IPv6 literal (net.SplitHostPort already
-	// strips them, but be defensive in case Validate was invoked on
-	// a hand-built Config).
+	// Brackets are normally stripped by net.SplitHostPort already.
 	host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
 	ip := net.ParseIP(host)
 	if ip == nil {

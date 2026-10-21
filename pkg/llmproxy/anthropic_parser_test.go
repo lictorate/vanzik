@@ -113,15 +113,9 @@ func TestAnthropicParser_BufferOverflow(t *testing.T) {
 	}
 }
 
-// TestAnthropicParser_PartialEventLine — feed the same fixture but
-// re-segmented so a single event's two lines arrive in separate
-// FeedEvent calls. Anthropic events are normally read as one unit by
-// readSSEEvent; this tests defensive behavior when the orchestrator's
-// reader hands us a partial.
+// TestAnthropicParser_PartialEventLine — an `event:` line with no
+// `data:` (readSSEEvent normally prevents this) passes through when idle.
 func TestAnthropicParser_PartialEventLine(t *testing.T) {
-	// Construct a "broken" event: only the `event:` line, no `data:`.
-	// The parser should treat it as no-data and pass through (since
-	// we're idle).
 	acc := NewAnthropicAccumulator(0)
 	res, err := acc.FeedEvent([]byte("event: ping\n\n"))
 	if err != nil {
@@ -143,10 +137,8 @@ func TestAnthropicParser_MalformedJSON(t *testing.T) {
 	}
 }
 
-// TestAnthropicParser_MissingEventLineToleratedViaJSONType — Anthropic
-// protocol allows event events without `event:` because the JSON
-// payload also carries the discriminator. Confirm we read the type
-// from JSON.
+// TestAnthropicParser_MissingEventLineToleratedViaJSONType — the type is
+// read from the JSON payload, so a missing `event:` line is fine.
 func TestAnthropicParser_MissingEventLineToleratedViaJSONType(t *testing.T) {
 	acc := NewAnthropicAccumulator(0)
 	// content_block_start arrives without the `event:` line.

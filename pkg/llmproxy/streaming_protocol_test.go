@@ -1,31 +1,17 @@
 package llmproxy
 
-// streaming_protocol_test.go pins four v1.0 audit findings in the two
-// SSE accumulators and the stream loops that drive them. All four share
-// one theme: a stream the firewall cannot gate must end in a refusal,
-// never in ungated bytes and never in silence.
+// A stream the firewall cannot gate must end in a refusal, never in
+// ungated bytes and never in silence. Covered here, by test-name prefix:
 //
-//	B7  Anthropic: an input_json_delta arriving while NO tool_use block
-//	    is open was forwarded verbatim. Those are tool-call argument
-//	    bytes belonging to a call the gate never saw start.
-//	B17 Both: buffered (ungated) events were DROPPED when upstream hit
-//	    EOF, or when `[DONE]` arrived while a cycle was still open. The
-//	    client got an empty response, the gate never ran and nothing was
-//	    audited. Note the fix is NOT to flush them — that would be the
-//	    bypass — but to run the completion path: gate, or refuse.
-//	B18 OpenAI: tool_call state is keyed by tool_calls[i].index, which is
-//	    unique only WITHIN a choice. With n>1, two choices' fragments
-//	    merged into one argument string nobody executes, and a sibling
-//	    choice's finish_reason could close the cycle early.
-//	B21 Anthropic: `{ }` as content_block_start.input was compared with
-//	    bytes.Equal against "{}", so an empty seed carrying insignificant
-//	    whitespace was mistaken for real arguments and the next
-//	    (conformant) input_json_delta tripped the H2 conflict refusal.
+//	TestB7_   Anthropic input_json_delta with no tool_use block open.
+//	TestB17_  A cycle still open at EOF or `[DONE]` is gated or refused, not
+//	          dropped (and not flushed, which would be the bypass).
+//	TestB18_  OpenAI tool_calls on more than one choice; a sibling choice's
+//	          finish_reason must not close the cycle.
+//	TestB21_  A whitespace-only `{ }` start input is empty, not a seed.
 //
-// Each finding gets both a parser-level test (exact FeedResult and
-// violation kind) and an end-to-end test through the real stream loop
-// (what the CLIENT receives), plus a counterweight test proving the fix
-// did not over-refuse traffic that must still flow.
+// Each case has a parser-level test, an end-to-end test of what the
+// client receives, and a counterweight proving valid traffic still flows.
 
 import (
 	"context"
@@ -44,8 +30,8 @@ import (
 // fixture helpers other test files define.
 // ---------------------------------------------------------------------
 
-// pvOpenAIToolDelta emits one OpenAI tool_call delta on a given CHOICE
-// index (the axis audit B18 is about) and tool_calls index.
+// pvOpenAIToolDelta emits one OpenAI tool_call delta on a given choice
+// index and tool_calls index.
 func pvOpenAIToolDelta(choice, toolIdx int, id, name, args string) string {
 	idPart := ""
 	if id != "" {
@@ -111,10 +97,9 @@ func pvAnthropicStop(index int) string {
 	)
 }
 
-// pvCallSpy is a PolicyCheck stub that records the FULL tool calls it was
-// asked to gate — the id proves an audit entry was driven, the raw
-// arguments prove WHAT the gate actually evaluated (which is the whole
-// question in B18 and B21).
+// pvCallSpy is a PolicyCheck stub that records the full tool calls it
+// gated: the id proves an audit entry was driven, the raw arguments show
+// what the gate evaluated.
 type pvCallSpy struct {
 	mu       sync.Mutex
 	calls    []ToolCallCheck
@@ -138,9 +123,8 @@ func (g *pvCallSpy) seen() []ToolCallCheck {
 }
 
 // pvRunStream drives one streaming request through the real proxy loop
-// against an upstream that writes `body` verbatim and then closes. The
-// close is what makes these tests meaningful for B17: the upstream never
-// lingers, so EOF is reached deterministically.
+// against an upstream that writes `body` and closes, so EOF is reached
+// deterministically.
 func pvRunStream(t *testing.T, provider, body string, spy *pvCallSpy) string {
 	t.Helper()
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -181,16 +165,13 @@ func pvRunStream(t *testing.T, provider, body string, spy *pvCallSpy) string {
 }
 
 // ---------------------------------------------------------------------
-// B7 — orphaned input_json_delta
+// Orphaned input_json_delta
 // ---------------------------------------------------------------------
 
 // TestB7_AnthropicIdleInputJSONDelta_FailsClosed pins that tool-input
 // fragments arriving with no tool_use block open are refused, not
-// forwarded. Pre-fix the idle branch returned PassThrough for every
-// delta type, so the fragments reached the client verbatim: a client
-// that reconstructs tool input from deltas alone would assemble and
-// execute arguments the firewall never inspected, and no gate cycle
-// existed that could ever have caught them.
+// forwarded: a client that rebuilds tool input from deltas would execute
+// arguments no gate cycle could ever see.
 func TestB7_AnthropicIdleInputJSONDelta_FailsClosed(t *testing.T) {
 	acc := NewAnthropicAccumulator(0)
 
@@ -215,11 +196,8 @@ func TestB7_AnthropicIdleInputJSONDelta_FailsClosed(t *testing.T) {
 	}
 }
 
-// TestB7_AnthropicIdleNonToolDeltas_StillPassThrough is the
-// counterweight: the B7 fix must refuse ONLY input_json_delta. Text
-// deltas are the overwhelming majority of idle events on this branch and
-// are not gated at all — refusing them would break every streaming text
-// response.
+// TestB7_AnthropicIdleNonToolDeltas_StillPassThrough: only
+// input_json_delta is refused when idle; text deltas must pass.
 func TestB7_AnthropicIdleNonToolDeltas_StillPassThrough(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -272,26 +250,22 @@ func TestB7_AnthropicOrphanedToolInput_RefusesEndToEnd(t *testing.T) {
 	if !strings.Contains(got, "sure, running that") {
 		t.Errorf("pre-violation text was dropped; got %q", got)
 	}
-	// The refusal is unconditional, not policy-derived — but it is still
-	// AUDITED. With no RecordForcedAudit hook wired, auditStreamRefusal
-	// drives the normal PolicyCheck path purely for its audit side effect,
-	// so the hook fires exactly once and its verdict is ignored (the spy
-	// above returns ALLOW and the stream is refused anyway).
+	// The refusal is unconditional but still audited: with no
+	// RecordForcedAudit hook, auditStreamRefusal calls PolicyCheck once
+	// and ignores its ALLOW.
 	if n := len(spy.seen()); n != 1 {
 		t.Errorf("PolicyCheck ran %d times for an orphaned delta; want 1 (the audit fallback), and the refusal must stand regardless of its verdict", n)
 	}
 }
 
 // ---------------------------------------------------------------------
-// B21 — whitespace-only empty seed
+// Whitespace-only empty seed
 // ---------------------------------------------------------------------
 
 // TestB21_EmptyObjectSeedVariants_DoNotBlockStreamedArgs drives the
-// conformant Anthropic shape — `input` empty at content_block_start,
-// real arguments via input_json_delta — with every spelling of "empty
-// object". Pre-fix only the exact bytes `{}` were recognised, so `{ }`
-// set startSeeded and the very next delta tripped the H2 conflict
-// refusal: a legitimate stream refused.
+// conformant Anthropic shape (empty start input, arguments via
+// input_json_delta) with every spelling of an empty object; none may trip
+// the seeded-input conflict refusal.
 func TestB21_EmptyObjectSeedVariants_DoNotBlockStreamedArgs(t *testing.T) {
 	// Space and tab only: a raw newline cannot appear inside a
 	// single-line SSE `data:` field, so it is not a shape this branch
@@ -327,12 +301,9 @@ func TestB21_EmptyObjectSeedVariants_DoNotBlockStreamedArgs(t *testing.T) {
 	}
 }
 
-// TestB21_NonEmptySeedStillConflictsWithDeltas is the counterweight: the
-// H2 defence must survive. A start block carrying REAL arguments plus
-// streamed deltas is the conflicting-sources shape, and it stays refused
-// — including when the real arguments are padded with whitespace, which
-// is exactly where a byte-equality check would be fooled in the other
-// direction.
+// TestB21_NonEmptySeedStillConflictsWithDeltas: real start arguments
+// plus streamed deltas stay refused, including when the arguments are
+// padded with whitespace.
 func TestB21_NonEmptySeedStillConflictsWithDeltas(t *testing.T) {
 	for _, seed := range []string{`{"cmd":"x"}`, `{ "cmd":"x" }`} {
 		t.Run(seed, func(t *testing.T) {
@@ -354,9 +325,9 @@ func TestB21_NonEmptySeedStillConflictsWithDeltas(t *testing.T) {
 	}
 }
 
-// TestB21_IsEmptyJSONObject pins the predicate directly, including the
-// shapes that must NOT be treated as empty. A false positive here would
-// silently discard real start-block arguments — the H2 bypass.
+// TestB21_IsEmptyJSONObject pins the predicate, including shapes that
+// must not count as empty: a false positive would discard real
+// start-block arguments and let them pass ungated.
 func TestB21_IsEmptyJSONObject(t *testing.T) {
 	cases := []struct {
 		in   string
@@ -416,14 +387,12 @@ func TestB21_WhitespaceSeedStreamGatesEndToEnd(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------
-// B18 — tool calls across multiple choices
+// Tool calls across multiple choices
 // ---------------------------------------------------------------------
 
-// TestB18_ToolCallsOnSecondChoice_FailClosed pins the collision. With
-// n>1 both choices number their tool calls from 0, so the accumulator's
-// tool_calls[i].index key merged them: the gate evaluated a splice of
-// two different calls' arguments — a string no client ever executes —
-// while the two real calls went unexamined.
+// TestB18_ToolCallsOnSecondChoice_FailClosed: with n>1 both choices
+// number their calls from 0, so merging by index would gate a splice no
+// client executes while the real calls pass unexamined.
 func TestB18_ToolCallsOnSecondChoice_FailClosed(t *testing.T) {
 	t.Run("separate-events", func(t *testing.T) {
 		acc := NewOpenAIToolCallAccumulator(0)
@@ -458,9 +427,8 @@ func TestB18_ToolCallsOnSecondChoice_FailClosed(t *testing.T) {
 	})
 }
 
-// TestB18_SingleChoiceStreamUnaffected is the counterweight that matters
-// most: n=1 is what every mainstream agent framework sends, and the B18
-// guard must be invisible to it.
+// TestB18_SingleChoiceStreamUnaffected: n=1, what every mainstream agent
+// framework sends, must be unaffected by the multi-choice guard.
 func TestB18_SingleChoiceStreamUnaffected(t *testing.T) {
 	acc := NewOpenAIToolCallAccumulator(0)
 	events := []string{
@@ -494,11 +462,9 @@ func TestB18_SingleChoiceStreamUnaffected(t *testing.T) {
 	}
 }
 
-// TestB18_SiblingChoiceFinishDoesNotCloseCycle pins the second half of
-// B18. hasFinishReason accepted a finish_reason from ANY choice, so with
-// n>1 a sibling choice finishing first closed the tool-call cycle while
-// its arguments were still streaming: the gate saw `{"cmd":"l`, which
-// does not parse, and a healthy stream was refused as malformed.
+// TestB18_SiblingChoiceFinishDoesNotCloseCycle: a sibling choice
+// finishing first must not close the tool-call cycle, or the gate sees
+// truncated arguments and refuses a healthy stream as malformed.
 func TestB18_SiblingChoiceFinishDoesNotCloseCycle(t *testing.T) {
 	acc := NewOpenAIToolCallAccumulator(0)
 
@@ -555,15 +521,12 @@ func TestB18_MultiChoiceToolCalls_RefusesEndToEnd(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------
-// B17 — end of stream while a cycle is open
+// End of stream while a cycle is open
 // ---------------------------------------------------------------------
 
-// TestB17_OpenAI_EOFMidToolCall_GatesInsteadOfDropping drives a stream
-// that ends with NO finish_reason and NO [DONE] — a dropped upstream
-// connection. Pre-fix the loop returned and the buffered events went on
-// the floor: the client got an empty 200, the gate never ran, nothing
-// was audited. The fix runs the completion path, so the call is gated
-// and (on ALLOW) delivered.
+// TestB17_OpenAI_EOFMidToolCall_GatesInsteadOfDropping: a stream ending
+// with no finish_reason and no [DONE] (dropped connection) still gates
+// the buffered call and delivers it on ALLOW.
 func TestB17_OpenAI_EOFMidToolCall_GatesInsteadOfDropping(t *testing.T) {
 	stream := pvOpenAIToolDelta(0, 0, "call_eof", "bash", `{"cmd":"ls"}`)
 
@@ -582,10 +545,9 @@ func TestB17_OpenAI_EOFMidToolCall_GatesInsteadOfDropping(t *testing.T) {
 	}
 }
 
-// TestB17_OpenAI_EOFMidToolCall_DenyDoesNotLeak is the security half:
-// the EOF closer must route through the gate, so a DENY still refuses.
-// A "flush whatever's buffered" reading of the same finding would have
-// handed these bytes to the client ungated.
+// TestB17_OpenAI_EOFMidToolCall_DenyDoesNotLeak: the EOF closer goes
+// through the gate, so a DENY still refuses rather than flushing the
+// buffer ungated.
 func TestB17_OpenAI_EOFMidToolCall_DenyDoesNotLeak(t *testing.T) {
 	stream := pvOpenAIToolDelta(0, 0, "call_eof_deny", "bash", `{"cmd":"rm -rf /"}`)
 
@@ -603,10 +565,8 @@ func TestB17_OpenAI_EOFMidToolCall_DenyDoesNotLeak(t *testing.T) {
 	}
 }
 
-// TestB17_OpenAI_EOFTruncatedArgs_FailsClosed covers the routine case: a
-// max_tokens cutoff mid-arguments. The assembled JSON cannot parse, so
-// the cycle lands on the F1 malformed refusal — denied AND audited,
-// rather than dropped in silence.
+// TestB17_OpenAI_EOFTruncatedArgs_FailsClosed: a max_tokens cutoff
+// mid-arguments lands on the malformed refusal, denied and audited.
 func TestB17_OpenAI_EOFTruncatedArgs_FailsClosed(t *testing.T) {
 	stream := pvOpenAIToolDelta(0, 0, "call_trunc", "bash", `{"cmd":"rm -rf `)
 
@@ -625,10 +585,8 @@ func TestB17_OpenAI_EOFTruncatedArgs_FailsClosed(t *testing.T) {
 	}
 }
 
-// TestB17_OpenAI_DoneWhileActive_ClosesTheCycle covers `[DONE]` arriving
-// while a tool_call is still open. `[DONE]` IS the end of stream, so the
-// cycle closes there rather than waiting for the transport EOF — and it
-// closes through the gate, both directions.
+// TestB17_OpenAI_DoneWhileActive_ClosesTheCycle: `[DONE]` with a
+// tool_call open closes the cycle through the gate, in both directions.
 func TestB17_OpenAI_DoneWhileActive_ClosesTheCycle(t *testing.T) {
 	stream := pvOpenAIToolDelta(0, 0, "call_done", "bash", `{"cmd":"ls"}`) + "data: [DONE]\n\n"
 
@@ -659,12 +617,9 @@ func TestB17_OpenAI_DoneWhileActive_ClosesTheCycle(t *testing.T) {
 }
 
 // TestB17_OpenAI_DoneWithoutEOF_DoesNotWaitForTheConnectionToClose
-// isolates the `[DONE]` closer from the EOF closer. When upstream closes
-// right after `[DONE]` the two are indistinguishable — EOF arrives
-// immediately and finalizes the cycle either way. An upstream that holds
-// the connection open after `[DONE]` (keep-alive behaviour some gateways
-// have) is the case that separates them: without the `[DONE]` close the
-// client waits on a stream that is already over.
+// isolates the `[DONE]` closer from the EOF closer: the upstream holds the
+// connection open after `[DONE]` (as some gateways do), and the client
+// must not wait for it.
 func TestB17_OpenAI_DoneWithoutEOF_DoesNotWaitForTheConnectionToClose(t *testing.T) {
 	released := make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -727,8 +682,8 @@ func TestB17_OpenAI_DoneWithoutEOF_DoesNotWaitForTheConnectionToClose(t *testing
 	}
 }
 
-// TestB17_Anthropic_EOFMidToolUse_GatesInsteadOfDropping is the
-// Anthropic sibling: a tool_use block still open when upstream vanishes.
+// TestB17_Anthropic_EOFMidToolUse_GatesInsteadOfDropping: a tool_use
+// block still open when upstream vanishes is gated.
 func TestB17_Anthropic_EOFMidToolUse_GatesInsteadOfDropping(t *testing.T) {
 	stream := "event: message_start\n" +
 		`data: {"type":"message_start","message":{"id":"msg_b17","type":"message"}}` + "\n\n" +
@@ -779,10 +734,9 @@ func TestB17_Anthropic_EOFTruncatedInput_FailsClosed(t *testing.T) {
 	}
 }
 
-// TestB17_CompletionSignalledExactlyOnce guards the latch the two new
-// closers required. A stream that ends properly must gate its call ONCE:
-// if `[DONE]` or EOF could re-close an already-completed cycle, every
-// well-formed tool call would be gated (and audited) twice.
+// TestB17_CompletionSignalledExactlyOnce: a properly ended stream gates
+// its call once; `[DONE]` or EOF must not re-close a completed cycle and
+// gate (and audit) it twice.
 func TestB17_CompletionSignalledExactlyOnce(t *testing.T) {
 	stream := pvOpenAIToolDelta(0, 0, "call_once", "bash", `{"cmd":"ls"}`) +
 		pvOpenAIFinish(0, "tool_calls") +
