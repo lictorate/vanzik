@@ -139,7 +139,7 @@ proxy:
     ttl: "8h"
 ```
 
-Reload the policy (send SIGHUP or touch the file with `--watch`) and new logins honor the new TTL. Existing sessions keep their original expiry.
+Restart the server to apply a new TTL: it is read at startup, and a policy reload (`--watch`) does not change it. There is no SIGHUP handler, so SIGHUP stops the server rather than reloading it. Sessions are held in memory, so the restart also signs every dashboard user out.
 
 ---
 
