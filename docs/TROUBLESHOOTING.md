@@ -126,7 +126,7 @@ curl -s http://127.0.0.1:8080/metrics | grep notify_events_dropped_total
 - Lower notifier timeouts in the policy file (`notifications.dispatch_timeout`, or a target's own `timeout`), so a slow or flaky endpoint holds a worker for less time. Longer timeouts keep workers busy and make drops more likely.
 - Reduce notifier fanout (remove unused targets).
 - Shard to multiple webhook endpoints if a single Slack channel is a bottleneck.
-- Watch `vanzik_notify_queue_depth{notifier}` — steady growth means the worker cannot drain.
+- Watch `vanzik_notify_queue_depth` (one shared queue, so it has no `notifier` label) — steady growth means the workers cannot drain.
 
 ---
 
