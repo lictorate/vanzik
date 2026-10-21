@@ -252,8 +252,10 @@ sed-replaces the version string across `cmd/vanzik/main.go`,
 `cmd/vanzik-mcp-gateway/main.go`, `cmd/vanzik-llm-proxy/main.go`,
 and the SDK manifests.
 
-`vanzik-mcp-gateway version` and `vanzik-llm-proxy version`
-emit the same `version` / `commit` triplet as `vanzik version`.
+`vanzik-mcp-gateway --version` and `vanzik-llm-proxy --version`
+print the binary's name, version and commit in the same form as
+`vanzik version`, e.g. `vanzik-mcp-gateway 2.0.0 (0d2852e)`. The wire
+binaries take the `--version` flag, not a `version` subcommand.
 
 ### 4.4 Same `pkg/` codebase
 
@@ -272,7 +274,7 @@ All three binaries on `127.0.0.1`. Everything chats over loopback.
 
 ```
 vanzik server --port 8080 --dashboard --policy configs/default.yaml
-vanzik-mcp-gateway --guard-url http://127.0.0.1:8080 --upstream "fs:npx -y @modelcontextprotocol/server-filesystem /tmp"
+vanzik-mcp-gateway --guard-url http://127.0.0.1:8080 --policy configs/default.yaml --upstream "fs:npx -y @modelcontextprotocol/server-filesystem /tmp"
 vanzik-llm-proxy --listen 127.0.0.1:8081 --guard-url http://127.0.0.1:8080
 ```
 
@@ -396,7 +398,7 @@ Both binaries share these flags:
 | `--tenant-id`         | tenant header value                                | `local`                |
 | `--fail-mode`         | `deny` / `allow` / `fail-closed-with-audit`        | `deny`                 |
 | `--log-level`         | `info` / `debug`                                   | `info`                 |
-| `--version`           | print `version commit date` and exit               | —                      |
+| `--version`           | print `<name> <version> (<commit>)` and exit       | —                      |
 
 Proxy-specific flags (upstreams, listen address, etc.) live in the
 respective doc.
