@@ -50,8 +50,6 @@ function parseBody(init: RequestInit | undefined): Record<string, unknown> {
 const ORIGINAL_ENV = { ...process.env };
 
 beforeEach(() => {
-  // Wipe Vanzik-controlled env vars before every test so one test's
-  // setting cannot leak into another.
   delete process.env.VANZIK_URL;
   delete process.env.VANZIK_API_KEY;
 });
@@ -191,9 +189,8 @@ describe("Vanzik.check payload", () => {
   });
 
   test("sends estCost when negative (backend rejects)", async () => {
-    // The SDK forwards negatives; the Go backend validates via
-    // deny:cost:negative_value. Verifying here that the SDK does NOT
-    // silently drop a non-zero value.
+    // The SDK must forward negatives; the Go backend denies them
+    // (deny:cost:negative_value).
     const fetchMock = installFetchMock();
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ decision: "DENY", reason: "cost<0" })
@@ -360,12 +357,8 @@ describe("approval endpoints", () => {
 // =========================================================================
 
 describe("guarded()", () => {
-  // The `guarded` HOF is generic over T extends (...args: unknown[]) => ...,
-  // which is a contravariant-argument-position constraint: a function that
-  // accepts `string` is NOT assignable there (the HOF promises it may call
-  // it with unknowns). Tests therefore write the wrapped fn with `unknown[]`
-  // args and narrow inside the body, mirroring how real callers either pass
-  // a fn whose args are already unknown[] or go through getCheckOptions.
+  // Wrapped fns here take `unknown[]` args and narrow inside the body;
+  // strict_types.test.ts covers normally typed functions.
   type AnyAsyncFn = (...args: unknown[]) => Promise<unknown>;
 
   test("runs the wrapped fn when ALLOW", async () => {
@@ -436,12 +429,10 @@ describe("guarded()", () => {
 });
 
 // =========================================================================
-// Typed error classes (v0.5.0)
+// Typed error classes
 //
-// The classes all extend the built-in `Error`, so `catch (e: any)` code
-// written against v0.4.x keeps working; new callers can narrow on
-// `instanceof` and pull structured fields (`result`, `approvalId`,
-// `approvalUrl`) off the error instead of parsing the message.
+// All extend the built-in `Error`; callers narrow with `instanceof` and read
+// structured fields (`result`, `approvalId`, `approvalUrl`).
 // =========================================================================
 
 describe("typed errors from guarded()", () => {
@@ -500,7 +491,7 @@ describe("typed errors from guarded()", () => {
     expect(err.approvalId).toBe("ap_abc");
     expect(err.approvalUrl).toBe("http://localhost:8080/v1/approve/ap_abc");
     expect(err.result?.needsApproval).toBe(true);
-    // v0.4.x message text preserved.
+    // Stable message text; caller code matches on it.
     expect(err.message).toMatch(/requires approval/);
   });
 
@@ -520,7 +511,7 @@ describe("typed errors from guarded()", () => {
 });
 
 // =========================================================================
-// guarded() with waitForApproval opt-in (v0.5.0)
+// guarded() with waitForApproval opt-in
 // =========================================================================
 
 describe("guarded() with waitForApproval", () => {
@@ -546,9 +537,8 @@ describe("guarded() with waitForApproval", () => {
         reason: "human approved",
       })
     );
-    // 3rd call: the replay of the approval through /v1/check. The status
-    // poll is read-only — this is the call that spends the one-shot ALLOW,
-    // reserves cost and audits the execution.
+    // 3rd call: the replay through /v1/check, which spends the one-shot
+    // ALLOW (the status poll is read-only).
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ decision: "ALLOW", reason: "approved", matched_rule: "allow:approved" })
     );

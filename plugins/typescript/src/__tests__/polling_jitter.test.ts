@@ -1,23 +1,14 @@
 /**
- * Statistical contract test for `Vanzik.waitForApproval` jitter (AT, Phase 3).
- *
- * Lock the population statistics of the jitter loop:
+ * Statistical contract test for `Vanzik.waitForApproval` jitter:
  *
  *   - Capture every `setTimeout` delay across >=30 polls.
  *   - Assert each delay is in the ±25% band of `pollIntervalMs`.
  *   - Assert coefficient-of-variation > 0.05 (the jitter is real, not pinned).
  *   - Assert >=5 distinct values in 30 samples (rules out fixed-noise stubs).
  *
- * Complements `sdk_polish.test.ts::"waitForApproval jitter"`, which checks
- * the per-iteration band but doesn't probe the distribution. The
- * contribution of this file is the population-level shape.
- *
- * Why spy on `setTimeout`?
- * ------------------------
- * The SDK calls `await new Promise(resolve => setTimeout(resolve, ms))`.
- * We replace `setTimeout` with a recording spy that schedules the
- * callback as a microtask (delay 0) so the loop progresses fast — the
- * test runs in tens of ms wall-clock instead of hundreds of seconds.
+ * `sdk_polish.test.ts` checks the per-iteration band; this file checks the
+ * distribution. `setTimeout` is replaced by a recording spy that runs the
+ * callback with delay 0, so the test takes milliseconds.
  */
 
 import { Vanzik } from "../index";
@@ -60,8 +51,7 @@ function resolvedAllowResponse(): Response {
 /**
  * Wire up a fetch mock that returns "pending" until at least `target`
  * polls have happened, then flips to "resolved" so the loop returns
- * cleanly. This is the only way to bound the loop quickly without
- * waiting for the wall-clock deadline.
+ * without waiting for the wall-clock deadline.
  */
 function pendingThenResolvedFetch(target: number, sleeps: number[]): FetchMock {
   const m = installFetchMock();
@@ -80,20 +70,13 @@ interface CapturedSleeps {
 }
 
 /**
- * Request-timeout marker. Every SDK request arms an abort timer with the
- * client `timeout`, so a setTimeout spy sees two kinds of delay: the jitter
- * sleep under test and that per-request timer. Constructing the guard with
- * this distinctive value (far outside the jitter band) lets the spy drop the
- * timer samples and keep the statistics honest.
+ * Every SDK request arms an abort timer with the client `timeout`. This
+ * distinctive value, far outside the jitter band, lets the spy drop those
+ * samples.
  */
 const REQUEST_TIMEOUT = 4321;
 
-/**
- * Spy on setTimeout to capture every requested jitter delay. Always schedule
- * the callback with delay 0 so the loop progresses at microtask speed.
- * The fetch mock side flips to "resolved" once `target` samples have
- * been recorded, which is what unwinds `waitForApproval` cleanly.
- */
+/** Spy on setTimeout to capture every requested jitter delay. */
 function spyOnSetTimeout(): CapturedSleeps {
   const sleeps: number[] = [];
   const original = global.setTimeout;
@@ -102,7 +85,6 @@ function spyOnSetTimeout(): CapturedSleeps {
     .mockImplementation(((cb: () => void, ms: number) => {
       // Skip the per-request abort timer; only jitter sleeps are sampled.
       if (ms !== REQUEST_TIMEOUT) sleeps.push(ms);
-      // Always schedule with delay 0 so the loop runs at microtask speed.
       return original(cb, 0);
     }) as typeof global.setTimeout);
   return { sleeps, restore: () => spy.mockRestore() };
@@ -146,8 +128,6 @@ describe("waitForApproval jitter — distribution shape", () => {
 
     try {
       const g = new Vanzik({ apiKey: "k", timeout: REQUEST_TIMEOUT });
-      // The fetch mock flips to "resolved" once TARGET sleeps have been
-      // recorded, so the loop exits well before timeoutMs.
       await g.waitForApproval("ap_jit", 30_000, POLL);
     } finally {
       restore();
@@ -155,9 +135,7 @@ describe("waitForApproval jitter — distribution shape", () => {
 
     expect(sleeps.length).toBeGreaterThanOrEqual(TARGET);
 
-    // Each sample must lie in [0.75 * POLL, 1.25 * POLL] — the brief's ±25%
-    // contract. The SDK actually uses ±20%, so the test is intentionally
-    // looser than the implementation.
+    // ±25% band, deliberately looser than the SDK's ±20%.
     const lo = 0.75 * POLL;
     const hi = 1.25 * POLL;
     for (const s of sleeps) {
@@ -188,9 +166,7 @@ describe("waitForApproval jitter — distribution shape", () => {
 
     const sample = sleeps.slice(0, TARGET);
     const distinct = new Set(sample).size;
-    // A pinned (constant) jitter would give distinct === 1. A reasonable
-    // RNG over a continuous interval gives ~30 distinct floats. Threshold
-    // is forgiving for any pathological-but-still-random RNG.
+    // Constant jitter gives 1; a real RNG gives ~30.
     expect(distinct).toBeGreaterThanOrEqual(5);
   });
 

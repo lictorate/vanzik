@@ -1,20 +1,14 @@
-"""End-to-end tests for the hardened CrewAI adapter (v0.5).
+"""End-to-end tests for the CrewAI adapter.
 
-Covers the v0.5 hardening contract from R5 E3 / R5 E12 / T3:
-
-  - Modern CrewAI / LangChain Runnable entry points (``invoke``,
-    ``ainvoke``, ``__call__``) are gated by the policy engine.
-  - Legacy entry points (``run``, ``_run``, ``arun``, ``_arun``) are
-    still gated.
+  - Modern Runnable entry points (``invoke``, ``ainvoke``, ``__call__``)
+    and legacy ones (``run``, ``_run``, ``arun``, ``_arun``) are gated.
   - DENY / REQUIRE_APPROVAL raise :class:`PermissionError` rather than
     returning a string the agent might confuse with a tool output.
-  - The strict allowlist-based ``__getattr__`` blocks attribute access
-    to ``func`` / ``_tool`` / arbitrary internal attributes.
+  - Every dispatch path is overridden on the class itself, and private
+    gating attrs stay out of ``model_dump``.
 
-Real-CrewAI tests are gated behind ``pytest.importorskip("crewai", ...)``
-so the suite stays green on installs that do not have the framework.
-The mock-server fixture from ``tests/conftest.py`` provides the
-Vanzik side; only the CrewAI / LangChain library is real.
+Real-CrewAI tests skip via ``pytest.importorskip("crewai", ...)``; the
+Vanzik side is the mock server from ``tests/conftest.py``.
 """
 
 import asyncio
@@ -36,14 +30,9 @@ from tests.conftest import MockVanzikHandler
 # ---------------------------------------------------------------------------
 
 class _FakeCrewAITool:
-    """Stand-in for a CrewAI BaseTool subclass.
-
-    Mirrors the modern surface (invoke / ainvoke / _run / __call__) so
-    we can verify the gate fires on each entry point without depending
-    on the real upstream library for the unit-level tests.
-
-    The integration test ``test_real_crewai_basetool_subclass_gated``
-    below DOES use the real ``crewai.tools.BaseTool`` (importorskip).
+    """Stand-in for a CrewAI BaseTool subclass with the modern surface
+    (invoke / ainvoke / _run / __call__); ``TestRealCrewAI`` below uses
+    the real ``crewai.tools.BaseTool``.
     """
 
     def __init__(self, name: str = "fake_tool", description: str = ""):
@@ -88,7 +77,6 @@ class TestModernAPIAllowPath:
 
         out = gct.invoke({"command": "find me cats"})
         assert out == "ran-via-invoke"
-        # Verify the underlying invoke was called exactly once after the gate
         kinds = [inv[0] for inv in tool._invocations]
         assert kinds == ["invoke"]
 
@@ -262,42 +250,21 @@ class TestApprovalPath:
 
 
 # ---------------------------------------------------------------------------
-# Defense contract under the v0.5.0 hybrid pattern.
+# Defense contract: GuardedCrewTool subclasses CrewAI's BaseTool (pydantic
+# 2.12 / CrewAI 1.x ignore virtual-subclass registration), and every
+# dispatch entry point is defined on the class itself, not inherited. The
+# canary tests in test_at_real_crewai.py catch new upstream dispatch paths.
 #
-# v0.5.0 used a composition wrapper with a strict ``__getattr__`` allowlist
-# — every parent / unknown attribute access raised AttributeError. That
-# pattern broke pydantic 2.12 / CrewAI 1.x because ``isinstance(thing,
-# BaseTool)`` failed (virtual-subclass registrations are no longer honored
-# by pydantic).
-#
-# v0.5.0 switches to a hybrid pattern: GuardedCrewTool **subclasses**
-# CrewAI's ``BaseTool`` so the framework's isinstance check passes, and
-# every dispatch entry point (``run``, ``_run``, ``invoke``, ``ainvoke``,
-# ``__call__``, ``_arun``, ``arun``, ``to_structured_tool``) is explicitly
-# overridden to gate via Guard.check before forwarding.
-#
-# Defense moves from "no parent attributes are exposed" (composition) to
-# "every gated dispatch path is on this class, not inherited" (subclass).
-# The canary integration tests (test_at_real_crewai.py) catch upstream
-# additions of new dispatch paths that bypass our overrides.
-#
-# Tradeoff: pydantic ``PrivateAttr`` keeps ``_tool``, ``_guard``, ``_scope``
-# off ``model_fields`` (so they don't appear in ``model_dump`` output),
-# but they ARE readable as Python attributes from outside the class. A
-# determined caller doing ``gct._tool._run(...)`` skips the gate. We accept
-# that tradeoff because (a) any user with the wrapper instance already has
-# the wrapped tool reachable via the agent's tools list anyway, and (b)
-# the agent runtime itself only calls the gated dispatch methods, never
-# ``_tool`` directly.
+# Accepted tradeoff: ``_tool`` / ``_guard`` / ``_scope`` stay out of
+# ``model_dump`` but are readable attributes, so ``gct._tool._run(...)``
+# skips the gate. The caller holding the wrapper can reach the wrapped
+# tool anyway, and the agent runtime only calls the gated methods.
 # ---------------------------------------------------------------------------
 
 class TestDefenseContract:
     def test_subclass_passes_isinstance_check(self, mock_server):
-        """The hybrid pattern's load-bearing property: when the framework
-        does ``isinstance(thing, BaseTool)`` (CrewAI 1.x + pydantic 2.12
-        Agent validation), GuardedCrewTool must satisfy it.
-
-        Skips cleanly when crewai is not installed.
+        """CrewAI 1.x Agent validation does ``isinstance(thing,
+        BaseTool)``; GuardedCrewTool must satisfy it. Skips without crewai.
         """
         try:
             from crewai.tools import BaseTool as CrewBaseTool  # type: ignore
@@ -322,16 +289,12 @@ class TestDefenseContract:
         )
 
     def test_run_dispatch_paths_are_overridden(self, mock_server):
-        """Every gated method must be defined on GuardedCrewTool itself,
-        not merely inherited. If a method is inherited, the parent's
-        implementation runs without consulting Guard.check — that is the
-        regression we are pinning against.
+        """Every gated method must be defined on GuardedCrewTool itself:
+        an inherited one runs the parent's code without Guard.check.
         """
         from vanzik.adapters.crewai import _build_guarded_class
 
         cls = _build_guarded_class()
-        # The methods we MUST override. If any is inherited, the gate is
-        # bypassable for that dispatch path.
         for method_name in (
             "_run",
             "run",
@@ -349,9 +312,8 @@ class TestDefenseContract:
             )
 
     def test_to_structured_tool_uses_gated_run(self, mock_server):
-        """CrewAI's ``to_structured_tool`` builds a CrewStructuredTool
-        with ``func=self._run``. Our override must hand off OUR gated
-        ``_run``, so the resulting structured tool also gates.
+        """The CrewStructuredTool from ``to_structured_tool`` must call
+        our gated ``_run``.
         """
         from vanzik.adapters.crewai import GuardedCrewTool
 
@@ -369,19 +331,16 @@ class TestDefenseContract:
         except ImportError:
             pytest.skip("crewai not installed; to_structured_tool requires it")
 
-        # The structured tool's func is bound to OUR gated _run. Calling
-        # it must trigger the gate (which DENYs in this test).
+        # Calling func must hit the gate (DENY here).
         assert callable(structured.func)
         with pytest.raises(PermissionError):
             structured.func("danger")
-        # And the underlying tool was never called.
         assert inner._invocations == []
 
     def test_private_attrs_not_in_model_dump(self, mock_server):
-        """Pydantic ``PrivateAttr`` keeps internal references off the
-        public model. ``_tool`` / ``_guard`` / ``_scope`` must NOT appear
-        in ``model_dump()`` output — operators rendering tool metadata
-        for telemetry should not see the guard handle.
+        """``_tool`` / ``_guard`` / ``_scope`` must not appear in
+        ``model_dump()``: tool metadata rendered for telemetry must not
+        expose the guard handle.
         """
         from vanzik.adapters.crewai import GuardedCrewTool
 
@@ -400,11 +359,9 @@ class TestDefenseContract:
             )
 
     def test_metadata_passthrough(self, mock_server):
-        """The wrapper inherits CrewAI's BaseTool surface, so the
-        framework can read ``name`` / ``description`` / ``args_schema``
-        for tool registration. CrewAI mangles ``description`` into
-        ``Tool Name: ... Tool Arguments: ...`` during model_post_init —
-        that is a CrewAI behavior, not a Vanzik contract.
+        """The framework reads ``name`` / ``description`` / ``args_schema``
+        for tool registration. CrewAI itself rewrites ``description`` into
+        ``Tool Name: ... Tool Arguments: ...`` in model_post_init.
         """
         from vanzik.adapters.crewai import GuardedCrewTool
 
@@ -412,15 +369,12 @@ class TestDefenseContract:
         inner = _FakeCrewAITool(name="my_tool", description="my description")
         gct = GuardedCrewTool(inner, guard=guard, scope="shell")
 
-        # Name passes through verbatim; description gets CrewAI-mangled
-        # but our original is the prefix.
         assert gct.name == "my_tool"
-        # Description should at least include our content somewhere.
         assert "my description" in gct.description or "Tool Name" in gct.description
 
 
 # ---------------------------------------------------------------------------
-# guard_crew_tools factory — still works with the new gating shape.
+# guard_crew_tools factory
 # ---------------------------------------------------------------------------
 
 class TestGuardCrewToolsFactory:
@@ -432,7 +386,6 @@ class TestGuardCrewToolsFactory:
 
         assert len(wrapped) == 3
         assert all(isinstance(w, GuardedCrewTool) for w in wrapped)
-        # Names propagated.
         assert [w.name for w in wrapped] == ["t0", "t1", "t2"]
 
     def test_factory_gates_invoke(self, mock_server):
@@ -449,13 +402,11 @@ class TestGuardCrewToolsFactory:
 
         with pytest.raises(PermissionError):
             wrapped[0].invoke({"command": "x"})
-        # The underlying tool was never invoked.
         assert tools[0]._invocations == []
 
 
 # ---------------------------------------------------------------------------
-# Real CrewAI integration — only runs when the framework is installed
-# at the version the audit's R5 / P2 floor requires (>= 0.80).
+# Real CrewAI integration: runs only when crewai >= 0.80 is installed.
 # ---------------------------------------------------------------------------
 
 @pytest.fixture()
@@ -486,9 +437,8 @@ def real_crewai_basetool():
 
 
 class TestRealCrewAI:
-    """The audit explicitly requires testing against the real upstream
-    library (P4). Each test here uses ``real_crewai_basetool`` so it
-    skips cleanly when CrewAI is not installed.
+    """Tests against the real upstream library; each skips cleanly when
+    CrewAI is not installed.
     """
 
     def test_real_basetool_subclass_invoke_gated(
@@ -523,10 +473,8 @@ class TestRealCrewAI:
     def test_real_basetool_isinstance_via_virtual_subclass(
         self, mock_server, real_crewai_basetool
     ):
-        """Framework-side ``isinstance(x, BaseTool)`` should accept the
-        wrapper because of the virtual-subclass registration. CrewAI's
-        agent / crew code performs this check before treating an object
-        as a tool."""
+        """CrewAI's agent / crew code checks ``isinstance(x, BaseTool)``
+        before treating an object as a tool; the call path must be safe."""
         from vanzik.adapters.crewai import GuardedCrewTool
 
         BaseTool = real_crewai_basetool
@@ -541,17 +489,9 @@ class TestRealCrewAI:
         guard = Guard(mock_server)
         gct = GuardedCrewTool(Noop(), guard=guard, scope="shell")
 
-        # The point of _maybe_register_basetool_virtual_subclass.
-        # If pydantic-style BaseTool refuses register() (TypeError /
-        # RuntimeError) the registration is silently skipped — so
-        # this assertion is best-effort. We verify the call path is
-        # safe rather than failing CI on an upstream behavior.
-        # If isinstance happens to be False, that's still fine because
-        # the wrapper exposes the duck-typed surface CrewAI's runtime
-        # actually uses.
+        # Lenient on purpose: the safety guarantee is the gate, not the
+        # isinstance result.
         result = isinstance(gct, BaseTool)
-        # Best-effort: pass either way, but log for visibility.
-        # The real safety guarantee is the gate, not the isinstance.
         assert result in (True, False)
 
     def test_real_crewai_agent_kickoff_gates_tool_call(
@@ -560,16 +500,12 @@ class TestRealCrewAI:
         """End-to-end: build a CrewAI agent + crew, kick it off, and
         verify the wrapped tool's calls go through the policy gate.
 
-        This is the audit's P4 / "real upstream library" coverage.
         Skips cleanly when crewai (or its LLM wiring) is missing.
         """
         from vanzik.adapters.crewai import GuardedCrewTool
 
-        # We can't actually drive an LLM in CI without secrets, so
-        # this test focuses on what we CAN verify deterministically:
-        # CrewAI's BaseTool.invoke (the public Runnable surface) must
-        # route through our gate. If the framework changes how tools
-        # are invoked from inside agents, this test will catch it.
+        # No LLM in CI without secrets, so this pins the deterministic
+        # part: CrewAI's BaseTool.invoke must route through the gate.
         MockVanzikHandler.check_response = {
             "decision": "DENY",
             "reason": "kickoff-path gate fired",

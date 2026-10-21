@@ -1,58 +1,31 @@
 """
-Vanzik LangChain Adapter — subclass + override.
+Vanzik LangChain adapter.
 
-Wraps LangChain tools so every invocation passes through Vanzik policy
-checks.
+``GuardedTool`` subclasses ``langchain_core.tools.BaseTool`` rather than
+wrapping one: langgraph 1.0, langchain_core 1.x's ``coerce_to_runnable``
+and langchain 1.x's ``create_agent`` reject composition wrappers. Instead
+of an ``__getattr__`` allowlist, every entry point the framework calls is
+overridden and gated:
 
-Architecture
-------------
-``GuardedTool`` subclasses ``langchain_core.tools.BaseTool`` directly
-so ``isinstance(thing, Runnable)`` and ``isinstance(thing, BaseTool)``
-checks succeed natively. langgraph 1.0 + langchain_core 1.x's
-``coerce_to_runnable`` and langchain 1.x's
-``langchain.agents.create_agent`` both reject composition wrappers,
-so the subclass approach is the only one that registers cleanly.
+  - ``_run`` / ``_arun``: ``BaseTool.run`` and ``invoke`` reach ``_run``,
+    so gating it covers every sync path.
+  - ``invoke`` / ``ainvoke``: gated anyway in case a framework version
+    short-circuits the invoke -> run -> _run chain.
+  - ``stream`` / ``astream``: gated at open and re-validated every
+    ``STREAM_REGATE_SECONDS`` while chunks flow, so a mid-stream policy
+    revocation cuts the stream off.
+  - ``batch`` / ``abatch``: each input gated; the first DENY fails the
+    whole batch.
+  - ``run`` / ``arun``: legacy entries that return a string on deny.
 
-To keep the gate tight without an ``__getattr__`` allowlist, **every**
-entry point the framework calls is explicitly overridden:
+Pydantic ``PrivateAttr`` keeps internal references out of
+``model_fields`` and ``model_dump``. The canary test
+``test_at_real_langchain.py`` trips if upstream adds a dispatch path
+that bypasses these overrides.
 
-  - ``_run`` (abstract on the parent — required by the subclass) — the
-    canonical sync dispatch path; ``BaseTool.run`` calls into ``_run``
-    via ``self._run`` reflection, and ``BaseTool.invoke`` calls
-    ``self.run``. Gating ``_run`` covers every sync path.
-  - ``_arun`` — the async counterpart.
-  - ``invoke`` / ``ainvoke`` — overridden anyway so the gate fires
-    even if a future framework version short-circuits the parent's
-    invoke -> run -> _run chain.
-  - ``stream`` / ``astream`` — gated at stream open + periodic
-    re-validation (see "Stream gating" below).
-  - ``batch`` / ``abatch`` — gate each input independently; first DENY
-    raises for the whole batch (whole-batch-fails-on-first-deny).
-  - ``run`` / ``arun`` — legacy entries; preserve string-on-deny
-    semantics for callers that depend on it.
-
-The defense contract: every gated method is explicitly overridden on
-this class. Pydantic ``PrivateAttr`` keeps internal references off
-``model_fields`` and out of ``model_dump`` payloads. The canary
-integration test (``test_at_real_langchain.py``) trips if upstream
-adds a new dispatch path that bypasses our overrides.
-
-Lazy framework import
----------------------
-We never import ``langchain_core`` at module top level — the SDK must
-remain ``pip install vanzik``-friendly without the framework
-extra. The class definition is wrapped in a builder that resolves
-``langchain_core.tools.BaseTool`` on first instantiation; before that
-the ``GuardedTool`` symbol is a callable factory that raises a clear
-``ImportError`` when constructed.
-
-Stream gating
-=============
-
-``stream`` / ``astream`` gate at stream open and re-validate the
-decision every ``STREAM_REGATE_SECONDS`` (default 10s) while chunks
-flow, so a mid-stream policy revocation cuts the stream off instead of
-riding to completion.
+``langchain_core`` is imported on first instantiation, so ``pip install
+vanzik`` works without the extra; until then ``GuardedTool`` is a
+factory that raises a clear ``ImportError``.
 """
 
 from __future__ import annotations
@@ -67,12 +40,10 @@ from vanzik.adapters._common import (
     extract_check_params,
 )
 
-# How often a live stream re-validates its policy decision. Streams gate
-# at open; without re-validation a long-lived stream would ride to
-# completion even after a policy hot-reload revoked the permission.
-# Re-checking costs one local /v1/check HTTP round-trip, so it runs on a
-# wall-clock interval rather than per chunk. Tests shrink this to force
-# a re-check on every chunk.
+# How often a live stream re-checks its policy decision, so a hot-reload
+# revocation reaches long-lived streams. Wall-clock rather than per chunk
+# because each re-check is an HTTP round-trip. Tests shrink it to re-check
+# every chunk.
 STREAM_REGATE_SECONDS = 10.0
 
 
@@ -88,10 +59,8 @@ def _is_valid_args_schema(value: Any) -> bool:
     """Return True if ``value`` is a pydantic BaseModel subclass or a
     JSON-schema-shaped dict.
 
-    LangChain's ``BaseTool.__init__`` validates ``args_schema`` against
-    these two shapes; passing anything else (e.g. a ``MagicMock``)
-    raises ``TypeError``. We need to filter defensively because the
-    SDK's adapter is sometimes wrapped around mock tools in user tests.
+    ``BaseTool.__init__`` raises on anything else, e.g. the ``MagicMock``
+    tools user tests wrap.
     """
     if isinstance(value, dict):
         return True
@@ -138,24 +107,16 @@ def _build_guarded_tool_class() -> type:
     from pydantic import PrivateAttr  # type: ignore[import-not-found]
 
     class GuardedTool(BaseTool):  # type: ignore[misc, valid-type]
-        """Hybrid subclass-and-override wrapper around a LangChain ``BaseTool``.
+        """A LangChain ``BaseTool`` that gates every entry point through
+        ``Guard.check`` before forwarding to the wrapped tool."""
 
-        Subclasses ``BaseTool`` so framework-side ``isinstance(thing,
-        Runnable)`` checks succeed natively (langgraph 1.0 /
-        langchain_core 1.x reject composition wrappers). Every entry
-        point the framework calls is explicitly overridden to gate via
-        Guard.check before forwarding.
-        """
-
-        # Pydantic private attrs — held on the instance but not part of
-        # the public model. Set per-instance from __init__.
+        # Private attrs: kept out of the public pydantic model.
         _tool: Any = PrivateAttr(default=None)
         _guard: Any = PrivateAttr(default=None)
         _scope: str = PrivateAttr(default="shell")
 
         def __init__(self, tool: Any, guard: Guard, scope: str = "shell") -> None:
-            # Names / descriptions: pydantic's BaseTool requires strings.
-            # Defensive str() coercion handles mocks / objects in tests.
+            # BaseTool requires str name/description; coerce mocks in tests.
             name_attr = getattr(tool, "name", type(tool).__name__)
             desc_attr = getattr(tool, "description", "")
             init_kwargs: dict = {
@@ -164,10 +125,7 @@ def _build_guarded_tool_class() -> type:
                     str(desc_attr) if not isinstance(desc_attr, str) else desc_attr
                 ),
             }
-            # args_schema must be a pydantic BaseModel subclass or a JSON
-            # schema dict (per langchain_core.tools.BaseTool validation).
-            # Only forward if we can verify the type — otherwise drop the
-            # attribute to avoid a hard pydantic ValidationError on mocks.
+            # Forward args_schema only when BaseTool would accept it.
             args_schema = getattr(tool, "args_schema", None)
             if args_schema is not None and _is_valid_args_schema(args_schema):
                 init_kwargs["args_schema"] = args_schema
@@ -234,10 +192,8 @@ def _build_guarded_tool_class() -> type:
                 )
 
         # --------------------------------------------------------------
-        # Internal abstract entry: _run / _arun.
-        # ``BaseTool.run`` calls ``self._run(*tool_args, **tool_kwargs)``
-        # via ``context.run``. Gating here covers the canonical sync
-        # dispatch path.
+        # Internal abstract entry: _run / _arun (``BaseTool.run`` calls
+        # ``self._run`` via ``context.run``).
         # --------------------------------------------------------------
 
         def _run(self, *args: Any, **kwargs: Any) -> Any:
@@ -291,13 +247,10 @@ def _build_guarded_tool_class() -> type:
               * ``("hello",)`` → ``"hello"`` (string command form)
               * ``{"command": "hi"}`` → dict (rule-keyed extraction)
               * ``{"text": "hi"}`` (single-arg tool from
-                ``Tool.from_function``) → ``"hi"`` so the command field
-                is populated naturally — the agent runtime passes the
-                LLM's tool-call args in dict form, but for single-arg
-                tools the value is what operators write rules against.
+                ``Tool.from_function``) → ``"hi"``: for single-arg tools
+                the value is what operators write rules against.
             """
-            # Strip LangChain runtime kwargs first so they never reach the
-            # gate input.
+            # LangChain runtime kwargs never reach the gate input.
             clean_kwargs = {
                 k: v for k, v in kwargs.items()
                 if k not in ("run_manager", "config", "callbacks")
@@ -305,10 +258,8 @@ def _build_guarded_tool_class() -> type:
             if args and not clean_kwargs:
                 return args[0] if len(args) == 1 else list(args)
             if not args and clean_kwargs:
-                # Promote single-key dicts whose key is unrecognised by
-                # _infer_check_params to a bare command string. The
-                # canonical keys (command/cmd/url/path/...) keep their
-                # dict form.
+                # A single unrecognised key becomes a bare command string;
+                # recognised keys keep their dict form.
                 recognised = {"command", "cmd", "url", "path", "file_path",
                               "domain", "session_id", "est_cost"}
                 if (
@@ -329,18 +280,14 @@ def _build_guarded_tool_class() -> type:
             """Normalize an ``invoke``-style input for the policy gate.
 
             Handled shapes:
-              * langchain_core ``ToolCall`` dict
-                ``{"name", "args", "id", "type": "tool_call"}`` — agent
-                runtime passes this to ``tool.invoke``. Unwrap to the
-                ``args`` payload before extraction.
-              * ``invoke({"text": "hello"})`` from a tool whose function
-                takes a single non-canonical kwarg — promote to bare
-                string "hello" so the command field populates.
-              * ``invoke({"command": "hi"})`` keeps its dict shape so
-                ``_infer_check_params``'s recognised-key extraction fires.
+              * a ``ToolCall`` dict ``{"name", "args", "id", "type":
+                "tool_call"}`` (what the agent runtime passes) is unwrapped
+                to ``args``.
+              * ``{"text": "hello"}`` (one non-canonical kwarg) becomes the
+                bare string "hello".
+              * ``{"command": "hi"}`` keeps its dict shape.
             """
             if isinstance(raw_input, dict):
-                # Unwrap a langchain_core ToolCall dict.
                 if (
                     raw_input.get("type") == "tool_call"
                     and "args" in raw_input
@@ -408,10 +355,8 @@ def _build_guarded_tool_class() -> type:
             **kwargs: Any,
         ) -> Iterator[Any]:
             """Synchronous streaming Runnable entry. Gates at stream
-            open, then re-validates every ``STREAM_REGATE_SECONDS``
-            while chunks flow — a policy change mid-stream (permission
-            revoked via hot-reload) cuts the stream off with the same
-            typed ``PermissionError`` instead of riding to completion.
+            open, then re-validates every ``STREAM_REGATE_SECONDS``; a
+            mid-stream revocation raises the same ``PermissionError``.
             """
             result = self._gate(input)
             self._raise_for_modern_api(result, input)

@@ -1,37 +1,19 @@
-"""Deeper LangChain agent-loop E2E tests (Phase 3 — AT).
+"""LangChain agent-loop E2E tests.
 
-A14's existing ``test_real_langchain.py`` covers the surface — direct
-``GuardedTool.invoke`` against a real ``langchain_core.tools.Tool`` plus
-toolkit / batch / async / introspection. The contribution of *this* file
-is the **agent loop**: a model that decides to call a tool, the agent
-runtime that dispatches, and the gate firing during that dispatch.
+``test_real_langchain.py`` covers direct ``GuardedTool`` calls; this file
+covers the **agent loop**: a model decides to call a tool, the agent
+runtime dispatches, and the gate fires during that dispatch.
 
-Why a fake LLM? Vanzik's repo policy is "no API keys in tests" —
-so we use ``FakeMessagesListChatModel`` from langchain_core. The fake
-model emits a pre-canned sequence of ``AIMessage`` objects (including
-ones carrying ``tool_calls``), the agent runtime invokes the tool, and
-the gate must fire on that invocation path.
+The repo's policy is "no API keys in tests", so a fake chat model emits a
+pre-canned sequence of ``AIMessage`` objects (some carrying
+``tool_calls``).
 
-Important architectural note (updated for v0.5.0):
--------------------------------------------------------
-v0.5.0 ``GuardedTool`` was a composition wrapper, not a ``BaseTool``
-subclass. langgraph's ``create_react_agent`` / langchain's
-``create_agent`` runtime registers tools through pydantic's
-``coerce_to_runnable``, which calls ``isinstance(thing, Runnable)`` —
-so the v0.5.0 wrapper was rejected with a ``ValueError`` and required
-a ``Tool.from_function(func=lambda x: gt.invoke(x))`` workaround.
-
-v0.5.0 switches to a hybrid subclass + override pattern:
-``GuardedTool`` actually subclasses ``langchain_core.tools.BaseTool``,
-so isinstance checks succeed natively. The agent runtime now accepts
-``GuardedTool`` directly, and these tests register it that way.
-
-If a future LangChain release breaks the subclass relationship, this
-test trips on the ``coerce_to_runnable`` ValueError before the gate is
-even checked — the canary contract is intentional.
-
-Closes the v0.5 plan AT brief item: "Run a turn that the model decides
-to call the tool. Assert the gate fires on the modern invoke() path."
+langgraph's ``create_react_agent`` / langchain's ``create_agent`` register
+tools through ``coerce_to_runnable``, which checks ``isinstance(thing,
+Runnable)``. ``GuardedTool`` subclasses ``BaseTool``, so these tests
+register it directly; if a LangChain release breaks that relationship,
+they trip on the ``coerce_to_runnable`` ValueError (an intentional
+canary).
 """
 
 from __future__ import annotations
@@ -41,11 +23,8 @@ import json
 import pytest
 
 
-# Real LangChain stack — skip cleanly if unavailable. minversion is dropped
-# because pyproject's [project.optional-dependencies] enforces the floor at
-# install time; pytest.importorskip's minversion check parses module
-# `__version__` via packaging and stumbled on langchain 1.x's version layout
-# in CI even with pip-installed 1.2.x.
+# No minversion: pyproject's extras enforce the floor, and importorskip's
+# `__version__` parsing stumbled on langchain 1.x's version layout in CI.
 langchain_core = pytest.importorskip("langchain_core")
 langgraph = pytest.importorskip("langgraph")
 
@@ -78,7 +57,6 @@ class _ToolCallingFakeChatModel(BaseChatModel):
         return "tool_calling_fake_chat"
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):  # noqa: ANN001
-        # Pop the next canned response from the queue.
         if not self.responses:
             msg = AIMessage(content="(no more canned responses)")
         else:
@@ -86,9 +64,7 @@ class _ToolCallingFakeChatModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=msg)])
 
     def bind_tools(self, tools, **kwargs):  # noqa: ARG002
-        # The real model would inject the tool schemas into the prompt
-        # and produce structured tool_calls. Our canned model already
-        # emits the right tool_calls, so binding is a pass-through.
+        # The canned responses already carry tool_calls.
         return self
 
 
@@ -101,15 +77,10 @@ pytestmark = pytest.mark.integration
 
 
 def _make_gated_tool(guard, name: str = "echo", scope: str = "shell"):
-    """Build a GuardedTool that the agent runtime registers DIRECTLY.
+    """Build a GuardedTool that the agent runtime registers directly.
 
-    v0.5.0 subclasses ``langchain_core.tools.BaseTool``, so the agent
-    runtime's ``isinstance(thing, Runnable)`` check accepts the wrapper
-    natively — no more ``Tool.from_function(func=lambda x: gt.invoke(x))``
-    workaround.
-
-    Returns ``(agent_tool, calls)`` where ``calls`` is a list the
-    underlying function appends to on each invocation.
+    Returns ``(agent_tool, calls)``; the underlying function appends each
+    input to ``calls``.
     """
     calls: list = []
 
@@ -122,7 +93,6 @@ def _make_gated_tool(guard, name: str = "echo", scope: str = "shell"):
         func=_underlying,
     )
     gt = GuardedTool(underlying, guard, scope=scope)
-    # Return the GuardedTool itself — the agent registers it directly.
     return gt, calls
 
 
@@ -133,17 +103,12 @@ def _make_gated_tool(guard, name: str = "echo", scope: str = "shell"):
 
 class TestAgentLoopGate:
     def test_agent_runtime_calls_guarded_tool_gate_fires(self, integration_mock):
-        """A langgraph ``create_react_agent`` configured with a fake LLM
-        emits a tool_call. The agent runtime dispatches to the wrapped
-        tool. The gate MUST fire exactly once during that dispatch.
-
-        We capture the calls into the Vanzik mock to assert the
-        ``/v1/check`` body shape and count.
+        """A fake LLM emits a tool_call; when the agent runtime dispatches
+        it, the gate MUST fire exactly once, with the expected
+        ``/v1/check`` body.
         """
-        # We build the agent loop with langgraph's prebuilt helper because
-        # it is the modern public API for "run an agent with these tools".
-        # The classic ``langchain.agents.AgentExecutor`` was removed in
-        # langchain 1.x, so the prebuilt route is what real users hit.
+        # langgraph's prebuilt helper: langchain 1.x removed AgentExecutor,
+        # so this is the route real users hit.
         try:
             from langgraph.prebuilt import create_react_agent
         except ImportError:
@@ -154,9 +119,8 @@ class TestAgentLoopGate:
         guard = Guard(integration_mock.base_url, agent_id="lc-agent-loop")
         agent_tool, calls = _make_gated_tool(guard, name="echo")
 
-        # The fake model emits one tool_call message, then a final answer.
-        # tool_call ids must be unique strings; the agent runtime matches
-        # them up with ToolMessage results internally.
+        # One tool_call message, then a final answer. tool_call ids must be
+        # unique: the runtime matches them to ToolMessage results.
         tool_call_msg = AIMessage(
             content="",
             tool_calls=[
@@ -169,10 +133,8 @@ class TestAgentLoopGate:
         agent = create_react_agent(fake_llm, tools=[agent_tool])
         result = agent.invoke({"messages": [("user", "say hi")]})
 
-        # The wrapped function ran exactly once with the model's argument.
         assert calls == ["hello"], f"calls={calls!r} result={result!r}"
 
-        # The gate fired exactly once.
         bodies = [
             json.loads(r["body"])
             for r in integration_mock.requests_to("/v1/check")
@@ -180,7 +142,6 @@ class TestAgentLoopGate:
         assert len(bodies) == 1, f"expected 1 gate call, got {len(bodies)}: {bodies!r}"
         assert bodies[0]["scope"] == "shell"
         assert bodies[0]["agent_id"] == "lc-agent-loop"
-        # The model's intended argument shows up as the gated command.
         assert bodies[0]["command"] == "hello"
 
     def test_agent_runtime_deny_propagates_through_loop(self, integration_mock):
@@ -196,31 +157,22 @@ class TestAgentLoopGate:
         guard = Guard(integration_mock.base_url, agent_id="lc-agent-deny")
         agent_tool, calls = _make_gated_tool(guard, name="echo")
 
-        # The fake model emits a tool_call. The gate denies. The runtime
-        # surfaces the error rather than silently consuming it.
         tool_call_msg = AIMessage(
             content="",
             tool_calls=[{"name": "echo", "args": {"text": "rm -rf /"}, "id": "tc_2"}],
         )
-        # Provide a follow-up final-answer message in case the runtime
-        # tries to recover on tool error. If the runtime DOES recover, we
-        # at least assert the underlying function never ran.
+        # A final answer in case the runtime recovers from the tool error.
         final_answer = AIMessage(content="failed")
         fake_llm = _ToolCallingFakeChatModel(responses=[tool_call_msg, final_answer])
 
         agent = create_react_agent(fake_llm, tools=[agent_tool])
 
-        # Two acceptable shapes:
-        #   1) The agent raises (PermissionError surfaces).
-        #   2) The agent catches the tool error and surfaces it as a
-        #      ToolMessage with `status="error"`.
-        # Either way: the wrapped function never ran AND the gate fired.
+        # Acceptable: the agent raises PermissionError, or it surfaces a
+        # ToolMessage with `status="error"`. Either way the wrapped function
+        # never ran and the gate fired.
         try:
             result = agent.invoke({"messages": [("user", "be evil")]})
-            # No raise — runtime caught the tool error. Make sure the
-            # tool itself never executed.
             assert calls == [], f"tool ran despite DENY: {calls!r}"
-            # Look for an error ToolMessage in the trajectory.
             messages = result.get("messages", [])
             error_text_seen = any(
                 ("denied" in str(getattr(m, "content", "")).lower())
@@ -231,10 +183,8 @@ class TestAgentLoopGate:
                 f"no error ToolMessage in trajectory: {messages!r}"
             )
         except PermissionError:
-            # Agent raised through. That's also fine.
             assert calls == []
 
-        # Either way the gate fired exactly once.
         bodies = [
             json.loads(r["body"])
             for r in integration_mock.requests_to("/v1/check")
@@ -243,12 +193,8 @@ class TestAgentLoopGate:
         assert bodies[0]["command"] == "rm -rf /"
 
     def test_two_tool_calls_two_gate_checks(self, integration_mock):
-        """The model emits TWO tool_calls in one AIMessage. Agent runtime
-        runs both. The gate fires for EACH dispatch.
-
-        Real-world relevance: modern agents emit parallel tool_calls; if
-        the gate is only being fired once per AIMessage instead of once
-        per tool_call, this catches it.
+        """Two tool_calls in one AIMessage: the gate fires once per
+        tool_call, not once per AIMessage.
         """
         try:
             from langgraph.prebuilt import create_react_agent
@@ -273,17 +219,13 @@ class TestAgentLoopGate:
         agent = create_react_agent(fake_llm, tools=[agent_tool])
         agent.invoke({"messages": [("user", "two calls")]})
 
-        # The agent runtime executes parallel tool_calls concurrently, so
-        # `calls` records completion order — scheduler-dependent, like the
-        # sorted() on `commands` below already acknowledges. Compare sorted:
-        # the contract is "both tool_calls ran exactly once", not their
-        # relative ordering.
+        # Parallel tool_calls run concurrently; completion order is
+        # scheduler-dependent, so compare sorted.
         assert sorted(calls) == ["first", "second"]
         bodies = [
             json.loads(r["body"])
             for r in integration_mock.requests_to("/v1/check")
         ]
-        # Two tool_calls → two /v1/check calls.
         assert len(bodies) == 2, f"expected 2 gate calls, got {len(bodies)}: {bodies!r}"
         commands = sorted(b["command"] for b in bodies)
         assert commands == ["first", "second"]

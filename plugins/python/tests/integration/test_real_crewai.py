@@ -1,10 +1,8 @@
-"""Real-CrewAI integration tests (Phase 3 — A14).
+"""Real-CrewAI integration tests.
 
 These tests build and exercise actual ``crewai`` ``BaseTool`` subclasses,
-not mocks. The Vanzik HTTP server is mocked via ``integration_mock``.
-
-Closes audit findings R5 P1 (real-framework canary), R5 P2/P3/P4 (modern
-CrewAI / LangChain Runnable bypass closure), R1 F1 (version floor bound).
+not mocks; the Vanzik HTTP server is mocked via ``integration_mock``.
+They are the real-framework canary against Runnable-path bypasses.
 
 CrewAI pulls in heavy transitive deps (LiteLLM, OpenAI client, etc.). The
 ``importorskip`` keeps the suite green when only ``langchain`` is
@@ -18,10 +16,8 @@ import json
 
 import pytest
 
-# pyproject.toml's crewai extra enforces the install-time floor (>=0.80).
-# importorskip without minversion just confirms the package imports;
-# minversion was previously double-checking and tripped on CrewAI 1.x's
-# version-attribute layout in CI.
+# No minversion: the pyproject crewai extra enforces the floor, and
+# importorskip's version parsing tripped on CrewAI 1.x in CI.
 crewai = pytest.importorskip("crewai")
 try:
     from crewai.tools import BaseTool  # type: ignore[attr-defined]
@@ -50,9 +46,8 @@ pytestmark = pytest.mark.integration
 # ---------------------------------------------------------------------------
 # Helpers — define a real CrewAI BaseTool subclass.
 #
-# We avoid pydantic Field declarations beyond the BaseTool defaults so the
-# subclass works across the 0.80–0.89 CrewAI range without triggering
-# version-specific schema validation.
+# No pydantic Field declarations beyond the BaseTool defaults, to avoid
+# version-specific schema validation across CrewAI releases.
 # ---------------------------------------------------------------------------
 
 
@@ -76,9 +71,7 @@ class TestRealCrewAIInvoke:
         guard = Guard(integration_mock.base_url, agent_id="crew-int")
         wrapped = GuardedCrewTool(_RealCrewTool(), guard=guard, scope="shell")
 
-        # CrewAI's Runnable invoke accepts dict or str depending on the tool.
-        # Use a dict shape because that is what CrewAI agents emit when
-        # calling a BaseTool with structured input.
+        # Dict input, as CrewAI agents emit for structured tool input.
         out = wrapped.invoke({"query": "hello-crew"})
 
         # Result shape varies between CrewAI versions: some return the raw
@@ -133,7 +126,6 @@ class TestRealCrewAIRunLoop:
         for q in ("a", "b", "c"):
             wrapped.invoke({"query": q})
 
-        # Three invocations → three independent /v1/check calls.
         bodies = [json.loads(r["body"]) for r in integration_mock.requests_to("/v1/check")]
         assert len(bodies) == 3
         assert all(b["scope"] == "shell" for b in bodies)

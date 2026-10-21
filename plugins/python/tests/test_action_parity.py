@@ -37,10 +37,8 @@ GO_PARITY_TABLE = {
     "unknown": "",
 }
 
-# Extra regression cases for verbs the substring implementation used to miss
-# (edit/append/copy/move/unlink/rm*/list/stat/cat/find/glob). These are the
-# tool names that previously sent NO action through the Python SDK while the
-# Go transports DID send one.
+# Extra cases for the less common verbs (edit/append/copy/move/unlink/rm*/
+# list/stat/cat/find/glob): each must yield the action Go sends.
 REGRESSION_TABLE = {
     "edit_file": "write",
     "append_file": "write",
@@ -56,8 +54,8 @@ REGRESSION_TABLE = {
     "glob": "read",
 }
 
-# False-positive guards: substring matching (the old behavior) wrongly mapped
-# these; prefix matching (Go's HasPrefix, our str.startswith) does not.
+# False-positive guards: substring matching would map these; prefix
+# matching (Go's HasPrefix, our str.startswith) does not.
 FALSE_POSITIVE_TABLE = {
     "set_target": "",   # contains "get" but does not START with it
     "undelete_x": "",   # contains "delete" but does not START with it

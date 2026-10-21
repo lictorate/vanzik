@@ -1,4 +1,4 @@
-"""Fuzz tests for the MCP JSON-RPC frame handler (Phase 3 — AT).
+"""Fuzz tests for the MCP JSON-RPC frame handler.
 
 The MCP adapter sits on Claude Desktop's stdio transport. A misbehaving
 client (or a corrupted pipe) can send anything: truncated JSON, oversize
@@ -20,8 +20,6 @@ What it does NOT exercise:
   * the full ``run()`` loop — that path is already covered by
     ``test_mcp_gateway.py::TestServerFrameRobustness`` with real stdin /
     stdout.
-
-Closes the audit's R5 E6 / S9 regression coupon.
 """
 
 from __future__ import annotations
@@ -76,11 +74,7 @@ MALFORMED_FRAMES = [
     ("not_json", "this is not json at all", "drop"),
     ("html_garbage", "<html><body>500</body></html>", "drop"),
     # -- empty / whitespace-only --
-    # NB: the run() loop short-circuits on blank lines, but
-    # _process_frame is a pure parser-and-dispatcher — we feed it blank
-    # text via run() with a stripped line, so we test it here at the
-    # _handle_request layer instead. Empty frame routed into
-    # _handle_request as {} should not crash.
+    # Not fed here: run() drops blank lines before _process_frame.
     # -- oversize --
     # 1 MiB of valid JSON. The adapter must not buffer-explode.
     ("oversize_1mib", json.dumps({
@@ -140,10 +134,8 @@ MALFORMED_FRAMES = [
 def test_process_frame_survives_fuzz(mock_server, capsys, label, frame, expectation):
     """The adapter must process the next frame after a bad one.
 
-    We send the fuzz vector followed by a known-good frame; the good
-    frame's response must appear on stdout. Both the bad and the good
-    frame are processed via ``_process_frame`` directly so we don't
-    depend on stdin / stdout plumbing.
+    The fuzz vector is followed by a known-good frame whose response must
+    appear on stdout; both go through ``_process_frame`` directly.
     """
     MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
     s = _build_server(mock_server)
@@ -254,7 +246,6 @@ def test_sequential_mixed_frames_survive(mock_server, capsys):
     MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
     s = _build_server(mock_server)
 
-    # Build the corpus.
     corpus: list[str] = []
     seen_good: list[int] = []  # for the assertion afterward
     for i in range(100):

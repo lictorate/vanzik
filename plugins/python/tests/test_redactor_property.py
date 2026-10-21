@@ -1,4 +1,4 @@
-"""Property-based tests for the MCP adapter's redactor (Phase 3 — AT).
+"""Property-based tests for the MCP adapter's redactor.
 
 These tests verify three properties of ``vanzik.adapters.mcp._redact``:
 
@@ -10,15 +10,8 @@ These tests verify three properties of ``vanzik.adapters.mcp._redact``:
      exactly the secret bytes are removed and the innocent prefix /
      suffix survive intact.
 
-We do NOT depend on ``hypothesis`` (it is not in the dev extras and
-adding a runtime test dep mid-cycle is out of scope). The closest cheap
-substitute is parametrized seeds plus a small deterministic random loop
-seeded for reproducibility — close enough to a property test for
-audit-coupon purposes, and any failure prints the seed so a developer
-can re-run the same vector locally.
-
-Closes the audit-coupon side of R7 T7 (redactor reach) and the v0.5
-"property test for the redactor" line in the AT brief.
+``hypothesis`` is not a dev extra, so these use parametrized cases plus a
+small random loop with a fixed seed, which keeps failures reproducible.
 """
 
 import random
@@ -34,10 +27,7 @@ from vanzik.adapters.mcp import _redact
 # Generators
 # ---------------------------------------------------------------------------
 
-# Random seed source. Use a fixed module-level seed so failures are
-# reproducible. Tests that want extra coverage can re-run pytest with
-# ``--seed``-like envvar, but the default deterministic stream is enough
-# for a regression coupon.
+# Fixed seed so failures are reproducible.
 _RNG = random.Random(0xA6E7_5F02)
 
 _SAFE_ALPHABET = string.ascii_letters + string.digits + "_-./: "
@@ -85,7 +75,6 @@ SECRET_PATTERNS = [
     ("kv_token", lambda: f"token={_rand_token(12)}", "token="),
     ("kv_api_key", lambda: f"api_key={_rand_token(12)}", "api_key="),
     ("kv_api_dash_key", lambda: f"api-key={_rand_token(12)}", "api-key="),
-    # v1.2.0 additions, mirrored from pkg/notify/notify.go.
     ("llm_sk", lambda: f"sk-{_rand_token(40)}", "sk-"),
     ("google_aiza", lambda: f"AIza{_rand_token(35)}", "AIza"),
     ("github_gho", lambda: f"gho_{_rand_token(36)}", "gho_"),

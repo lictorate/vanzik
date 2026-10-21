@@ -1,10 +1,10 @@
 /**
  * `guarded()` accepts normally typed functions under `strict`.
  *
- * The constraint used to be `(...args: unknown[]) => Promise<unknown>`,
- * which rejects `(cmd: string) => Promise<string>` (TS2345/TS2769), so the
- * README examples didn't compile without a cast. This suite runs the
- * compiler on fixtures/readme_strict.ts and expects zero diagnostics.
+ * A `(...args: unknown[]) => Promise<unknown>` constraint would reject
+ * `(cmd: string) => Promise<string>` (TS2345/TS2769), and the README
+ * examples would need a cast. This suite runs the compiler on
+ * fixtures/readme_strict.ts and expects zero diagnostics.
  */
 
 import * as path from "path";

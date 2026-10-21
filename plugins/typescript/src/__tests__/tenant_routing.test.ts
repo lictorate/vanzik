@@ -1,10 +1,7 @@
 /**
- * Tests for the v0.5+ tenantId option on the Vanzik TypeScript SDK.
- *
- * Mirrors plugins/python/tests/test_tenant_routing.py: the SDK accepts
- * an optional `tenantId` constructor field that controls whether HTTP
- * calls go to the legacy `/v1/...` URLs or the tenant-aware
- * `/v1/t/{tenantId}/...` family added in v0.5 (worker A7).
+ * Tests for the `tenantId` option: legacy `/v1/...` URLs versus the
+ * tenant-aware `/v1/t/{tenantId}/...` family. Mirrors
+ * plugins/python/tests/test_tenant_routing.py.
  *
  * The Go-side routing is covered by pkg/proxy/tenant_routing_test.go;
  * here we only verify the URL builder via a `globalThis.fetch` mock.
@@ -31,8 +28,6 @@ function jsonResponse(body: unknown, init: ResponseInit = { status: 200 }): Resp
 const ORIGINAL_ENV = { ...process.env };
 
 beforeEach(() => {
-  // Wipe Vanzik-controlled env vars before every test so one test's
-  // setting cannot leak into another.
   delete process.env.VANZIK_URL;
   delete process.env.VANZIK_API_KEY;
   delete process.env.VANZIK_TENANT_ID;

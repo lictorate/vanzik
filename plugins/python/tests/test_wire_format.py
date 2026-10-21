@@ -6,10 +6,6 @@ plugins/typescript/src/__tests__/wire_format.test.ts) that load the same
 fixtures from pkg/proxy/schema/v1/testdata/ and assert that all three
 implementations agree on the JSON shape of POST /v1/check.
 
-Closes audit findings R1 F4 (no schema_version field on the wire) and
-R1 F7 (no cross-language contract test — silent drift between Go, Python,
-and TypeScript implementations).
-
 Failure modes this test catches:
 
 - A field renamed on the Go side but not in the Python SDK
@@ -95,11 +91,8 @@ def test_sample_result_decodes_into_check_result() -> None:
     added on the Go side without a corresponding SDK update would fail
     here."""
     body = _load_fixture("sample_result.json")
-    # schema_version is part of the wire contract but not surfaced on the
-    # SDK CheckResult dataclass (yet). The dataclass accepts the v1
-    # wire-format superset by ignoring fields it does not name. This
-    # test pins that behavior so a future SDK change cannot silently
-    # remove the schema_version-tolerance.
+    # CheckResult does not surface schema_version; it must tolerate the v1
+    # wire-format superset by ignoring fields it does not name.
     result = CheckResult(
         decision=body["decision"],
         reason=body["reason"],
@@ -116,10 +109,9 @@ def test_sample_result_decodes_into_check_result() -> None:
 # (the SDK's HTTP layer) so the test runs offline.
 # ---------------------------------------------------------------------------
 
-# Keys the SDK is allowed to put on the wire. Subset of the v1 schema's
-# ActionRequest properties; schema_version is NOT in this set today (the
-# server defaults missing values to v1) but a future SDK release can add
-# it without breaking the contract — it is in WIRE_KEYS_OPTIONAL.
+# Keys the SDK may put on the wire, a subset of the v1 ActionRequest
+# properties. The SDK does not send schema_version (the server defaults it
+# to v1), but it is in WIRE_KEYS_OPTIONAL so adding it stays in contract.
 WIRE_KEYS_REQUIRED = {"scope"}
 WIRE_KEYS_OPTIONAL = {
     "schema_version",
@@ -163,7 +155,6 @@ def _capture_check_body(**check_kwargs: Any) -> dict[str, Any]:
     captured: dict[str, Any] = {}
 
     def fake_urlopen(req, timeout=None):  # noqa: ARG001 - signature matches stdlib
-        # urllib.request.Request: req.data is the bytes-encoded body.
         captured["body"] = json.loads(req.data.decode("utf-8"))
         captured["url"] = req.full_url
         captured["method"] = req.get_method()
@@ -197,9 +188,8 @@ def test_sdk_request_body_keys_are_v1_subset() -> None:
 def test_sdk_request_body_matches_fixture_shape() -> None:
     """The same call that produced sample_request.json on the Go side
     must round-trip through the Python SDK to produce the same key set
-    and values (modulo schema_version, which the SDK does not yet emit
-    by design — the server defaults it). This is the canonical
-    cross-language contract assertion."""
+    and values, except schema_version, which the SDK does not emit (the
+    server defaults it). The canonical cross-language assertion."""
     captured = _capture_check_body(
         scope="shell",
         command="ls -la",
@@ -209,9 +199,6 @@ def test_sdk_request_body_matches_fixture_shape() -> None:
     body = captured["body"]
     fixture = _load_fixture("sample_request.json")
 
-    # SDK does not currently set schema_version; the server defaults it.
-    # We compare the SDK body against the fixture with schema_version
-    # treated as optional on the SDK side.
     expected = {k: v for k, v in fixture.items() if k != "schema_version"}
     assert body == expected, (
         f"SDK body diverged from cross-language fixture\n"
@@ -219,8 +206,7 @@ def test_sdk_request_body_matches_fixture_shape() -> None:
         f"got:      {body}"
     )
 
-    # And the URL must hit /v1/check — a wrong path is the most common
-    # SDK bug and would not be caught by body-only assertions.
+    # Body-only assertions would miss a wrong path.
     assert captured["url"] == "http://example.invalid/v1/check"
     assert captured["method"] == "POST"
 
@@ -268,8 +254,7 @@ def test_sdk_response_tolerates_unknown_field() -> None:
             "decision": "ALLOW",
             "reason": "ok",
             "matched_rule": "allow:shell:ls",
-            # Field that does not exist today; v1 additive evolution
-            # could introduce it. The SDK must ignore it gracefully.
+            # Not a v1 field today; additive evolution could add it.
             "policy_revision": "abc123",
         }
         return _FakeResponse(future_body)

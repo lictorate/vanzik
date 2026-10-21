@@ -1,10 +1,8 @@
-"""End-to-end tests that spin up the REAL Go `vanzik` binary and drive it
-with the real Python SDK. This is the strongest possible integration test —
-it verifies the entire HTTP protocol (auth, CORS, CSRF, cost reservations,
-approval queue) across language boundaries.
+"""End-to-end tests that drive the real Go `vanzik` binary with the real
+Python SDK: the HTTP protocol (auth, CORS, CSRF, cost reservations,
+approval queue) across the language boundary.
 
-The tests are skipped if the binary isn't found (e.g., on fresh checkouts
-where `go build` hasn't been run). Build with:
+Skipped when the binary isn't built. Build with:
 
     cd <repo-root> && go build -o vanzik.exe ./cmd/vanzik
 

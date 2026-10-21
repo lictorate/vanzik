@@ -1,4 +1,4 @@
-"""Approval replay through the SDK (review finding R1).
+"""Approval replay through the SDK.
 
 Contract under test: after ``wait_for_approval`` resolves ALLOW, the
 ``@guarded(wait_for_approval=True)`` wrapper must replay the approval
@@ -8,7 +8,7 @@ audits the execution — and must run the wrapped function only if that
 replay allows. Acting on the status poll alone is the bug these tests pin.
 
 Every test asserts on the exact sequence of HTTP requests the mock server
-saw, so a wrapper that skips the replay (the pre-fix behaviour) fails.
+saw, so a wrapper that skips the replay fails.
 """
 
 import json

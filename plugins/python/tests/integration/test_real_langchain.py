@@ -1,13 +1,10 @@
-"""Real-LangChain integration tests (Phase 3 — A14).
+"""Real-LangChain integration tests.
 
 These tests exercise full Runnable pipelines against the actual
 ``langchain_core`` and ``langchain`` packages — never a mock of the
 framework. Only the Vanzik HTTP server is mocked (``integration_mock``
-fixture).
-
-Closes audit findings R5 P1 (real-framework canary), R5 P2/P3/P4
-(end-to-end gate enforcement under modern LangChain), R1 F1 (version-
-floor bound).
+fixture). They are the real-framework canary for end-to-end gate
+enforcement under modern LangChain.
 
 These tests are gated by ``@pytest.mark.integration`` so the regular
 ``pytest -m "not integration"`` run skips them. The CI integration-tests
@@ -21,14 +18,9 @@ import json
 
 import pytest
 
-# pyproject.toml's [project.optional-dependencies] langchain group enforces
-# the version floor at install time (langchain-core>=0.3,<2.0). At test
-# time we only need to verify the packages are importable — minversion=...
-# was previously checking again, but pytest.importorskip parses
-# `module.__version__` via packaging, and langchain 1.x's version-attribute
-# layout caused spurious skips on CI even with pip-installed 1.2.x. The
-# install-time floor is the source of truth; importorskip without
-# minversion just gates on the import succeeding.
+# No minversion: the pyproject langchain extra enforces the floor at install
+# time, and importorskip's `__version__` parsing spuriously skipped
+# langchain 1.x on CI.
 langchain_core = pytest.importorskip("langchain_core")
 langchain = pytest.importorskip("langchain")
 
@@ -66,16 +58,8 @@ def _make_real_tool(name: str = "echo", description: str = "echoes input"):
 
 
 class TestRealLangChainInvoke:
-    """End-to-end Runnable.invoke against the actual langchain_core runtime.
-
-    Note: GuardedTool is a composition wrapper, not a Runnable subclass
-    (see A11's decision-log entry). LangChain's ``coerce_to_runnable`` runs
-    an ``isinstance(thing, Runnable)`` check and will refuse to compose a
-    GuardedTool via the ``|`` operator. That is by design: the wrapper is
-    used as a list entry to ``create_react_agent`` / ``AgentExecutor``,
-    which call ``tool.invoke(input)`` directly. These tests exercise that
-    direct-invoke path.
-    """
+    """End-to-end ``tool.invoke(input)`` (what agent runtimes call) against
+    the actual langchain_core runtime."""
 
     def test_real_langchain_invoke_allow(self, integration_mock):
         """A real langchain_core ``Tool`` wrapped by GuardedTool runs through invoke().
@@ -92,7 +76,6 @@ class TestRealLangChainInvoke:
 
         assert out == "echo:hello"
         assert calls == ["hello"]
-        # Exactly one /v1/check should fire.
         assert len(integration_mock.requests_to("/v1/check")) == 1
 
     def test_real_langchain_invoke_deny_raises(self, integration_mock):
@@ -105,7 +88,6 @@ class TestRealLangChainInvoke:
             gt.invoke("rm -rf /")
 
         assert "denied" in str(ei.value).lower()
-        # The wrapped tool must NOT have been called.
         assert calls == []
 
     def test_real_langchain_invoke_approval_raises(self, integration_mock):
@@ -120,12 +102,8 @@ class TestRealLangChainInvoke:
         assert "approval" in str(ei.value).lower()
 
     def test_real_langchain_underlying_tool_invoke(self, integration_mock):
-        """Verify that the wrapped Tool's ``.invoke`` runs the function.
-
-        This validates that GuardedTool.invoke forwards correctly to a
-        real ``langchain_core.tools.Tool``'s invoke() — not just calling
-        ``.func`` directly.
-        """
+        """GuardedTool.invoke forwards to the real Tool's invoke(), not
+        just ``.func``."""
         integration_mock.set_default_check(allow())
         guard = Guard(integration_mock.base_url, agent_id="lc-int")
         tool, calls = _make_real_tool(name="counter", description="counts")
@@ -166,16 +144,10 @@ class TestRealLangChainBatch:
 
         out = gt.batch(["a", "b", "c"])
 
-        # `out` order matches input order (LangChain's batch preserves
-        # input/output alignment) but `calls` records execution order:
-        # the underlying Runnable.batch fans the three invocations out on
-        # a ThreadPoolExecutor, so completion order is scheduler-dependent
-        # and flakes under load. Compare sorted — "all three inputs ran
-        # exactly once" — mirroring the same fix in
-        # tests/test_langchain.py::test_guardedtool_batch_all_allowed.
+        # `out` keeps input order, but `calls` records completion order on
+        # Runnable.batch's thread pool: compare sorted.
         assert out == ["echo:a", "echo:b", "echo:c"]
         assert sorted(calls) == ["a", "b", "c"]
-        # Three checks (one per batch entry) before the underlying batch fires.
         assert len(integration_mock.requests_to("/v1/check")) == 3
 
     def test_batch_partial_deny_raises_with_index(self, integration_mock):
@@ -191,15 +163,14 @@ class TestRealLangChainBatch:
         msg = str(ei.value)
         assert "batch entry 1" in msg
         assert "denied" in msg.lower()
-        # No call ran — batch is whole-batch-fails-on-first-deny.
+        # The first DENY fails the whole batch before anything runs.
         assert calls == []
 
 
 class TestRealLangChainAttributeIntrospection:
     """LangChain runtime introspects ``args_schema``, ``name``, ``description``.
 
-    The strict allowlist on GuardedTool must keep that introspection path
-    open, while still blocking ``func``, ``_tool``, etc.
+    That path must stay open while ``func`` stays unavailable.
     """
 
     def test_metadata_passthrough_works(self, integration_mock):
@@ -215,15 +186,8 @@ class TestRealLangChainAttributeIntrospection:
         assert gt.args_schema is None or hasattr(gt.args_schema, "__name__")
 
     def test_bypass_attribute_blocked(self, integration_mock):
-        """The wrapper does not expose an unguarded ``func`` callable.
-
-        v0.5.0 raised AttributeError with a "bypass" message; v0.5.0
-        switches to subclassing BaseTool, so the AttributeError now comes
-        from pydantic's normal "no such field" path rather than a custom
-        ``__getattr__`` allowlist. The contract that matters for security
-        is unchanged: ``gt.func`` does not return a callable that skips
-        the gate.
-        """
+        """``gt.func`` must not return a callable that skips the gate (the
+        AttributeError comes from pydantic's "no such field" path)."""
         integration_mock.set_default_check(allow())
         guard = Guard(integration_mock.base_url, agent_id="lc-int-meta")
         tool, _ = _make_real_tool()
@@ -256,12 +220,8 @@ class TestRealLangChainToolkit:
             agent_id="lc-int-toolkit",
         )
 
-        # toolkit.tools is the drop-in replacement; verify both are gated
-        # GuardedTools (not the raw langchain Tool objects).
         assert all(isinstance(t, GuardedTool) for t in toolkit.tools)
 
-        # Drive each tool. The /v1/check call's body should reflect the
-        # inferred scope.
         toolkit.tools[0].invoke("https://example.com")
         toolkit.tools[1].invoke("/tmp/x.txt")
 

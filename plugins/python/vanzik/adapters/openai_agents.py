@@ -19,87 +19,19 @@ Usage
     agent = Agent(name="ops", tools=guard_tools([run_shell], guard))
     result = await Runner.run(agent, "clean up the build directory")
 
-Two entry points
-----------------
-``guard_tool`` / ``guard_tools`` (the enforcement point)
-    Return a copy of each ``FunctionTool`` whose ``on_invoke_tool`` runs
-    ``Guard.check`` first and calls the original invoker only on ALLOW.
-    DENY raises :class:`VanzikDenied` and REQUIRE_APPROVAL raises
-    :class:`VanzikApprovalRequired` before the tool body runs.
+``guard_tool`` / ``guard_tools`` are the hard gate: a copy of each
+``FunctionTool`` whose ``on_invoke_tool`` checks first and raises
+:class:`VanzikDenied` / :class:`VanzikApprovalRequired` outside the SDK's
+``failure_error_function``, so the run ends instead of the model reading a
+retry-inviting error. ``vanzik_tool_guardrail`` is the model-visible
+option: an SDK tool input guardrail that rejects the call with the Vanzik
+message and lets the run continue.
 
-    The gate sits OUTSIDE the SDK's own error handling (the tool's
-    ``failure_error_function``), so the deny is never turned into a tool
-    output: the exception ends the run, and ``Runner.run`` raises it to
-    the caller. The raised object subclasses both the Vanzik
-    exception and ``agents.exceptions.AgentsException``; the runner
-    re-raises ``AgentsException`` as-is instead of wrapping it in
-    ``UserError``, so ``except VanzikDenied`` (or ``except
-    PermissionError``) around ``Runner.run`` catches it. The model sees
-    nothing: the run is over.
+Scope inference, parameter extraction, nested agents and the guardrail
+are documented in docs/ADAPTERS.md, "OpenAI Agents SDK — guard_tools".
 
-    Nested agents are the exception. When the guarded tools belong to
-    an inner agent exposed with ``inner.as_tool()``, the deny ends the
-    inner run, but it is raised inside the outer agent's tool, whose
-    default ``failure_error_function`` turns it into a tool error: the
-    outer run continues and the outer model sees the SDK's generic
-    error message. Pass ``inner.as_tool(..., failure_error_function=None)``
-    (releases whose ``as_tool`` takes that argument) to propagate the
-    deny out of ``Runner.run`` instead. Either way the denied tool never
-    runs.
-
-``vanzik_tool_guardrail`` (the model-visible option)
-    Returns an SDK tool input guardrail. On DENY / REQUIRE_APPROVAL it
-    rejects the call with ``ToolGuardrailFunctionOutput.reject_content``:
-    the tool does not run, the model receives the Vanzik message as
-    the tool result, and the run continues. With
-    ``raise_on_block=True`` it trips the guardrail instead, and
-    ``Runner.run`` raises ``ToolInputGuardrailTripwireTriggered``.
-    Guardrails only run inside the SDK runner (a direct
-    ``on_invoke_tool`` call skips them), so ``guard_tool`` stays the
-    hard gate; the guardrail is for agents that should see the reason
-    and pick another action.
-
-Why not rely on the SDK's error handling
-----------------------------------------
-Exceptions raised INSIDE a tool built with ``@function_tool`` go to the
-tool's ``failure_error_function``. On openai-agents 0.23 its default
-returns a fixed "An error occurred while running the tool. Please try
-again." string (older releases appended the error text). Either way the
-model is invited to retry, and a deny that reads as a transient failure
-is the wrong signal. Gating outside that handler makes the outcome
-independent of how the tool was configured: a denied call never reaches
-the tool body.
-
-Scope inference and parameter extraction
-----------------------------------------
-The SDK hands ``on_invoke_tool`` the model's arguments as a JSON string.
-The adapter parses it and reduces it to ``Guard.check`` keywords with
-the shared ``extract_check_params`` (command/cmd, url + domain,
-path/file_path + an action inferred from the tool-name verb,
-session_id, est_cost). Arguments that are not valid JSON are gated as a
-raw command string; the original string still goes to the tool, whose
-own validation rejects it.
-
-``guard_tool`` first projects the arguments onto the properties the
-tool's ``params_json_schema`` declares (unless the schema allows
-additional properties): the SDK's params model drops undeclared keys,
-so the check sees exactly what the tool receives. Two alias keys for
-one parameter with different values (``{"command": "ls", "cmd": "rm -rf
-/"}``) are denied outright, without a server call, in both entry
-points: the adapter cannot know which one the tool reads.
-
-Scope is fixed when ``scope=`` is passed. Otherwise it is inferred, in
-order: a url/domain argument means ``network``, a path/file_path
-argument means ``filesystem``, then keywords in the tool name and
-description (as in the CrewAI adapter), then ``shell``.
-
-Lazy framework import
----------------------
-The module never imports ``agents`` at load time, so ``pip install
-vanzik`` keeps working without the extra. ``guard_tool`` works
-on any FunctionTool-shaped object and only touches the SDK to build its
-exception classes; ``vanzik_tool_guardrail`` imports the SDK when
-called and raises an install hint if it is missing.
+``agents`` is never imported at load time, so ``pip install vanzik``
+works without the extra.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""OpenAI Agents SDK agent-loop E2E tests (AT).
+"""OpenAI Agents SDK agent-loop E2E tests.
 
 ``test_real_openai_agents.py`` calls guarded tools directly. This file
 builds a real ``Agent`` and drives it with ``Runner.run`` /

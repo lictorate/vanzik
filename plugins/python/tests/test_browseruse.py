@@ -1,8 +1,6 @@
-"""Targeted coverage for the v0.5 browser-use adapter expansion.
-
-Closes audit findings R5 E4 (modern-API bypass via __getattr__) and the
-adapter side of R5 E5 / R7 E3 (data scope routing). Engine-side data-
-scope coverage lives in pkg/policy/engine_data_test.go.
+"""Targeted coverage for the browser-use adapter: no bypass of the gated
+Page API via ``__getattr__``, and data-scope routing on the adapter side.
+Engine-side data-scope coverage lives in pkg/policy/engine_data_test.go.
 
 These tests use the existing mock_server fixture from conftest.py — they
 mock the Vanzik proxy, NEVER the browser-use library itself. The
@@ -327,8 +325,7 @@ class TestGuardedPageAllowlist:
 
         with pytest.raises(AttributeError) as ei:
             page._impl_obj
-        # Message should explain the security posture so users understand
-        # the failure is intentional, not a bug.
+        # The message must show the failure is intentional, not a bug.
         assert "GuardedPage" in str(ei.value) or "internal" in str(ei.value)
 
     def test_guarded_page_unknown_method_blocked(self, mock_server):
@@ -354,7 +351,6 @@ class TestGuardedPageAllowlist:
         page = browser.wrap_page(inner)
 
         assert page.url == "https://example.com"
-        # `title` is on the allowlist — forwards as-is.
         assert page.title is inner.title
 
 
@@ -432,7 +428,6 @@ class TestCheckFormInputRedaction:
         browser.check_form_input("https://example.com/form", "comment", long_value)
         body = _last_body()
         assert body["command"] == "<redacted; len=1000>"
-        # Field name passes through unchanged.
         assert body["meta"]["field"] == "comment"
 
     def test_check_form_input_redacts_secret_patterns(self, mock_server):
@@ -448,7 +443,6 @@ class TestCheckFormInputRedaction:
             "Bearer sk-secret-1234567890",
         )
         body = _last_body()
-        # _redact substitutes the matched pattern with [REDACTED].
         assert "sk-secret-1234567890" not in body["command"]
         assert "[REDACTED]" in body["command"]
 
@@ -474,8 +468,7 @@ class TestRealBrowserUse:
         """Sanity check that the wrapper interoperates with the real
         browser_use package when present.
 
-        Skipped when browser_use is not installed (development/CI matrices
-        without the optional extra). We mock only Vanzik — never
+        Skipped without browser_use. Only Vanzik is mocked, never
         browser_use itself."""
         browser_use = pytest.importorskip(
             "browser_use",
@@ -484,11 +477,9 @@ class TestRealBrowserUse:
 
         from vanzik.adapters.browseruse import GuardedBrowser
 
-        # Resolve a Page-like object from browser_use lazily. The package's
-        # exact public surface evolved across 0.1.x → 0.4.x; we only need
-        # SOMETHING that quacks like a Playwright Page for the wrapper to
-        # bind to. If we cannot find one without spinning up a real
-        # Chromium (which CI cannot do), skip rather than fake it.
+        # browser_use's public surface varies across releases; any
+        # Page-like type will do. Without one (short of a real Chromium,
+        # which CI lacks) skip rather than fake it.
         Page = getattr(browser_use, "Page", None)
         if Page is None:
             pytest.skip(
@@ -500,9 +491,8 @@ class TestRealBrowserUse:
         MockVanzikHandler.check_response = {"decision": "DENY", "reason": "blocked"}
         browser = GuardedBrowser(guard_url=mock_server)
 
-        # We construct a GuardedPage around a mock page surface — browser_use
-        # provides the type guarantee, but instantiating a real Page requires
-        # an active browser context.
+        # A real Page needs an active browser context; mock one with
+        # browser_use's type as the spec.
         inner = MagicMock(spec=Page)
         inner.goto = AsyncMock(return_value="never")
         page = browser.wrap_page(inner)

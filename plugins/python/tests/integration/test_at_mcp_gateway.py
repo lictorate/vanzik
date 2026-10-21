@@ -1,11 +1,9 @@
-"""End-to-end MCP gateway integration tests (Phase 3 — AT).
+"""End-to-end MCP gateway integration tests.
 
-A15's ``test_mcp_gateway.py`` drives the gateway with a ``_FakeUpstream``
-test double for speed. The contribution of this file: spawn the gateway
-against a *real* downstream MCP server (via subprocess) and drive an
-``initialize`` → ``tools/list`` → ``tools/call`` flow end-to-end. This
-catches regressions where the gateway's stdio bridge mishandles framing,
-buffering, or shutdown — invisible to the in-process test.
+``test_mcp_gateway.py`` uses a ``_FakeUpstream`` test double; this file
+spawns a *real* downstream MCP server (subprocess) and drives
+``initialize`` → ``tools/list`` → ``tools/call`` end-to-end, catching
+stdio framing, buffering and shutdown bugs the in-process test can't see.
 
 Why a Python stub server instead of ``npx -y
 @modelcontextprotocol/server-everything``?
@@ -18,12 +16,6 @@ Why a Python stub server instead of ``npx -y
 The stub lives at ``tests/integration/_mcp_stub_server.py``. It speaks
 the MCP-stdio JSON-RPC subset the gateway needs (initialize, tools/list,
 tools/call, notifications/*).
-
-Closes the v0.5 plan AT brief item: "Real MCP server gating ... write a
-tiny Python MCP-stdio stub server you write in
-``tests/integration/_mcp_stub_server.py``. Drive the gateway against it.
-Send a ``tools/list``, ``tools/call``, etc. Assert Vanzik gates each
-call."
 """
 
 from __future__ import annotations
@@ -121,11 +113,9 @@ class TestGatewayAgainstRealStub:
         finally:
             gw._upstream.close()
 
-        # Upstream's response landed unchanged.
         assert resp["id"] == 8
         text = resp["result"]["content"][0]["text"]
         assert text == "echoed: hi"
-        # Exactly one /v1/check call before the call was forwarded.
         bodies = [
             json.loads(r["body"])
             for r in integration_mock.requests_to("/v1/check")
@@ -237,11 +227,9 @@ class TestGatewayAgainstRealStub:
         finally:
             gw._upstream.close()
 
-        # First two went through; third was denied.
         assert r1["result"]["content"][0]["text"] == "echoed: first"
         assert r2["result"]["content"][0]["text"] == "echoed: second"
         assert r3["result"]["isError"] is True
-        # Three checks total.
         assert len(integration_mock.requests_to("/v1/check")) == 3
 
     def test_notifications_do_not_emit_responses(self, integration_mock):

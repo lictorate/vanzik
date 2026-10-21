@@ -1,10 +1,8 @@
 """Shared check-parameter extraction for the framework adapters.
 
 LangChain, CrewAI, MCP and the OpenAI Agents SDK all reduce a tool
-invocation to the same ``Guard.check`` keyword arguments (command, url,
-domain, path, action, session_id, est_cost). The extraction lives here once so the adapters
-cannot drift apart; each adapter keeps only its framework-specific
-glue (input normalisation, error surfacing, redaction).
+invocation to the same ``Guard.check`` keyword arguments; extracting them
+in one place keeps the adapters from drifting apart.
 """
 
 from typing import Any, Tuple
@@ -95,21 +93,9 @@ def infer_path_action(tool_name: Any) -> str:
     """Map a tool-name verb to the canonical filesystem action
     ("read"/"write"/"delete"), or "" when no verb matches.
 
-    Mirrors the Go transports' gateclient.InferFilesystemAction exactly:
-    a case-insensitive ``strings.HasPrefix`` (Python ``str.startswith``)
-    against these verb groups, checked in this order —
-
-        read   = read, list, get, stat, cat, find, glob
-        write  = write, edit, create, append, save, copy, move
-        delete = delete, remove, unlink, rm
-
-    Prefix (not substring) matching is deliberate: it avoids the false
-    positives substring matching produces that Go never makes — e.g.
-    "set_target" contains "get" but does not START with it, and
-    "undelete_x" contains "delete" but does not start with it. Both
-    correctly yield "" here, matching Go. Parity is pinned by
-    plugins/python/tests/test_action_parity.py, whose table mirrors
-    pkg/internal/gateclient/gateclient_test.go.
+    Case-insensitive prefix match against the verb groups above, like Go's
+    gateclient.InferFilesystemAction. Prefix, not substring, on purpose:
+    "set_target" must not match "get", nor "undelete_x" match "delete".
     """
     if not isinstance(tool_name, str):
         return ""

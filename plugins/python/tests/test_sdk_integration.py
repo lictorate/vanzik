@@ -1,4 +1,4 @@
-"""Tests for the integration gaps fixed in the latest pass:
+"""SDK-to-server integration contracts:
 
   - Guard.check() forwards session_id and est_cost to the server.
   - Guard.wait_for_approval() sends the API key to /v1/status when set.

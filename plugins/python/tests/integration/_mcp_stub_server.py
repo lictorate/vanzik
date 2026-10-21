@@ -1,4 +1,4 @@
-"""A tiny Python MCP-stdio stub server used by the AT integration tests.
+"""A tiny Python MCP-stdio stub server used by the integration tests.
 
 Why we ship our own stub instead of `npx -y @modelcontextprotocol/server-everything`:
 

@@ -1,12 +1,8 @@
-"""Real browser-use / Playwright integration tests (Phase 3 — A14).
+"""Real browser-use / Playwright integration tests.
 
 Drives a real Playwright Chromium browser through ``GuardedPage`` and
 asserts every gated method routes through ``/v1/check``. The framework
 is real; only the Vanzik server is mocked.
-
-Closes audit findings R5 P1 (real-framework canary), R5 P2/P3/P4 (modern
-browser API gating), R1 F1 (version-floor bound), and the dynamic side
-of R5 E4.
 
 These tests carry both ``@pytest.mark.integration`` and
 ``@pytest.mark.playwright`` so a CI job that cannot install Chromium
@@ -119,7 +115,6 @@ class TestRealBrowserUseFullFlow:
         bodies = [
             json.loads(r["body"]) for r in integration_mock.requests_to("/v1/check")
         ]
-        # Three gated calls — one per real action.
         assert len(bodies) == 3
         assert bodies[0]["action"] == "goto"
         # evaluate routes through scope=browser; click routes through browser too.
@@ -139,8 +134,6 @@ class TestRealBrowserUseFormInput:
         gp = GuardedPage(page, guard)
 
         run(gp.goto(_DATA_URL))
-        # fill goes through the data scope. The redaction contract
-        # ensures the password value never lands in the request body verbatim.
         run(gp.fill("#password", "hunter2-shortvalue"))
 
         bodies = [
@@ -159,8 +152,7 @@ class TestRealBrowserUseFormInputRedaction:
         """Long values must be replaced with ``<redacted; len=N>`` BEFORE
         the request body leaves the SDK — the engine never sees the raw value.
         """
-        # No real page needed for this contract test — the redaction
-        # happens entirely in GuardedBrowser.check_form_input.
+        # No real page needed: redaction happens in check_form_input.
         integration_mock.set_default_check(allow())
         guard = Guard(integration_mock.base_url, agent_id="bu-int-redact")
         gb = GuardedBrowser(guard=guard)
@@ -184,7 +176,6 @@ class TestRealBrowserUseEvaluateGated:
         run(gp.goto(_DATA_URL))
         result = run(gp.evaluate("1 + 2"))
         assert result == 3
-        # Two gated calls: goto + evaluate.
         assert len(integration_mock.requests_to("/v1/check")) == 2
 
 
@@ -225,7 +216,6 @@ class TestRealBrowserUseAllowlist:
         gp = GuardedPage(page, guard)
 
         run(gp.goto(_DATA_URL))
-        # Reading the url property must not require a check.
         before = len(integration_mock.requests_to("/v1/check"))
         _ = gp.url
         after = len(integration_mock.requests_to("/v1/check"))

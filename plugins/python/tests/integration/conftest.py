@@ -85,11 +85,8 @@ class _IntegrationHandler(BaseHTTPRequestHandler):
 class _IntegrationServer(ThreadingHTTPServer):
     """ThreadingHTTPServer with per-instance response queues.
 
-    The unit-test handler keeps response state on a class attribute, which
-    is fine for one-call tests. Integration tests need queues so they can
-    enqueue a sequence (ALLOW, ALLOW, DENY, ...) for an agent loop. Putting
-    the queues on the server instance also avoids cross-test contamination
-    when pytest-xdist or asyncio task interleaving runs tests in parallel.
+    Queues live on the server instance, not the class, so parallel tests
+    (pytest-xdist, interleaved asyncio tasks) cannot contaminate each other.
     """
 
     request_queue_size = 128

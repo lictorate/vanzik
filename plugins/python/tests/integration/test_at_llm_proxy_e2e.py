@@ -1,14 +1,8 @@
-"""End-to-end LangChain agent against the Vanzik LLM API Proxy
-(Phase 4C — AT).
+"""End-to-end LangChain agent against the Vanzik LLM API Proxy: a denied
+tool call reaches the agent as a synthetic refusal tool_result, and the
+agent's behavior is observed.
 
-Plan brief (v0.5 plan, AT-Phase-4C item "E2E LangChain test"):
-
-    "Spin up a real LangChain agent pointed at the proxy. Configure a
-     tool the agent will call. Hit a denied tool name → agent receives
-     synthetic refusal as tool_result → agent's behavior (retry / give
-     up / report) is observed and documented."
-
-There are two ways to honour this brief offline-deterministically:
+Two offline-deterministic paths:
 
     A. Subprocess the Go binary `vanzik-llm-proxy`, drive a real
        OpenAI-shape mock upstream, point a real `langchain-openai`
@@ -35,8 +29,6 @@ The behavioural property pinned (under both paths):
     not silently retry — the next iteration sees the refusal as the
     tool's response and the agent's downstream logic is responsible
     for handling it (typically: report the refusal back to the user).
-
-This is the "what does the agent do?" coupon the v0.5 plan calls out.
 
 TODO(v0.7, #at-llm-proxy-binary-e2e): once a CI runner reliably ships
 both `make build-llm-proxy` and a writable port for the proxy, flip
@@ -112,10 +104,8 @@ from .conftest import allow, deny  # noqa: E402
 class _PlannedToolCallChatModel(BaseChatModel):
     """Fake chat model that emits a sequence of canned ``AIMessage``s.
 
-    First reply requests a tool call; second reply (after observing the
-    tool's response, including a refusal) is a plain text reply that
-    "reports" what happened. This is the minimal agent loop pattern
-    the test pins.
+    First reply requests a tool call; the second (after the tool's
+    response, including a refusal) is plain text reporting what happened.
     """
 
     responses: list
@@ -135,9 +125,7 @@ class _PlannedToolCallChatModel(BaseChatModel):
 
 def _make_guarded_tool(guard: Guard, scope: str = "shell") -> Tool:
     """Wrap a real LangChain tool whose `func` delegates to a
-    `GuardedTool`. This is the integration pattern A14 documented in
-    test_at_real_langchain.py — `GuardedTool` is composition-only and
-    can't be passed to LangChain agent runtimes directly.
+    `GuardedTool`, turning a deny into the tool's text response.
     """
 
     def _bash_impl(cmd: str) -> str:
@@ -151,10 +139,8 @@ def _make_guarded_tool(guard: Guard, scope: str = "shell") -> Tool:
     guarded = GuardedTool(tool=raw, guard=guard, scope=scope)
 
     def _gated_entry(cmd: str) -> str:
-        # GuardedTool.run raises PermissionError on deny — we surface
-        # the error string as the tool's "response" so the agent sees
-        # a normal `tool_result`, mirroring what the LLM API Proxy
-        # emits as a synthetic refusal text on the wire.
+        # Surface the PermissionError text as a normal tool_result, as the
+        # LLM API Proxy does with its synthetic refusal.
         try:
             return str(guarded.run(cmd))
         except PermissionError as exc:
@@ -196,11 +182,8 @@ class TestAT_LLMProxy_LangChain_E2E_PathB:
         second = AIMessage(content="The action was denied by policy.")
         model = _PlannedToolCallChatModel(responses=[first, second])
 
-        # Run a minimal agent loop manually — the langgraph runtime is
-        # heavy and asks for tool registration that GuardedTool can't
-        # satisfy directly. The loop here pins the behavioural property:
-        # invoke model, dispatch tool, surface tool_result, invoke model
-        # again, observe terminal text.
+        # A hand-rolled loop instead of the heavy langgraph runtime: model,
+        # tool, tool_result, model again, terminal text.
         msgs: list[BaseMessage] = []
         # Turn 1: model decides to call tool.
         ai1 = model.invoke(msgs)
@@ -208,12 +191,11 @@ class TestAT_LLMProxy_LangChain_E2E_PathB:
         assert ai1.tool_calls, "fake model must request a tool call"
         tc = ai1.tool_calls[0]
 
-        # Dispatch tool — this is where the gate fires.
         tool_result = gated_tool.invoke(tc["args"]["cmd"])
         msgs.append(ToolMessage(content=str(tool_result), tool_call_id=tc["id"]))
 
-        # The synthetic refusal text is what the agent sees as the
-        # tool's response — the central correctness invariant.
+        # The central invariant: the agent sees the refusal as the tool's
+        # response.
         assert "denied" in str(tool_result).lower(), \
             f"expected refusal text in tool_result; got {tool_result!r}"
         assert "rule:no-shell" in str(tool_result), \
@@ -226,7 +208,6 @@ class TestAT_LLMProxy_LangChain_E2E_PathB:
             "agent must NOT silently retry the denied tool call"
         assert ai2.content, "agent should produce a textual reply after refusal"
 
-        # Exactly one /v1/check call (the denied bash call).
         check_requests = [
             json.loads(r["body"]) for r in integration_mock.requests_to("/v1/check")
         ]
@@ -279,10 +260,8 @@ class TestAT_LLMProxy_LangChain_E2E_PathA:
         binary = _llm_proxy_binary()
         assert binary is not None
         port = _find_free_port()
-        # Boot the proxy with no upstream (we won't actually drive a
-        # request through it in this smoke test). The proxy must accept
-        # the `--guard-url` of our mock central server, bind, and
-        # serve `/healthz`.
+        # No upstream: the proxy must accept our mock's --guard-url, bind
+        # and serve /healthz.
         proc = subprocess.Popen(
             [
                 binary,

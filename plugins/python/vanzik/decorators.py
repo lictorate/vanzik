@@ -1,6 +1,5 @@
 """The ``@guarded`` decorator: policy-check-then-call for plain
-functions. Framework-specific integration lives in
-``vanzik.adapters``; this module only depends on the core client.
+functions. Framework integrations live in ``vanzik.adapters``.
 """
 
 import functools
@@ -15,13 +14,9 @@ from vanzik.core import (
     Guard,
 )
 
-# Set of kwargs that ``guarded(**check_kwargs)`` is allowed to forward to
-# ``Guard.check``. Anything outside this set is almost always a typo
-# (e.g. ``agent="x"`` instead of ``meta={"agent":"x"}``) — and silently
-# forwarding it to ``Guard.check`` would either be dropped on the floor
-# (``check`` only inspects keyword args it knows about) or raise a
-# confusing TypeError much later in the call chain. Reject at the
-# decorator boundary so the typo surfaces at definition time.
+# Kwargs ``guarded(**check_kwargs)`` may forward to ``Guard.check``. Anything
+# else is almost always a typo (``agent="x"`` for ``meta={"agent": "x"}``),
+# so it is rejected at definition time instead of failing at call time.
 _GUARDED_VALID_CHECK_KWARGS = frozenset({
     "action",
     "command",
@@ -35,7 +30,6 @@ _GUARDED_VALID_CHECK_KWARGS = frozenset({
 })
 
 
-# Convenience decorator for guarding functions
 def guarded(
     scope: str,
     guard: Optional[Guard] = None,
@@ -47,7 +41,7 @@ def guarded(
 ):
     """Decorator that checks policy before executing a function.
 
-    Default behavior (v0.4.0/v0.4.1 compatible):
+    Default behavior:
         @guarded("shell", guard=guard)
         def run_command(cmd: str):
             os.system(cmd)
@@ -78,17 +72,13 @@ def guarded(
     wrapper never waits a second time on its own); a synthetic "Approval
     timed out" raises :class:`VanzikApprovalTimeout`.
     With ``wait_for_approval=False`` (default), the wrapper raises
-    :class:`VanzikApprovalRequired` immediately. That class extends
-    ``PermissionError``, so existing ``except PermissionError:`` handlers
-    continue to work unchanged.
+    :class:`VanzikApprovalRequired` immediately. All these exceptions
+    extend ``PermissionError``.
 
-    Unknown ``**check_kwargs`` raise ``TypeError`` at decoration time.
-    Only the keyword arguments :meth:`Guard.check` understands
-    (``action``, ``command``, ``path``, ``domain``, ``url``,
-    ``session_id``, ``parent_session_id``, ``est_cost``, ``meta``) are
-    accepted; a typo like
-    ``agent="x"`` is rejected at definition time rather than silently
-    dropped.
+    ``**check_kwargs`` are forwarded to :meth:`Guard.check` (``action``,
+    ``command``, ``path``, ``domain``, ``url``, ``session_id``,
+    ``parent_session_id``, ``est_cost``, ``meta``); any other key raises
+    ``TypeError`` at decoration time.
     """
     unknown = set(check_kwargs) - _GUARDED_VALID_CHECK_KWARGS
     if unknown:
@@ -102,7 +92,6 @@ def guarded(
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             g = guard or Guard()
-            # Try to extract meaningful info from args
             cmd = args[0] if args else kwargs.get("command", kwargs.get("cmd", ""))
             result = g.check(scope, command=str(cmd), **check_kwargs)
 
@@ -111,18 +100,14 @@ def guarded(
 
             if result.needs_approval:
                 if wait_for_approval:
-                    # Block until a human resolves or the deadline elapses.
                     resolved = g.wait_for_approval(
                         result.approval_id,
                         timeout=approval_timeout,
                         poll_interval=approval_poll_interval,
                     )
                     if resolved.allowed:
-                        # Replay the approval through /v1/check. The status
-                        # poll is read-only; only this replay spends the
-                        # one-shot capability, applies --approval-validity,
-                        # reserves cost, and writes the allow:approved audit
-                        # entry for the execution.
+                        # The status poll is read-only; only this replay
+                        # spends the one-shot approval.
                         replay = g.check(
                             scope,
                             command=str(cmd),
@@ -132,10 +117,9 @@ def guarded(
                         if replay.allowed:
                             return func(*args, **kwargs)
                         if replay.needs_approval:
-                            # Consumed or expired: the server re-entered the
-                            # approval flow under a new id. Surface it rather
-                            # than waiting again, or a refused replay would
-                            # loop forever.
+                            # Consumed or expired, re-issued under a new id.
+                            # Don't wait again: a refused replay would loop
+                            # forever.
                             raise VanzikApprovalRequired(
                                 f"Action requires approval. Approve at: {replay.approval_url}",
                                 result=replay,

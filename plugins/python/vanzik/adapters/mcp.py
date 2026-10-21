@@ -1,13 +1,12 @@
 """
 Vanzik MCP (Model Context Protocol) Adapter
 
-Provides an MCP-compatible tool server that wraps existing tools with Vanzik
-policy enforcement. This allows any MCP-compatible client (Claude Desktop,
-Cursor, etc.) to have its tool calls guarded by policy.
+An MCP tool server (and single-upstream gateway) that gates tool calls
+from any MCP client (Claude Desktop, Cursor, ...) through Vanzik policy.
 
 Usage as an MCP server (stdio transport):
 
-    python -m vanzik.adapters.mcp --policy configs/default.yaml
+    python -m vanzik.adapters.mcp --guard-url http://localhost:8080
 
 Or programmatically:
 
@@ -47,21 +46,16 @@ from vanzik.adapters._common import (
 MCP_PROTOCOL_VERSION = "2024-11-05"
 SDK_VERSION = "2.0.0"
 
-# Secret patterns mirrored from pkg/notify/notify.go's DefaultRedactor. The
-# MCP adapter forwards handler exception text back to the client as a
-# content block; raw exception strings can carry bearer tokens, API keys,
-# JWTs, private keys or credentials embedded in KEY=value form. Keeping
-# this list in sync with the Go-side redactor means MCP egress matches
-# webhook/Slack egress hygiene. A fresh `list()` so external callers who mutate it don't
-# accidentally blank out redaction for the whole process.
+# Secret patterns, identical to pkg/notify/notify.go's DefaultRedactor
+# (tests/test_redactor_property.py compares them), so MCP egress, such as
+# handler exception text sent to the client, is redacted like
+# webhook/Slack egress.
 _REDACT_PATTERNS = [
     re.compile(r"(?i)bearer\s+[A-Za-z0-9_\-\.]+"),
     re.compile(r"AKIA[0-9A-Z]{16}"),
     re.compile(r"ghp_[A-Za-z0-9]{36,}"),
     re.compile(r"xox[baprs]-[A-Za-z0-9\-]+"),
     re.compile(r"(?i)(secret|token|password|api[_\-]?key)\s*=\s*\S+"),
-    # Added in v1.2.0 with the Go side (see tests/test_redactor_property.py,
-    # which checks the two lists are identical).
     re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}"),
     re.compile(r"AIza[0-9A-Za-z_\-]{35}"),
     re.compile(r"\bgh[ousr]_[A-Za-z0-9]{36,}"),
@@ -85,17 +79,12 @@ def _redact(text: str) -> str:
 
 
 def _infer_check_params_for(tool: "ToolDefinition", arguments: dict) -> dict:
-    """Free-function counterpart of :meth:`GuardedMCPServer._infer_check_params`.
+    """Check-param inference shared by :class:`GuardedMCPServer` and
+    :class:`GuardedMCPGateway`.
 
-    Both the in-process server and the gateway need identical inference +
-    redaction. Defining the logic once at module scope keeps the gateway
-    from awkwardly invoking the unbound server method on a non-server
-    ``self`` (the gateway is its own class).
-
-    Builds on the shared :func:`extract_check_params` and adds the
-    MCP-specific parts: secret redaction on commands, a synthesised
-    command for shell-scope tools without an explicit one, and a bare
-    ``domain`` argument passthrough when there is no ``url`` argument.
+    Adds to :func:`extract_check_params` the MCP-specific parts: secret
+    redaction on commands, a synthesised command for shell-scope tools
+    without one, and a bare ``domain`` argument when there is no ``url``.
     """
     params: Dict[str, Any] = extract_check_params(arguments, tool.name)
 
@@ -135,8 +124,8 @@ class ToolDefinition:
 class GuardedMCPServer:
     """MCP server that enforces Vanzik policies on tool calls.
 
-    This implements the MCP stdio transport protocol. Tool calls are checked
-    against the Vanzik proxy before execution.
+    Speaks the MCP stdio transport; tool calls are checked before the
+    handler runs.
     """
 
     def __init__(
@@ -174,13 +163,8 @@ class GuardedMCPServer:
         self._handlers[name] = handler
 
     def _infer_check_params(self, tool: ToolDefinition, arguments: dict) -> dict:
-        """Delegate to :func:`_infer_check_params_for`.
-
-        Kept as a method for back-compat with any subclass / test that
-        binds it; the real logic (including secret redaction) lives in
-        the module-level helper so :class:`GuardedMCPGateway` can
-        reuse it without instantiating a server.
-        """
+        """Delegate to :func:`_infer_check_params_for`. Kept as a method
+        for subclasses and tests that override or bind it."""
         return _infer_check_params_for(tool, arguments)
 
     def _handle_request(self, request: dict) -> dict:
@@ -190,12 +174,8 @@ class GuardedMCPServer:
         params = request.get("params", {})
 
         if method == "initialize":
-            # MCP clients advertise their protocol version in params. We pin
-            # to MCP_PROTOCOL_VERSION and do not yet negotiate. If the client
-            # wants a different version (usually newer), log a single WARN to
-            # stderr so operators can see version drift, then respond with
-            # our pinned version. stdout is reserved for JSON-RPC on the
-            # stdio transport, so the warning MUST go to stderr.
+            # No negotiation: answer with the pinned version and WARN about
+            # drift. The warning MUST go to stderr; stdout carries JSON-RPC.
             client_version = params.get("protocolVersion") if isinstance(params, dict) else None
             if client_version and client_version != MCP_PROTOCOL_VERSION:
                 sys.stderr.write(
@@ -241,7 +221,6 @@ class GuardedMCPServer:
             # Notification, no response needed
             return None
 
-        # Unknown method
         return {
             "jsonrpc": "2.0",
             "id": req_id,
@@ -260,7 +239,6 @@ class GuardedMCPServer:
         tool = self._tools[tool_name]
         handler = self._handlers[tool_name]
 
-        # Policy check
         try:
             check_params = self._infer_check_params(tool, arguments)
         except ConflictingToolInput as e:
@@ -307,7 +285,6 @@ class GuardedMCPServer:
                 },
             }
 
-        # Action allowed — execute the handler
         try:
             output = handler(**arguments) if isinstance(arguments, dict) else handler(arguments)
             if not isinstance(output, str):
@@ -321,11 +298,9 @@ class GuardedMCPServer:
                 },
             }
         except Exception as e:
-            # The client is an arbitrary MCP consumer (Claude Desktop,
-            # Cursor, a script); any secret embedded in the exception
-            # message would cross that trust boundary. Log the raw text
-            # to stderr for operator diagnostics, return only a redacted
-            # copy + the exception type over the wire.
+            # The exception text crosses a trust boundary to an arbitrary
+            # MCP client: raw text goes to stderr only, the wire gets a
+            # redacted copy.
             sys.stderr.write(
                 f"vanzik.mcp: tool {tool_name!r} handler raised "
                 f"{type(e).__name__}: {e}\n"
@@ -346,21 +321,14 @@ class GuardedMCPServer:
     def run(self):
         """Run the MCP server on stdio (blocking).
 
-        Each frame is processed inside a guard so a single malformed
-        JSON line, a handler exception, or a downstream-side error does
-        not crash the adapter. Claude Desktop (and similar long-lived
-        MCP clients) keep one stdio session open for the whole session
-        — surviving a bad frame means the user does not have to restart
-        their editor every time a tool throws.
+        A bad frame never crashes the adapter: long-lived clients such as
+        Claude Desktop keep one stdio session open, and restarting the
+        editor on every tool error is not acceptable.
 
-        Behavior:
         - blank / whitespace-only line: dropped silently.
-        - JSON parse error: log to stderr, drop the frame. Best-effort
-          JSON-RPC parse-error response is not emitted because the bad
-          frame had no recoverable id.
-        - handler raises: log to stderr, emit a JSON-RPC -32603
-          "Internal error" response with whichever id was recoverable
-          (``null`` if not). The adapter keeps reading the next frame.
+        - JSON parse error: logged to stderr and dropped (no id to answer).
+        - handler raises: logged, answered with JSON-RPC -32603 "Internal
+          error" under the recoverable id (``null`` if none).
         """
         for line in sys.stdin:
             line = line.strip()
@@ -406,9 +374,7 @@ class GuardedMCPServer:
                 sys.stdout.write(json.dumps(response) + "\n")
                 sys.stdout.flush()
             except (BrokenPipeError, OSError) as e:
-                # Client closed stdout — log once and exit the loop on the
-                # next iteration. Don't try to write more responses to a
-                # dead pipe.
+                # Client closed stdout: log and drop this response.
                 sys.stderr.write(
                     f"vanzik.mcp: stdout write failed ({type(e).__name__}); "
                     f"client likely closed the connection\n"
@@ -419,16 +385,9 @@ class GuardedMCPServer:
 class _UpstreamProcess:
     """Spawn a downstream MCP server and bridge JSON-RPC frames.
 
-    Used by :class:`GuardedMCPGateway` to forward ``tools/list`` /
-    ``tools/call`` / ``initialize`` to a real upstream MCP server while
-    Vanzik sits in the middle of every ``tools/call`` and decides
-    whether to forward.
-
-    The bridge is intentionally synchronous: one request, one response,
-    matching the stdio JSON-RPC pattern Claude Desktop and Cursor use.
-    Server-initiated notifications (``listChanged`` etc.) are not
-    forwarded; capability merging and namespaced tool prefixes are
-    deferred. Single upstream, request/response only.
+    Used by :class:`GuardedMCPGateway`. Deliberately synchronous, one
+    request then one response, like the stdio JSON-RPC Claude Desktop and
+    Cursor use. Server-initiated notifications are not forwarded.
     """
 
     def __init__(self, command: list, env: Optional[dict] = None):
@@ -449,11 +408,9 @@ class _UpstreamProcess:
     def request(self, frame: dict, timeout: float = 30.0) -> Optional[dict]:
         """Send a JSON-RPC frame and read the matching response.
 
-        Returns ``None`` for notifications (no ``id`` in the request) and
-        for cases where the upstream closed the pipe. Raises ``RuntimeError``
-        on transport failure so :class:`GuardedMCPGateway` can surface a
-        JSON-RPC -32603 internal error to its own client instead of
-        crashing the bridge.
+        Returns ``None`` for notifications (no ``id``). Raises
+        ``RuntimeError`` on transport failure or a closed upstream, which
+        :class:`GuardedMCPGateway` turns into a JSON-RPC -32603 error.
         """
         if self._proc.poll() is not None:
             raise RuntimeError(
@@ -467,7 +424,6 @@ class _UpstreamProcess:
         except (BrokenPipeError, OSError) as e:
             raise RuntimeError(f"upstream stdin write failed: {e}") from e
 
-        # Notifications (no id) get no response.
         if "id" not in frame:
             return None
 
@@ -511,17 +467,15 @@ class GuardedMCPGateway:
       are not forwarded.
     - No prompts/resources support — only ``tools/*`` is gated.
 
-    The full multi-upstream gateway lives in cmd/vanzik-mcp-gateway/
-    + pkg/mcpgw/. Use :class:`GuardedMCPServer` directly when you want
-    to register tools in code.
+    The full multi-upstream gateway is cmd/vanzik-mcp-gateway/ +
+    pkg/mcpgw/. Use :class:`GuardedMCPServer` to register tools in code.
     """
 
-    # Methods we always forward verbatim to the upstream.
+    # Forwarded verbatim. Anything added here is safe as long as
+    # tools/call stays gated.
     _FORWARD_METHODS = frozenset({
         "initialize",
         "tools/list",
-        # Per-tool details / list-related extensions land here; safe to
-        # forward as long as we still gate tools/call below.
     })
 
     def __init__(
@@ -536,17 +490,16 @@ class GuardedMCPGateway:
             raise ValueError("upstream command is required for the gateway")
         self._guard = guard or Guard(guard_url, agent_id=agent_id)
         self._upstream = _UpstreamProcess(upstream, env=env)
-        # Cached tool list so we can apply scope inference per-tool. Refreshed
-        # lazily via a ``tools/list`` round-trip.
+        # Tool name -> scope, filled lazily from upstream tools/list.
         self._tool_scope: Dict[str, str] = {}
 
     def _refresh_tool_scopes(self) -> None:
         """Pull ``tools/list`` from the upstream and cache the names.
 
-        Scope defaults to ``"shell"`` for unknown tools; ``_infer_check_params``
-        upgrades to ``network`` / ``filesystem`` based on argument keys, so the
-        default is mostly cosmetic. We do NOT try to read the description or
-        schema to guess a smarter scope — the simple inference is the contract.
+        Scope is always ``"shell"``; the call's argument keys upgrade it to
+        ``network`` / ``filesystem``. Guessing from the description or
+        schema is deliberately not done: the simple inference is the
+        contract.
         """
         try:
             resp = self._upstream.request({
@@ -570,12 +523,10 @@ class GuardedMCPGateway:
         arguments = params.get("arguments", {}) or {}
         req_id = frame.get("id")
 
-        # Lazy: refresh scopes on first call so we know which tools exist.
         if not self._tool_scope:
             self._refresh_tool_scopes()
         scope = self._tool_scope.get(tool_name, "shell")
 
-        # Reuse the shared inference + redaction helper.
         td = ToolDefinition(name=tool_name, description="", scope=scope)
         try:
             check_params = _infer_check_params_for(td, arguments)
@@ -617,8 +568,7 @@ class GuardedMCPGateway:
                 },
             }
 
-        # ALLOW — forward the original frame to the upstream and relay its
-        # response verbatim back to the client.
+        # ALLOW: relay the upstream's response verbatim.
         try:
             return self._upstream.request(frame) or {
                 "jsonrpc": "2.0", "id": req_id,
@@ -648,8 +598,7 @@ class GuardedMCPGateway:
                     "error": {"code": -32603, "message": f"upstream error: {e}"},
                 }
         if method.startswith("notifications/"):
-            # Forward upstream so it sees `notifications/initialized` etc.
-            # No response expected.
+            # Forward (e.g. notifications/initialized); no response expected.
             try:
                 self._upstream.request(frame)
             except RuntimeError:
@@ -704,12 +653,9 @@ def main():
         and gates ``tools/call`` through Vanzik. Example:
         ``python -m vanzik.adapters.mcp --guard-url http://localhost:8080
         --upstream "npx -y @modelcontextprotocol/server-filesystem /tmp"``.
-      - no ``--upstream`` — empty-server mode. Retained for callers that
-        ``register tools in code`` via subclasses. Emits a stderr WARN
-        so an operator following the docs literally sees that no tools
-        are registered (instead of silently exposing a tool-less server
-        to Claude
-        Desktop).
+      - no ``--upstream`` — empty-server mode, for callers that register
+        tools in code via subclasses. Emits a stderr WARN so an operator
+        notices that no tools are registered.
     """
     import argparse
     import shlex
@@ -744,9 +690,6 @@ def main():
         gateway.run()
         return
 
-    # Empty-server mode: warn the operator. Without --upstream and without
-    # programmatic add_tool() calls, this server has zero tools and is
-    # useless to a connected MCP client. The warning gives a clear hint.
     sys.stderr.write(
         "WARN vanzik.mcp: starting with NO tools registered. "
         "Pass --upstream '<command>' to run as a gateway in front of an "
