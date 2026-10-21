@@ -206,14 +206,14 @@ Details: [`docs/DEPRECATIONS.md`](DEPRECATIONS.md) and [`docs/POLICY_REFERENCE.m
 
 ---
 
-## I see `503 Service Unavailable` on `/v1/approve` or `/v1/deny`
+## I see `503 Service Unavailable` on `/v1/check` or `/auth/login`
 
-**Cause:** the in-memory session store or approval queue is full.
+**Cause:** the approval queue or the dashboard session store is full. (`/v1/approve` and `/v1/deny` never return 503.)
 
-- Session store: `MaxSessions = 1024` (hardcoded in `pkg/proxy/auth.go`). Oldest-by-expiry are evicted, but under burst login load you can hit `Retry-After: 5`.
-- Approval queue: `MaxPendingApprovals = 10000`. Resolved entries are bulk-evicted when the queue fills.
+- Approval queue, on `/v1/check`: `MaxPendingApprovals = 10000` (`pkg/proxy/server.go`). When a new approval arrives at capacity, the oldest resolved entry is evicted to make room; if every entry is still pending, the check that needed approval gets 503 with `Retry-After: 30`.
+- Session store, on `/auth/login`: `MaxSessions = 1024` (hardcoded in `pkg/proxy/auth.go`). At capacity, expired sessions are swept first; live sessions are never evicted, so if all are live the login gets 503 with `Retry-After: 5`.
 
-**Mitigation:** resolve outstanding approvals faster, or rotate API keys / force logouts to shrink the session table.
+**Mitigation:** resolve outstanding approvals faster, or log out unused dashboard sessions (or wait for them to expire) to shrink the session table.
 
 ---
 
@@ -260,11 +260,13 @@ The proxy was killed mid-stream and the buffered tool-call payload was never flu
 
 ### LLM API Proxy: agent sees `502 Bad Gateway`
 
-The proxy couldn't reach `--guard-url` or the bearer token is wrong. `curl -sf <guard-url>/health` to confirm reachability, then verify `VANZIK_API_KEY` matches on both sides. With `--fail-mode=deny` (production default), in-flight calls return synthetic refusals until the server comes back.
+The proxy couldn't reach the model provider: the response body reads `upstream error: …` (for example `connection refused`). Check `--upstream-openai` / `--upstream-anthropic` and that the proxy host can reach the provider (DNS, egress firewall, corporate proxy).
+
+An unreachable Vanzik server (`--guard-url`) does **not** cause a 502. With `--fail-mode=deny` (the default) the agent gets a synthetic refusal with HTTP 200 until the server comes back; `curl -sf <guard-url>/health` confirms reachability, and `VANZIK_API_KEY` must match on both sides.
 
 ### Proxy rejects every incoming connection
 
-It bound to `127.0.0.1`. If your agent runs in a separate container or host, the loopback bind blocks it. Change to `--listen 0.0.0.0:<port>` **only on a trusted network** — proxy inbound is not authenticated.
+It bound to `127.0.0.1`. If your agent runs in a separate container or host, the loopback bind blocks it. Change to `--listen 0.0.0.0:<port>` and set `--proxy-api-key`: the proxy refuses to start on a non-loopback address without it (exit code 2), and then requires every client to send the key in the `X-Vanzik-Proxy-Auth` header. See [`LLM_API_PROXY.md`](LLM_API_PROXY.md).
 
 ### Tool calls flow through the LLM API Proxy but never reach the Vanzik server
 
@@ -275,7 +277,7 @@ The client's `OPENAI_BASE_URL` is missing the `/v1` suffix, or the request is a 
 ## Still stuck?
 
 - Run `vanzik status` — shows `/health` reachability and the pending queue.
-- Check `/metrics` on the central server AND on each proxy — counters, gauges, histograms, dispatch drops.
+- Check `/metrics` on the central server — counters, gauges, histograms, dispatch drops. The LLM API Proxy and the MCP Gateway serve no `/metrics`; their decisions show up in the central server's metrics and audit log.
 - Response headers on `/v1/check`: `X-Vanzik-Policy-Ms`, `X-Vanzik-Audit-Ms`, `X-Vanzik-Total-Ms` (timings in ms, 3 decimals).
 - Version skew: all three binaries report their version via `vanzik version` / `vanzik-mcp-gateway --version` / `vanzik-llm-proxy --version`. Mismatch is the most common ops-time bug after a partial upgrade.
 - Open an issue with: versions of all binaries, sanitized policy snippet, and the relevant log lines from both the proxy and the central server. Security-sensitive reports go to `hello@lictorate.com` — not the issue tracker.
