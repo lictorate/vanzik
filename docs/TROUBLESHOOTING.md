@@ -256,7 +256,7 @@ The gateway started but no `--upstream` is wired, or the upstream subprocess cra
 
 ### LLM API Proxy: SDK hangs / `unexpected end of stream`
 
-The proxy was killed mid-stream and the buffered tool-call payload was never flushed. Give it a 30 s graceful-shutdown window (`TimeoutStopSec=30s` / `terminationGracePeriodSeconds: 30`).
+The proxy was killed mid-stream and the buffered tool-call payload was never flushed. On SIGTERM the proxy drains in-flight requests for 10 s (fixed, `pkg/llmproxy/server.go`), then closes what is left. Give the host at least that long before it kills the process (`TimeoutStopSec=15s` / `terminationGracePeriodSeconds: 15`); a longer grace period doesn't extend the 10 s drain, so a stream that runs past it is still cut.
 
 ### LLM API Proxy: agent sees `502 Bad Gateway`
 
