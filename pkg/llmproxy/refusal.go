@@ -11,8 +11,8 @@ package llmproxy
 //     agent's logs explain the verdict without operators having to
 //     cross-reference the audit JSONL by approval id.
 //   - On REQUIRE_APPROVAL, embeds BOTH the approval URL the human
-//     visits AND the approval_id with a hint to round-trip it through
-//     `_meta.dev.vanzik/approval_id` on retry. Closes the
+//     visits AND the approval_id with a hint to send it back in the
+//     X-Vanzik-Approval-ID header on retry. Closes the
 //     "approve once, model proceeds" loop with the central-server
 //     approval_id round-trip.
 //   - Provider-specific shape:
@@ -112,7 +112,7 @@ func buildRefusalMessage(d Decision) string {
 		if d.ApprovalID != "" {
 			b.WriteString("\nApproval ID: ")
 			b.WriteString(d.ApprovalID)
-			b.WriteString(" (preserve in _meta.dev.vanzik/approval_id on retry to resume after approval)")
+			b.WriteString(" (send it in the " + ApprovalIDHeader + " header on retry to resume after approval)")
 		}
 		b.WriteString("\n\nWait for human approval, then retry the same call.")
 		return b.String()
@@ -322,10 +322,15 @@ func buildAnthropicRefusalSSE(message string, toolUseIndex int) []byte {
 		"index": toolUseIndex,
 	})
 
+	// usage is required: the Anthropic SDKs' stream accumulators read
+	// usage.output_tokens on every message_delta and raise without it.
 	emit("message_delta", map[string]interface{}{
 		"type": "message_delta",
 		"delta": map[string]interface{}{
 			"stop_reason": "end_turn",
+		},
+		"usage": map[string]interface{}{
+			"output_tokens": 0,
 		},
 	})
 

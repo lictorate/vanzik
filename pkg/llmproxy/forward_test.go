@@ -534,7 +534,7 @@ func TestForwardChatCompletion_NonStreamingApprovalPath_IncludesApprovalURL(t *t
 		t.Fatalf("refusal missing content: %q", string(got))
 	}
 	content := *refusal.Choices[0].Message.Content
-	for _, want := range []string{"ap_xyz789", "http://127.0.0.1:8080/dashboard?approval=ap_xyz789", "_meta.dev.vanzik/approval_id"} {
+	for _, want := range []string{"ap_xyz789", "http://127.0.0.1:8080/dashboard?approval=ap_xyz789", "X-Vanzik-Approval-ID header"} {
 		if !strings.Contains(content, want) {
 			t.Errorf("approval refusal content missing %q: %q", want, content)
 		}

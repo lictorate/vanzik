@@ -454,11 +454,18 @@ required.
 For REQUIRE_APPROVAL the content is:
 
 ```
-[Vanzik] Tool call requires approval.
+Vanzik paused this action pending human approval.
+
 Reason: <reason>
-Approval ID: ap_<hex>
-Approve at: <approval_url>
+Rule: <rule>
+
+Approval URL: <approval_url>
+Approval ID: ap_<hex> (send it in the X-Vanzik-Approval-ID header on retry to resume after approval)
+
+Wait for human approval, then retry the same call.
 ```
+
+§ 11.3 covers the retry.
 
 > **Design note on `tool` role injection.** An earlier draft proposed
 > injecting a synthetic `role: "tool"` message with a fake
@@ -486,13 +493,23 @@ data: { "type": "content_block_delta", "index": <same>,
 
 event: content_block_stop
 data: { "type": "content_block_stop", "index": <same> }
+
+event: message_delta
+data: { "type": "message_delta", "delta": { "stop_reason": "end_turn" },
+        "usage": { "output_tokens": 0 } }
+
+event: message_stop
+data: { "type": "message_stop" }
 ```
 
 Anthropic's content_block index is reusable — emitting a `text` block
 at the same index that the `tool_use` block was buffered for is wire-
-legal. The downstream `message_delta { stop_reason }` field is
-rewritten from `tool_use` to `end_turn` to prevent the agent from
-expecting a tool result it's not getting.
+legal. The proxy stops reading the upstream there and closes the
+message itself: its `message_delta` sets `stop_reason` to `end_turn`
+(not `tool_use`) so the agent doesn't expect a tool result it's not
+getting, and carries `usage`, which the Anthropic SDKs'
+`messages.stream()` reads on every `message_delta` (without it they
+raise `AttributeError`).
 
 #### Malformed tool calls fail closed (v1.0)
 
@@ -826,6 +843,9 @@ LangChain (`langchain-openai`), and CrewAI (LiteLLM under the hood).
 Each example is a runnable Python script with a paired `.md`
 walkthrough. The fastest end-to-end is
 [`docs/QUICKSTART_LLM_PROXY.md`](./QUICKSTART_LLM_PROXY.md).
+The examples need Vanzik 2.0: the approval retry header
+(`X-Vanzik-Approval-ID`, § 11.3) is new in 2.0, and Anthropic refusal
+streams from earlier proxies crash `messages.stream()`.
 
 | SDK | Example | Path convention |
 |---|---|---|
@@ -839,7 +859,7 @@ walkthrough. The fastest end-to-end is
 | SDK | Constructor parameter | Env var | Path convention | Verified version |
 |---|---|---|---|---|
 | OpenAI Python | `base_url=` | `OPENAI_BASE_URL` | `/v1` suffix | openai==2.35.1 (2026-05-05) |
-| Anthropic Python | `base_url=` | `ANTHROPIC_BASE_URL` | no `/v1` | anthropic==0.100.0 (2026-05-05) |
+| Anthropic Python | `base_url=` | `ANTHROPIC_BASE_URL` | no `/v1` | anthropic==1.17.0, `messages.stream()` incl. refusals (2026-10-21) |
 | LangChain `ChatOpenAI` | `base_url=` | (inherits OpenAI SDK) | `/v1` suffix | langchain-openai 1.x (2026-05-05) |
 | LangChain `ChatAnthropic` | `base_url=` | (inherits Anthropic SDK) | no `/v1` | langchain-anthropic 1.x (2026-05-05) |
 | CrewAI `LLM` | `base_url=` | `OPENAI_API_BASE` / `OPENAI_BASE_URL` | `/v1` suffix (OpenAI-shape) | crewai 1.14.x (2026-05-05) |
@@ -892,22 +912,28 @@ and § 8.1.
 double-prefixed paths and 404s. This is the most common
 configuration mistake; double-check the env var when debugging.
 
-**Approval-id round-trip is opt-in.** When Vanzik returns
-`REQUIRE_APPROVAL`, the proxy emits a synthetic refusal with the
-approval ID embedded. The SDK or end user needs to:
+**Resuming after an approval takes the `X-Vanzik-Approval-ID`
+header.** When Vanzik returns `REQUIRE_APPROVAL`, the proxy emits a
+synthetic refusal with the approval ID and URL embedded (§ 5.4). To
+resume:
 
-1. Click approve on the dashboard (or via `vanzik approve <id>`).
-2. Re-prompt the model with the same intent.
-3. Pass `meta.approval_id` to the proxy's `/v1/check` (handled
-   automatically when retrying through the proxy and your harness
-   sets `_meta.dev.vanzik/approval_id` — see the MCP Gateway's
-   approval-id round-trip in [`docs/APPROVAL_WORKFLOW.md`](./APPROVAL_WORKFLOW.md)).
+1. Approve it on the dashboard (or `POST /v1/approve/<id>`).
+2. Send the request again with the header
+   `X-Vanzik-Approval-ID: <id>` — for the Python SDKs,
+   `extra_headers={"X-Vanzik-Approval-ID": approval_id}`.
+3. When the model emits the same tool call, the proxy passes the id to
+   `/v1/check` as `approval_id`, Vanzik honors the approval, and the
+   tool call reaches your code as `ALLOW`.
 
-The OpenAI / Anthropic SDKs do **not** carry `_meta` round-trip
-state automatically; for one-shot CLI agents the typical flow is:
-operator clicks approve, user re-prompts, model emits the tool call
-again, Vanzik sees the approved id and short-circuits to
-`ALLOW`.
+The server's replay checks still apply: the id unlocks only the action
+that was approved (same agent, scope, command, path, domain, URL and
+action), only once, and only within the approval-validity window.
+Anything else in the retried response is evaluated fresh, so a
+different command is paused or denied as usual. Without the header a
+retry gets a new `REQUIRE_APPROVAL` with a new id. The proxy reads the
+header for `/v1/check` only and does not forward it upstream. (The MCP
+Gateway carries the same id in `_meta.dev.vanzik/approval_id`; see
+[`docs/APPROVAL_WORKFLOW.md`](./APPROVAL_WORKFLOW.md).)
 
 **Streaming vs non-streaming both work.** Streaming goes through the
 pause/resume/rewrite gater (§ 5); non-streaming responses are buffered

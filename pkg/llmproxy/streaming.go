@@ -300,7 +300,7 @@ func defaultRefusalBytes(provider string, decision Decision, ctx *RefusalContext
 		fmt.Fprintf(&buf, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":%d,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n", idx)
 		fmt.Fprintf(&buf, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":%d,\"delta\":{\"type\":\"text_delta\",\"text\":%s}}\n\n", idx, string(quoted))
 		fmt.Fprintf(&buf, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":%d}\n\n", idx)
-		fmt.Fprintf(&buf, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n")
+		fmt.Fprintf(&buf, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":0}}\n\n")
 		fmt.Fprintf(&buf, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
 		return buf.Bytes()
 
@@ -496,6 +496,9 @@ func (s *Server) runOpenAIStreamLoop(w http.ResponseWriter, flusher http.Flusher
 				// every later event is buffered then dropped at EOF (the
 				// firewall goes dark with no trail). See denyMalformedOpenAI.
 				s.denyMalformedOpenAI(w, flusher, r, acc, result.CompletedToolCalls)
+				// The refusal ended with its own [DONE]; the client must
+				// not see a second one when upstream closes.
+				w = dropDoneWriter{w}
 
 			case result.ProtocolViolation:
 				// The accumulator found a stream it cannot gate without
@@ -570,6 +573,7 @@ func (s *Server) gateAndFlushOpenAI(w http.ResponseWriter, flusher http.Flusher,
 		}
 		calls[i].SessionID = strings.TrimSpace(r.Header.Get("X-Session-ID"))
 		calls[i].ParentSessionID = strings.TrimSpace(r.Header.Get(ParentSessionHeader))
+		calls[i].ApprovalID = strings.TrimSpace(r.Header.Get(ApprovalIDHeader))
 		calls[i].Stream = true
 		decision, err := s.runPolicyCheck(r.Context(), calls[i])
 		if err != nil {
@@ -865,6 +869,23 @@ func (s *Server) denyMalformedOpenAI(w http.ResponseWriter, flusher http.Flusher
 	acc.Reset()
 }
 
+// dropDoneWriter swallows a write that is exactly one OpenAI `[DONE]`
+// event. The OpenAI loop switches to it after a malformed-tool-call
+// refusal, which carries its own `[DONE]` but keeps reading upstream so
+// later tool calls are still gated: the upstream terminator would
+// otherwise reach the client as a second `[DONE]`. Upstream events are
+// written one per Write, so the match is exact.
+type dropDoneWriter struct {
+	http.ResponseWriter
+}
+
+func (d dropDoneWriter) Write(p []byte) (int, error) {
+	if _, isDone, _ := extractOpenAIDataLine(p); isDone {
+		return len(p), nil
+	}
+	return d.ResponseWriter.Write(p)
+}
+
 // fallbackFailModeRule returns the rule string the streaming
 // orchestrator uses when the wired PolicyCheck returns an error WITHOUT
 // a populated Decision (e.g. test shims). Production code paths get
@@ -987,6 +1008,7 @@ func (s *Server) gateAndFlushAnthropic(w http.ResponseWriter, flusher http.Flush
 		}
 		calls[i].SessionID = strings.TrimSpace(r.Header.Get("X-Session-ID"))
 		calls[i].ParentSessionID = strings.TrimSpace(r.Header.Get(ParentSessionHeader))
+		calls[i].ApprovalID = strings.TrimSpace(r.Header.Get(ApprovalIDHeader))
 		calls[i].Stream = true
 		decision, err := s.runPolicyCheck(r.Context(), calls[i])
 		if err != nil {

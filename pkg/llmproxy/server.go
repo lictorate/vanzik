@@ -52,6 +52,14 @@ const ProxyAuthHeader = "X-Vanzik-Proxy-Auth"
 // forwarded upstream unchanged.
 const ParentSessionHeader = "X-Vanzik-Parent-Session"
 
+// ApprovalIDHeader carries an approval id from an earlier
+// REQUIRE_APPROVAL refusal. The proxy sends it to /v1/check as
+// approval_id on every gated tool call in the request; the server
+// honors it only for the action that was approved (its replay checks
+// still apply) and evaluates anything else fresh. Like ProxyAuthHeader
+// it is inbound-only and never forwarded upstream.
+const ApprovalIDHeader = "X-Vanzik-Approval-ID"
+
 // ----- Hook input/output types -----
 
 // ToolCallCheck is the bridge-internal shape passed to PolicyCheck.
@@ -87,8 +95,8 @@ type ToolCallCheck struct {
 	// AgentID, SessionID, TenantID, ApprovalID are the
 	// /v1/check-side metadata. AgentID is synthesised from inbound
 	// headers (X-Agent-ID) or falls back to "llm-proxy". TenantID
-	// comes from cfg.TenantID. ApprovalID is set when the LLM SDK
-	// echoed a previously-issued approval id back via a meta channel.
+	// comes from cfg.TenantID. ApprovalID comes from the
+	// X-Vanzik-Approval-ID header (ApprovalIDHeader) on a retry.
 	AgentID    string
 	SessionID  string
 	TenantID   string

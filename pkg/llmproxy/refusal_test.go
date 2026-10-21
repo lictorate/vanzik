@@ -154,7 +154,7 @@ func TestBuildRefusalRich_OpenAIApproval(t *testing.T) {
 	if !strings.Contains(content, "ap_abc") {
 		t.Errorf("content missing approval id: %q", content)
 	}
-	if !strings.Contains(content, "_meta.dev.vanzik/approval_id") {
+	if !strings.Contains(content, "X-Vanzik-Approval-ID header") {
 		t.Errorf("content missing round-trip hint: %q", content)
 	}
 }
@@ -350,7 +350,7 @@ func TestBuildRefusalMessage_ApprovalIncludesAllFields(t *testing.T) {
 		ApprovalID:       "ap_1",
 		ApprovalURL:      "https://x.example/dashboard?id=ap_1",
 	})
-	for _, want := range []string{"paused", "human gate", "require_approval:shell:*", "ap_1", "https://x.example/dashboard?id=ap_1", "_meta.dev.vanzik/approval_id"} {
+	for _, want := range []string{"paused", "human gate", "require_approval:shell:*", "ap_1", "https://x.example/dashboard?id=ap_1", "X-Vanzik-Approval-ID header"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("approval message missing %q: %q", want, got)
 		}
@@ -553,5 +553,45 @@ func TestBuildRefusalRich_NonStreaming_EmptyModelFallback(t *testing.T) {
 	}
 	if resp.Model == "" {
 		t.Errorf("empty model field on non-streaming refusal — SDKs may error on missing model")
+	}
+}
+
+// TestSyntheticMessageDeltaCarriesUsage: the Anthropic SDKs' stream
+// accumulators read usage.output_tokens on every message_delta, so a
+// synthetic one without usage crashes messages.stream() on each refusal.
+// Covers both builders: BuildRefusalRich (production) and
+// defaultRefusalBytes (the fallback when BuildRefusal is nil).
+func TestSyntheticMessageDeltaCarriesUsage(t *testing.T) {
+	ctx := &RefusalContext{Provider: "anthropic", AnthropicToolUseIndex: 0}
+	builders := map[string][]byte{
+		"rich-deny":     BuildRefusalRich("anthropic", Decision{Reason: "no", Rule: "deny:x"}, ctx),
+		"rich-approval": BuildRefusalRich("anthropic", Decision{RequiresApproval: true, ApprovalID: "ap_1"}, ctx),
+		"rich-overflow": BuildRefusalRich("anthropic", bufferOverflowDecision(), ctx),
+		"default":       defaultRefusalBytes("anthropic", Decision{Reason: "no"}, ctx),
+	}
+	for name, raw := range builders {
+		t.Run(name, func(t *testing.T) {
+			found := false
+			for _, ev := range parseSSEEvents(t, raw) {
+				if ev.Event != "message_delta" {
+					continue
+				}
+				found = true
+				var payload struct {
+					Usage *struct {
+						OutputTokens *int `json:"output_tokens"`
+					} `json:"usage"`
+				}
+				if err := json.Unmarshal([]byte(ev.Data), &payload); err != nil {
+					t.Fatalf("decode message_delta: %v", err)
+				}
+				if payload.Usage == nil || payload.Usage.OutputTokens == nil {
+					t.Errorf("message_delta has no usage.output_tokens: %s", ev.Data)
+				}
+			}
+			if !found {
+				t.Fatalf("no message_delta in refusal: %q", raw)
+			}
+		})
 	}
 }
