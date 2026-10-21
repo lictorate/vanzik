@@ -6,7 +6,7 @@ Thanks for your interest in making AI agents safer. Here's how to get involved.
 
 ```bash
 git clone https://github.com/lictorate/vanzik.git
-cd Vanzik
+cd vanzik
 go build ./...
 go test -race ./...
 ```
@@ -49,7 +49,7 @@ docs/                        Documentation
 
 ## Releasing a New Version
 
-The version string appears in 15 files. Use the bump script before tagging — never edit them by hand.
+The version string appears in 16 files (15 `bump-version.sh` targets + `package-lock.json`), as the table lists. Use the bump script before tagging — never edit them by hand.
 
 ```bash
 ./scripts/bump-version.sh 1.2.0     # whatever the new version is
