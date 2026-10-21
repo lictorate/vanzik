@@ -1,6 +1,6 @@
 // Package v040_to_v041 adds the schema-v2 `_meta` header to a pre-existing
-// v0.4.0 audit log. It is the first real migration shipped by Vanzik and
-// exists primarily to de-risk a rollback: the pre-migration bytes are
+// v0.4.0 (headerless, schema v1) audit log. It is built to de-risk a
+// rollback: the pre-migration bytes are
 // preserved at `<audit-log>.v040-backup` so an operator who downgrades to
 // v0.4.0 can mv the backup back over the live file and resume.
 //
@@ -289,8 +289,7 @@ func writeRewritten(src, dst string) error {
 		return err
 	}
 
-	// Write the meta line. MarshalIndent would pretty-print; Marshal gives a
-	// compact single-line object which is what the JSONL reader expects.
+	// Marshal, not MarshalIndent: the JSONL reader needs one line.
 	metaLine := struct {
 		Meta audit.MetaRecord `json:"_meta"`
 	}{

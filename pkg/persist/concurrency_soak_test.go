@@ -22,7 +22,7 @@ package persist
 //   - ENFORCED guard: the server's own X-Vanzik-Total-Ms (the
 //     network-EXCLUDED hot-path processing time), aggregated across every
 //     concurrent request -> p99 < 3ms. That header is the correct definition of
-//     "hot path" per CLAUDE.md (client byte in -> forwarded upstream and back);
+//     "hot path" (client byte in -> forwarded upstream and back);
 //     httptest loopback + goroutine scheduling are deliberately outside it. On a
 //     coarse monotonic clock (this Windows box, ~0.5ms tick) the header floors
 //     toward 0 but can only OVER-report by ~one tick, so a genuine multi-ms
@@ -154,9 +154,8 @@ func (s *shardedFileLogger) Close() error {
 // returns the shared *itServer so the existing close() teardown is reused.
 //
 // Audit backend — why this soak uses the DEFAULT file backend, not the
-// store/SQLite one newITServer uses: v0.9 moved the X-Vanzik-Total-Ms
-// measurement to AFTER the audit enqueue, so the hot path now includes
-// BufferedAsyncLogger.Log. That enqueue is microseconds ONLY while the async
+// store/SQLite one newITServer uses: X-Vanzik-Total-Ms is measured AFTER the
+// audit enqueue, so the hot path includes BufferedAsyncLogger.Log. That enqueue is microseconds ONLY while the async
 // drain keeps up. If the queue saturates, Log's documented durability fallback
 // spills every entry to the disk-overflow file under overflowMu — a deliberate
 // durability-over-latency fallback, NOT a blocking bug — and that spill is the
@@ -389,16 +388,16 @@ func TestIntegration_ConcurrentHotPathLatencyWithPersistence(t *testing.T) {
 		t.Fatalf("collected only %d successful samples under load (want >=2000 for a meaningful p99); machine may be stalled", len(all))
 	}
 
-	// Honesty guard for the p99 measured below. Since v0.9, X-Vanzik-Total-Ms
-	// is captured AFTER the audit enqueue, so a fast reading is only valid if the
+	// Honesty guard for the p99 measured below. X-Vanzik-Total-Ms is captured
+	// AFTER the audit enqueue, so a fast reading is only valid if the
 	// async drain kept up at steady state. If the queue had saturated, Buffered-
 	// AsyncLogger.Log would have spilled each entry to the disk-overflow file
 	// under overflowMu — the durability-over-latency fallback whose per-request
 	// cost is exactly the multi-ms tail this test guards against — and a "fast"
 	// p99 would be a lie masking that spill. Assert zero drops so the p99 is
-	// provably the true async hot path, and so a future audit-backend regression
-	// that reintroduces overflow-spill under this load fails HERE (loudly) instead
-	// of silently degrading the tail. DroppedToOverflow() is a lifetime atomic
+	// provably the true async hot path, and so an audit-backend regression that
+	// spills under this load fails HERE (loudly) instead of silently degrading
+	// the tail. DroppedToOverflow() is a lifetime atomic
 	// counter (warm-up included) read before any teardown defer runs.
 	//
 	// ENFORCEMENT is env-gated exactly like the p99 assert below, and for the

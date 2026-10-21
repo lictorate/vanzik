@@ -2,7 +2,7 @@ package metrics
 
 // Package-level delegates to the Default registry. Call sites across the
 // binaries use these; only code that needs an isolated registry (tests,
-// future embedders) holds a *Registry directly.
+// embedders) holds a *Registry directly.
 
 import (
 	"io"

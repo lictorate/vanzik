@@ -6,11 +6,10 @@ import (
 	"time"
 )
 
-// BenchmarkAllowAtCap* guard the audit-B3 regression: before the tiered
-// reclamation, Allow at capacity with nothing stale ran a full O(n) scan under
-// the limiter lock on EVERY call -- ~133us at 10k buckets and ~603us at 50k,
-// versus ~71ns uncontended. The map is now bounded, so both prefills converge
-// to MaxBuckets; a return of the O(n) scan shows up here immediately.
+// BenchmarkAllowAtCap* guard Allow at capacity with nothing stale: a full
+// O(n) scan under the limiter lock on every call costs ~133us at 10k buckets
+// and ~603us at 50k, versus ~71ns uncontended. The map is bounded, so both
+// prefills converge to MaxBuckets; a return of the O(n) scan shows up here.
 func benchAtCap(b *testing.B, prefill int) {
 	l := New()
 	for i := 0; i < prefill; i++ {

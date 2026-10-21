@@ -1,7 +1,7 @@
 package audit
 
 // seal.go — the optional tamper-evident hash chain of the file backend
-// (v1.4, `vanzik server --audit-seal`).
+// (`vanzik server --audit-seal`).
 //
 // Each sealed entry carries seq (1, 2, 3, ... across rotations), prev_hash
 // (the hash of the entry before it) and hash. The hash covers the entry's

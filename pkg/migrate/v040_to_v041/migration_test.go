@@ -11,8 +11,7 @@ import (
 	"lictorate.com/vanzik/v2/pkg/migrate"
 )
 
-// legacyContent is a minimal pair of v0.4.0-style audit records — headerless
-// JSONL, matches what `FileLogger` produced in v0.4.0.
+// legacyContent is a minimal pair of headerless (schema v1) audit records.
 const legacyContent = `{"timestamp":"2025-01-01T00:00:00Z","agent_id":"legacy-a","request":{"scope":"shell","command":"ls"},"result":{"decision":"ALLOW","reason":"ok"},"duration_ms":1}
 {"timestamp":"2025-01-01T00:00:01Z","agent_id":"legacy-b","request":{"scope":"shell","command":"cat"},"result":{"decision":"DENY","reason":"blocked"},"duration_ms":0}
 `

@@ -74,9 +74,8 @@ func TestLogFilesAndReadEntries(t *testing.T) {
 }
 
 // A line longer than the 4 MiB cap is one bad line, and the entries after
-// it are still read. bufio.Scanner used to stop there, dropping them while
-// audit verify (no cap) said the log was intact. The startup replay shares
-// the reader, so it no longer stops early either.
+// it are still read, as audit verify (no cap) reads them. The startup
+// replay shares this reader.
 func TestReadEntries_OverlongLineIsOneBadLine(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "audit.jsonl")
 	l, err := NewFileLogger(path)

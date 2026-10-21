@@ -19,8 +19,7 @@ import (
 )
 
 // PostgresStore is the multi-node Store backend. It mirrors SQLiteStore
-// column-for-column and semantics-for-semantics,
-// adapting only the SQL dialect (positional $N placeholders, native types,
+// column-for-column and semantics-for-semantics, adapting only the SQL dialect (positional $N placeholders, native types,
 // BIGSERIAL audit id). Times are stored as RFC3339Nano TEXT and integers/bools
 // via the same helpers SQLiteStore uses, so a row round-trips identically across
 // the two backends and the Purge* string comparisons behave the same.
@@ -28,7 +27,7 @@ import (
 // Concurrency: unlike SQLiteStore (single-file writer pinned to one conn),
 // Postgres handles concurrent sessions, so a small pool is used. This is still
 // a COLD-PATH component — the streaming proxy /v1/check path NEVER touches a
-// Store (CLAUDE.md §1/§2); PostgresStore is reached only by the write-behind
+// Store; PostgresStore is reached only by the write-behind
 // syncer, boot hydration, GC, and operator audit queries.
 type PostgresStore struct {
 	db  *sql.DB
@@ -50,13 +49,11 @@ const (
 	pgConnMaxLifetime = time.Hour
 )
 
-// migrateTimeout bounds the schema migration run from a store constructor
-// sql.Open does not dial, so Migrate's first round-trip is where a
-// bad or blackholed DSN actually shows up — and with context.Background() that
-// wait was unbounded, hanging boot forever with no way to interrupt it. A
-// bounded deadline turns "hangs silently" into "fails startup with an error the
-// operator can read". Generous enough for a real migration on a cold database;
-// this runs once per process, never on a request path.
+// migrateTimeout bounds the schema migration run from a store constructor.
+// sql.Open does not dial, so Migrate's first round-trip is where a bad or
+// blackholed DSN shows up; unbounded, that wait would hang boot forever
+// instead of failing with an error the operator can read. Generous enough for
+// a real migration on a cold database.
 const migrateTimeout = 30 * time.Second
 
 // pgMigrateLockKey namespaces the transaction-scoped advisory lock that
@@ -178,8 +175,8 @@ var pgSchemaStmts = []string{
 	`CREATE INDEX IF NOT EXISTS idx_audit_agent     ON audit_entries(agent_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_audit_decision  ON audit_entries(decision)`,
 	`CREATE INDEX IF NOT EXISTS idx_audit_scope     ON audit_entries(scope)`,
-	// The audit session columns (v1.4) for tables that predate them are
-	// added by Migrate (pgAdditiveColumns). Their indexes
+	// The audit session columns, for tables that lack them, are added by
+	// Migrate (pgAdditiveColumns). Their indexes
 	// (auditSessionIndexes) are built in the background after start
 	// (startAuditIndexBuild).
 
@@ -211,12 +208,12 @@ var pgSchemaStmts = []string{
 	`CREATE INDEX IF NOT EXISTS idx_cost_consumption_updated ON cost_consumption(updated_at)`,
 }
 
-// pgAdditiveColumns are columns added after their table first shipped, for
-// databases created before them (the mirror of SQLiteStore.Migrate's guarded
-// ALTERs). Migrate adds only the ones information_schema says are missing:
-// ALTER TABLE ... ADD COLUMN IF NOT EXISTS takes ACCESS EXCLUSIVE on the
-// table even when the column is there, so running it on every boot blocked
-// every reader and writer of approvals and audit_entries for a moment.
+// pgAdditiveColumns are columns an existing table may lack (the mirror of
+// SQLiteStore.Migrate's guarded ALTERs). Migrate adds only the ones
+// information_schema says are missing: ALTER TABLE ... ADD COLUMN IF NOT
+// EXISTS takes ACCESS EXCLUSIVE on the table even when the column is there,
+// so running it on every boot would block every reader and writer of
+// approvals and audit_entries for a moment.
 var pgAdditiveColumns = []struct{ table, column, def string }{
 	{"approvals", "consumed_at", "TEXT NOT NULL DEFAULT ''"},
 	{"approvals", "resolved_via", "TEXT NOT NULL DEFAULT ''"},
@@ -265,23 +262,18 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		// Serialise the whole migration across replicas BEFORE any DDL runs.
 		//
-		// Two distinct races, both of which killed replicas at boot:
+		// Without it, two races kill replicas at boot:
 		//
 		//   - Empty database: `CREATE TABLE IF NOT EXISTS` is not atomic
 		//     against a concurrent creator, so two nodes starting together
 		//     collide on the pg_type unique index and one fails with
 		//     SQLSTATE 23505. Measured on 5 of 6 three-replica cold starts.
-		//   - Existing schema: `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`
-		//     takes ACCESS EXCLUSIVE locks even when the column is already
-		//     present (the ALTERs now run only for missing columns, see
-		//     pgAdditiveColumns, but the lock still guards the first
-		//     upgrade), so concurrent migration
-		//     transactions deadlock (SQLSTATE 40P01) with nothing to do.
-		//     That exposes every rolling restart, not just the first deploy.
+		//   - Missing columns: `ALTER TABLE ... ADD COLUMN` takes ACCESS
+		//     EXCLUSIVE locks, so concurrent migration transactions of a
+		//     rolling upgrade deadlock (SQLSTATE 40P01).
 		//
 		// Either way the losing replica's constructor returns an error and
-		// the node exits. A single node was never affected, which is what
-		// identifies this as a race rather than a schema fault.
+		// the node exits. A single node is never affected.
 		//
 		// pg_advisory_xact_lock blocks until the lock is free and is released
 		// automatically on commit or rollback, so there is no unlock path to
@@ -796,9 +788,6 @@ func (s *PostgresStore) DeletePolicy(ctx context.Context, tenantID string) (bool
 
 // --- helpers ---
 
-// inTx runs fn inside a transaction, committing on success and rolling back on
-// error. Mirrors SQLiteStore.inTx: batching the write-behind upserts in one
-// transaction keeps each flush to a single commit.
 // pgDeadlockCode is the SQLSTATE Postgres returns to the transaction it chose
 // to kill to break a deadlock. maxTxRetries bounds how often that transaction
 // is replayed, and txRetryBackoff is the first pause between attempts (doubled
@@ -809,8 +798,9 @@ const (
 	txRetryBackoff = 5 * time.Millisecond
 )
 
-// inTx runs fn inside a transaction, replaying it if Postgres aborts it for
-// deadlock.
+// inTx runs fn inside a transaction, committing on success and rolling back on
+// error (one commit per flush, as in SQLiteStore.inTx), and replays it if
+// Postgres aborts it for deadlock.
 //
 // Sorting the batches below removes the inversion between two flushing nodes,
 // which is where every deadlock observed under multi-node load came from. The
@@ -858,7 +848,7 @@ func isDeadlock(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == pgDeadlockCode
 }
 
-// --- multi-node reconciliation (v1.0) ---
+// --- multi-node reconciliation ---
 //
 // Mirrors the *SQLiteStore consumption methods column-for-column and
 // semantics-for-semantics (see the RateConsumption/CostConsumption doc in

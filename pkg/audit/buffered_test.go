@@ -531,19 +531,13 @@ func TestBufferedAsync_RejectsEmptyOverflowPath(t *testing.T) {
 	}
 }
 
-// TestBufferedAsync_PreservesOverflowOnDrainScannerError is a regression
-// test for R-Code H5 (audit-fixup F2). Before the fix, tryDrainOverflow
-// removed the renamed `.draining.<ts>` file even when the JSON-Lines
-// scanner returned a non-nil error mid-stream — silently losing every
-// byte after the failure point. The fix preserves the file so the next
-// recovery tick (or process restart) can pick it up.
+// TestBufferedAsync_PreservesOverflowOnDrainScannerError: when the drain's
+// scanner fails mid-stream, tryDrainOverflow must not remove the
+// `.draining.<ts>` file, which would lose every byte after the failure.
 //
-// We construct an overflow file containing one valid JSON line followed
-// by a single line longer than the scanner's 4 MiB max-token cap; the
-// scanner produces bufio.ErrTooLong on the second line. Without the
-// fix the file would be unlinked. With the fix, the file is renamed
-// back to b.overflowPath (since no concurrent saturation has produced
-// a fresh overflow), so disk durability survives.
+// The overflow file holds one valid line, then one over the scanner's 4 MiB
+// cap (bufio.ErrTooLong). With no fresh overflow file meanwhile, the
+// draining file is renamed back to b.overflowPath for the next tick.
 func TestBufferedAsync_PreservesOverflowOnDrainScannerError(t *testing.T) {
 	dir := t.TempDir()
 	overflowPath := filepath.Join(dir, "overflow.jsonl")

@@ -1,6 +1,6 @@
 package store
 
-// Tests for the post-v0.9.0 approval-hardening columns (consumed_at,
+// Tests for the approval-hardening columns (consumed_at,
 // resolved_via, resolved_from). Two properties are pinned:
 //
 //  1. Round-trip fidelity — a consumed/stamped approval that goes through
@@ -92,8 +92,8 @@ CREATE TABLE approvals (
 func TestMigrate_UpgradesPreHardeningApprovalsTable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "old.db")
 
-	// Simulate a database created by an older build: approvals exists
-	// WITHOUT the new columns, and already holds a row.
+	// A database whose approvals table lacks these columns and already
+	// holds a row.
 	raw, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatalf("open raw: %v", err)

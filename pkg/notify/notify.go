@@ -29,8 +29,8 @@ const DefaultQueueSize = 256
 // DefaultWorkers is the number of concurrent dispatch goroutines.
 const DefaultWorkers = 8
 
-// DroppedEvents counts events discarded because the dispatch queue was full.
-// Exposed as a package-level atomic so callers/metrics can observe it.
+// DroppedEvents counts events discarded because the dispatch queue was full
+// (atomic).
 var DroppedEvents uint64
 
 // Event describes something that happened in the system.
@@ -51,10 +51,7 @@ type Notifier interface {
 // Dispatcher fans out events to multiple notifiers using a bounded worker pool.
 //
 // Lifecycle: NewDispatcher* spawns N worker goroutines and creates a
-// cancellable context. Close cancels that context (so in-flight webhook /
-// Slack HTTP requests unblock immediately) and is guarded by sync.Once so
-// repeated calls — common in shutdown paths that defer Close from multiple
-// owners — do not panic on a re-closed channel.
+// cancellable context; Close cancels it (see Close).
 type Dispatcher struct {
 	notifiers []Notifier
 	queue     chan dispatchJob
@@ -68,13 +65,12 @@ type Dispatcher struct {
 	cancelCtx context.CancelFunc
 	closeOnce sync.Once
 
-	// Spool-to-disk (optional, --notify-spool). When the queue is full,
-	// Send appends the job to a JSONL spool file instead of dropping;
-	// a recovery goroutine re-enqueues spooled jobs when capacity
-	// returns. Mirrors the audit BufferedAsyncLogger's overflow design.
-	// Leftover spool from a crashed/stopped process is picked up on the
-	// next start (same path). Empty spoolPath disables it (
-	// drop-on-full).
+	// Spool-to-disk (optional, --notify-spool), like the audit
+	// BufferedAsyncLogger's overflow: when the queue is full, Send appends
+	// the job to a JSONL spool file instead of dropping, and a recovery
+	// goroutine re-enqueues it when capacity returns. A spool left by a
+	// previous process is picked up on the next start. Empty spoolPath
+	// means drop-on-full.
 	spoolPath string
 	spoolMu   sync.Mutex
 }
@@ -82,14 +78,10 @@ type Dispatcher struct {
 type dispatchJob struct {
 	notifier Notifier
 	event    Event
-	// index is the job's position in d.notifiers, captured at enqueue time.
-	// spoolJob records the index (see spooledJob), so the shutdown spool needs
-	// to map a job back to it. Carrying it here rather than searching
-	// d.notifiers for a matching Notifier avoids comparing interface values
-	// with ==, which panics at runtime if a Notifier is ever a non-comparable
-	// value type (a struct holding a map or slice). Every notifier today is a
-	// pointer, so that search worked — but it is a latent panic one
-	// implementation away, and the index is free to carry.
+	// index is the job's position in d.notifiers, captured at enqueue time
+	// for the shutdown spool (see spooledJob). Searching d.notifiers for the
+	// Notifier instead would compare interface values with ==, which panics
+	// for a non-comparable value type (a struct holding a map or slice).
 	index int
 }
 
@@ -116,13 +108,9 @@ type DispatcherOptions struct {
 	// DefaultSpoolRecoveryInterval.
 	RecoveryInterval time.Duration
 
-	// extraNotifiers is appended to the notifier list during construction,
-	// before any worker or recovery goroutine starts. Unexported test-only
-	// seam: it lets in-process Notifier fakes be injected without mutating
-	// d.notifiers after the background goroutines are already reading it
-	// (which -race correctly flags). Production callers wire notifiers
-	// through the policy NotificationCfg; d.notifiers is built-once at
-	// construction and read lock-free thereafter.
+	// extraNotifiers is a test-only seam, appended to the notifier list
+	// before any worker or recovery goroutine starts: d.notifiers is built
+	// once at construction and read lock-free thereafter.
 	extraNotifiers []Notifier
 }
 
@@ -130,8 +118,7 @@ type DispatcherOptions struct {
 // cadence.
 const DefaultSpoolRecoveryInterval = 5 * time.Second
 
-// NewDispatcherWithOpts allows tuning the worker count and queue size. Used
-// primarily by tests.
+// NewDispatcherWithOpts allows tuning the worker count and queue size.
 func NewDispatcherWithOpts(cfg policy.NotificationCfg, workers, queueSize int) *Dispatcher {
 	return NewDispatcherWithOptions(cfg, DispatcherOptions{Workers: workers, QueueSize: queueSize})
 }
@@ -175,18 +162,13 @@ func NewDispatcherWithOptions(cfg policy.NotificationCfg, opts DispatcherOptions
 	for _, t := range cfg.OnDeny {
 		d.notifiers = append(d.notifiers, targetToNotifier(t, "denied", dispatchTimeout, ctx))
 	}
-	// Append any injected (test-only) notifiers here, while we are still on
-	// the constructing goroutine and before the workers/recovery loop below
-	// start reading d.notifiers. nil in production, so a no-op append.
+	// Before any goroutine below starts reading d.notifiers.
 	d.notifiers = append(d.notifiers, opts.extraNotifiers...)
 
 	if workers < 1 {
 		workers = 1
 	}
 	for i := 0; i < workers; i++ {
-		// Wrap each worker in a recover so a panic inside any custom
-		// notifier (or a stdlib http.Client.Do edge case) does not take
-		// the whole process down.
 		go workerWithRecover(d)
 	}
 
@@ -242,12 +224,10 @@ func (d *Dispatcher) worker() {
 
 // Close stops worker goroutines and cancels in-flight HTTP notifications.
 //
-// Idempotent: guarded by sync.Once so a deferred shutdown that calls Close
-// twice (e.g. signal-handler + main return) does not panic on a re-closed
-// channel. The cancellation also unblocks any webhook/Slack request still
-// waiting on its remote, so graceful shutdown is bounded by the time a
-// single Notify() takes to observe the context (typically µs–ms) rather
-// than by DefaultHTTPTimeout per pending event.
+// Idempotent (sync.Once): shutdown paths often call it twice (signal handler
+// and main return). The cancellation unblocks any webhook/Slack request
+// still waiting on its remote, so graceful shutdown takes µs–ms rather than
+// DefaultHTTPTimeout per pending event.
 func (d *Dispatcher) Close() {
 	d.closeOnce.Do(func() {
 		// Cancel first so workers and in-flight HTTP requests start
@@ -336,14 +316,10 @@ func (d *Dispatcher) Send(event Event) {
 	for i, n := range d.notifiers {
 		select {
 		case d.queue <- dispatchJob{notifier: n, event: event, index: i}:
-			// Sampling the depth right after enqueue gives a
-			// lock-free, enqueue-biased view — good enough for a gauge
-			// whose purpose is to answer "is the queue filling up?".
+			// Enqueue-biased but lock-free: enough to see the queue fill.
 			metrics.SetNotifyQueueDepth(len(d.queue))
 		default:
-			// Queue full. With the spool enabled the event is durable
-			// on disk and retried by the recovery loop; only a spool
-			// failure (or spool disabled) is a real drop.
+			// Queue full: only a spool failure (or no spool) is a drop.
 			if d.spoolPath != "" {
 				if err := d.spoolJob(i, event); err == nil {
 					metrics.IncNotifySpooled()
@@ -352,8 +328,6 @@ func (d *Dispatcher) Send(event Event) {
 					log.Printf("notify: spool append failed: %v (dropping event)", err)
 				}
 			}
-			// Keep the package-level atomic around for anyone already reading
-			// it directly; the Prometheus-labeled counter is the new surface.
 			atomic.AddUint64(&DroppedEvents, 1)
 			metrics.IncNotifyDropped(notifierType(n), metrics.NotifyDroppedQueueFull)
 		}
@@ -458,17 +432,12 @@ func (d *Dispatcher) drainSpoolOnce() {
 	scanErr := scanner.Err()
 	f.Close()
 	if scanErr != nil {
-		// The scan stopped early (over-long line, transient I/O), so every
-		// event past the failure point is still unread. Deleting the file here
-		// would destroy them permanently — it has already been renamed away
-		// from spoolPath, so there is no second chance. Keep it.
-		//
-		// Retained for operator recovery, NOT auto-retried: the next tick
-		// renames a fresh draining file from spoolPath and never revisits this
-		// one. Auto-retry is deliberately not done here because a permanent
-		// scanner error (bufio.ErrTooLong on an over-long line) would livelock
-		// the drain on the same file and starve newly spooled events. The file
-		// is left where an operator can inspect and replay it.
+		// The scan stopped early (over-long line, transient I/O): every event
+		// past the failure point is unread, and the file is already renamed
+		// away from spoolPath, so deleting it would lose them. Keep it for
+		// the operator, NOT auto-retried: a permanent scanner error
+		// (bufio.ErrTooLong) would livelock the drain on this file and starve
+		// newly spooled events.
 		log.Printf("notify: spool drain scanner: %v — retained %s for recovery (%d event(s) requeued before the error); inspect and replay manually", scanErr, draining, requeued)
 		if requeued > 0 {
 			metrics.AddNotifyDespooled(requeued)
@@ -701,7 +670,6 @@ func DefaultRedactor() *Redactor {
 			regexp.MustCompile(`ghp_[A-Za-z0-9]{36,}`),
 			regexp.MustCompile(`xox[baprs]-[A-Za-z0-9\-]+`),
 			regexp.MustCompile(`(?i)(secret|token|password|api[_\-]?key)\s*=\s*\S+`),
-			// Added in v1.2.0, when redaction was extended to the audit trail.
 			regexp.MustCompile(`\bsk-[A-Za-z0-9_\-]{20,}`),                                        // OpenAI / Anthropic style keys
 			regexp.MustCompile(`AIza[0-9A-Za-z_\-]{35}`),                                          // Google API keys
 			regexp.MustCompile(`\bgh[ousr]_[A-Za-z0-9]{36,}`),                                     // other GitHub token types

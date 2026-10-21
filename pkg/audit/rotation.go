@@ -15,32 +15,28 @@ import (
 	"lictorate.com/vanzik/v2/pkg/metrics"
 )
 
-// ArchiveTimestampFormat is the format used to suffix archived audit files.
-// Lexicographic order matches chronological order, which lets prune walk
-// os.ReadDir without parsing each name back to a time.Time.
+// ArchiveTimestampFormat is the suffix format of archived audit files.
+// Lexicographic order matches chronological order, so pruning sorts names
+// without parsing them.
 const ArchiveTimestampFormat = "20060102T150405Z"
 
 // RotationConfig configures size-triggered rotation for FileLogger.
 //
 // The zero value disables rotation entirely.
 //
-// When MaxSize > 0, after every successful Log() the current file size is
-// checked and rotateLocked() fires if the file meets or exceeds MaxSize.
-// Rotation is synchronous; the caller's Log() blocks until the rename +
-// new-file + header write is done. Expected cost: one stat + one rename +
-// one file open + ~80 bytes encode. At default 100 MB thresholds this is
-// milliseconds every few hundred thousand entries.
+// When MaxSize > 0, every successful Log() rotates once the file reaches
+// MaxSize. Rotation is synchronous inside that Log(): a stat, a rename, an
+// open and a header write, i.e. milliseconds every few hundred thousand
+// entries at the 100 MB default.
 type RotationConfig struct {
 	// MaxSize is the live-file size threshold in bytes. 0 disables rotation.
 	MaxSize int64
 	// MaxFiles caps the number of archived files kept after pruning. Older
 	// archives (by timestamp suffix) are deleted first. 0 means keep all.
 	MaxFiles int
-	// MaxAge bounds the age of archived files. Archives older than this
-	// are deleted at rotation time. Zero disables age-based pruning. Age
-	// is computed against the timestamp suffix on the archive name, not
-	// against filesystem mtime, so an out-of-band rsync of archives does
-	// not silently invalidate retention.
+	// MaxAge bounds the age of archived files, deleted at rotation time.
+	// Zero disables age-based pruning. Age comes from the archive name's
+	// timestamp suffix, not mtime, so an rsync of archives keeps retention.
 	MaxAge time.Duration
 	// Compress, when true, gzips the archive file after rename and removes
 	// the uncompressed copy. A gzip failure leaves the uncompressed archive
@@ -48,28 +44,12 @@ type RotationConfig struct {
 	Compress bool
 }
 
-// NewFileLoggerWithRotation is NewFileLogger + rotation policy. The
-// configuration is captured at construction; mutating it after the fact has
-// no effect.
+// NewFileLoggerWithRotation is NewFileLogger plus a rotation policy, copied
+// at construction.
 func NewFileLoggerWithRotation(path string, cfg RotationConfig) (*FileLogger, error) {
 	return NewFileLoggerWithOptions(path, FileLoggerOptions{Rotation: cfg})
 }
 
-// rotateLocked closes the live file, renames it to a timestamped archive,
-// optionally compresses that archive, opens a fresh live file, and writes a
-// schema-v2 meta header whose RotatedFrom field names the archive's basename.
-//
-// Must be called with l.mu held.
-//
-// Failure modes:
-//   - If close/rename fails, the logger is left in a usable state only if the
-//     rename did not run. Any partial step returns an error so the caller
-//     knows an entry may not have flushed.
-//   - Gzip failure is logged but not surfaced — the uncompressed archive is
-//     still a valid audit record.
-//   - Prune failure is logged but not surfaced — too many archives is an
-//     operational concern, not a data-loss one.
-//
 // maxArchiveProbe bounds how far nextFreeArchivePath will advance the
 // timestamp looking for a free name. A minute of headroom covers any
 // realistic burst; past that, failing the rotation is the safe outcome.
@@ -81,8 +61,7 @@ const maxArchiveProbe = 60
 // ArchiveTimestampFormat has one-second resolution, so a burst that rotates
 // twice inside the same second computes the same archive name twice — and
 // os.Rename replaces the target silently, destroying the first archive and
-// breaking the _meta.rotated_from chain that startup replay walks. Real audit
-// data, gone with no error anywhere.
+// breaking the _meta.rotated_from chain that startup replay walks.
 //
 // Advancing the timestamp rather than adding a disambiguating suffix is
 // deliberate: pruneArchivesWithAge only recognises a name whose suffix is
@@ -159,6 +138,17 @@ func archiveNameTaken(path string) bool {
 	return false
 }
 
+// rotateLocked closes the live file, renames it to a timestamped archive,
+// optionally compresses that archive, opens a fresh live file, and writes a
+// meta header whose RotatedFrom names the archive's basename. Caller holds
+// l.mu.
+//
+// Failure modes:
+//   - If close/rename fails, the logger is left in a usable state only if the
+//     rename did not run. Any partial step returns an error so the caller
+//     knows an entry may not have flushed.
+//   - Gzip and prune failures are logged, not returned: the uncompressed
+//     archive is still a valid record, and extra archives lose no data.
 func (l *FileLogger) rotateLocked() error {
 	path := l.file.Name()
 	if err := l.file.Close(); err != nil {
@@ -178,8 +168,7 @@ func (l *FileLogger) rotateLocked() error {
 	}
 
 	if err := os.Rename(path, archivePath); err != nil {
-		// Rename failed — try to reopen the original so the logger is not
-		// permanently broken. If that also fails we're in real trouble.
+		// Reopen the original so the logger is not permanently broken.
 		if f, reopenErr := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, DefaultFilePermissions); reopenErr == nil {
 			l.file = f
 			l.enc = json.NewEncoder(f)
@@ -234,15 +223,12 @@ func (l *FileLogger) rotateLocked() error {
 		}
 	}
 
-	// Count only successful rotations: a half-completed rotate returns above
-	// before we reach here, and observability would otherwise be misleading
-	// (a stuck rotation doesn't "count" as a rotation operators should see).
+	// Only completed rotations count.
 	metrics.IncAuditRotation()
 	return nil
 }
 
-// gzipFile streams src into dst.gz. dst is created with mode 0600 since
-// archived audit logs carry the same secrecy constraint as the live file.
+// gzipFile streams src into gzip file dst, mode 0600 like the live file.
 func gzipFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -270,9 +256,8 @@ func gzipFile(src, dst string) error {
 	return out.Close()
 }
 
-// pruneArchives removes the oldest archive files for basePath until no more
-// than keep remain. "Oldest" is defined by timestamp suffix — since
-// ArchiveTimestampFormat is lex-sorted, sort.Strings(asc) yields oldest-first.
+// pruneArchives removes the oldest archive files for basePath (by timestamp
+// suffix) until no more than keep remain.
 //
 // Both `<basePath>.<ts>` and `<basePath>.<ts>.gz` are considered archives.
 // The live `<basePath>` itself is never deleted.
@@ -280,21 +265,15 @@ func pruneArchives(basePath string, keep int) error {
 	return pruneArchivesWithAge(basePath, keep, 0)
 }
 
-// pruneArchivesWithAge generalizes pruneArchives by also dropping archives
-// whose timestamp suffix is older than maxAge (relative to time.Now in UTC).
-// Either bound can be set independently; both bounds are unioned: an
-// archive is removed if it fails EITHER check.
+// pruneArchivesWithAge is pruneArchives that also drops archives whose
+// timestamp suffix is older than maxAge. An archive failing EITHER bound is
+// removed.
 //
 //   - keep < 0 disables count-based pruning ("keep all").
-//   - keep == 0 retains the legacy `pruneArchives` semantics: "delete them
-//     all" (this is what existing tests document; the runtime caller
-//     in rotateLocked never passes 0 unless the operator literally wants
-//     no archives kept).
+//   - keep == 0 deletes every archive.
 //   - maxAge == 0 disables age-based pruning.
 //
-// Age is parsed from the archive's timestamp suffix (ArchiveTimestampFormat),
-// not from filesystem mtime, so an out-of-band rsync of archives onto a
-// different host preserves retention semantics.
+// Age comes from the timestamp suffix, not mtime (see RotationConfig.MaxAge).
 func pruneArchivesWithAge(basePath string, keep int, maxAge time.Duration) error {
 	dir := filepath.Dir(basePath)
 	base := filepath.Base(basePath)
@@ -305,8 +284,7 @@ func pruneArchivesWithAge(basePath string, keep int, maxAge time.Duration) error
 
 	type archive struct {
 		path string
-		// ts is parsed from the suffix; zero on parse failure (we still
-		// keep the file in the count-based set, but skip age pruning).
+		// ts is zero on parse failure: counted, but never age-pruned.
 		ts time.Time
 	}
 	var archives []archive
@@ -320,7 +298,6 @@ func pruneArchivesWithAge(basePath string, keep int, maxAge time.Duration) error
 			continue
 		}
 		suffix := strings.TrimSuffix(strings.TrimPrefix(name, prefix), ".gz")
-		// Accept only names that look like our timestamp (14 chars + Z).
 		if len(suffix) != len(ArchiveTimestampFormat) {
 			continue
 		}
@@ -333,9 +310,7 @@ func pruneArchivesWithAge(basePath string, keep int, maxAge time.Duration) error
 		return nil
 	}
 
-	// First pass: age-based pruning. We delete out-of-window archives
-	// before count-based pruning so the count check operates on the
-	// already-trimmed set (avoids double-counting).
+	// Age first, so the count applies to the already-trimmed set.
 	if maxAge > 0 {
 		cutoff := time.Now().UTC().Add(-maxAge)
 		kept := archives[:0]
@@ -351,10 +326,7 @@ func pruneArchivesWithAge(basePath string, keep int, maxAge time.Duration) error
 		archives = kept
 	}
 
-	// Second pass: count-based pruning, oldest-first by name (which
-	// equals oldest-first by ts because ArchiveTimestampFormat is
-	// lex-sorted). keep<0 disables; keep==0 deletes everything (legacy
-	// test contract); keep>0 trims down to that many.
+	// Then count, oldest-first by name.
 	if keep >= 0 && len(archives) > keep {
 		sort.Slice(archives, func(i, j int) bool { return archives[i].path < archives[j].path })
 		excess := len(archives) - keep

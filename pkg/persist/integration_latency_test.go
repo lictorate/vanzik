@@ -78,8 +78,7 @@ func TestIntegration_HotPathLatencyWithPersistence(t *testing.T) {
 		t.Errorf("hot-path p99 = %.3fms violates the <3ms budget with persistence on", p99)
 	}
 
-	// --- Signal 2 (folded in from the v1.0 branch): client-observed per-op
-	// latency, ns-precision, adaptive ----------------------------------------
+	// --- Signal 2: client-observed per-op latency, ns-precision, adaptive ---
 	// The X-Vanzik-Total-Ms header above is µs-granular and floors to 0 on a
 	// coarse clock (Windows advances the monotonic clock only at the ~0.5ms
 	// system-timer tick), so it is not a legible headline there. Here we measure

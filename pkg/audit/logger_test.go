@@ -439,7 +439,7 @@ func TestFileLogger_Query_SkipsMetaLines(t *testing.T) {
 }
 
 func TestFileLogger_Query_ToleratesLegacyHeaderlessFile(t *testing.T) {
-	// Simulate a v0.4.0 audit file that has no _meta header.
+	// A schema-v1 audit file: no _meta header.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "legacy.jsonl")
 

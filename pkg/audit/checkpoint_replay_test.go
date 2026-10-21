@@ -1,6 +1,6 @@
 package audit
 
-// Contract tests for the restart-safe startup replay (review finding R3).
+// Contract tests for the restart-safe startup replay.
 //
 // The contract: after any sequence of boots, appends, rotations and
 // restarts, ReplayWithCheckpoint must (a) deliver every entry written since
@@ -203,8 +203,8 @@ func TestReplayWithCheckpoint_ResumeSeesOnlyNewEntriesAndKeepsLifetimeCounts(t *
 
 // --- upgrade path ----------------------------------------------------------
 
-// A checkpoint written by a pre-1.1.0 binary has an offset but no tally.
-// Resuming from it would freeze the counters at "since last boot" forever;
+// A checkpoint without a tally has an offset only. Resuming from it would
+// freeze the counters at "since last boot" forever;
 // the contract is one full replay to establish the lifetime tally.
 func TestReplayWithCheckpoint_LegacyCheckpointWithoutCountsTriggersFullReplay(t *testing.T) {
 	dir := t.TempDir()
@@ -479,9 +479,9 @@ func TestReplayWithCheckpoint_MissingFileIsNotAnError(t *testing.T) {
 
 // --- on-disk format --------------------------------------------------------
 
-// The checkpoint gained two additive fields. A pre-1.1.0 checkpoint must
-// still parse, and a checkpoint without the new fields must serialise to
-// the exact bytes the old binary wrote (downgrade safety).
+// The optional checkpoint fields are additive: a checkpoint with only
+// offset and audit_size must parse, and one without the optional fields must
+// serialise to exactly those bytes (downgrade safety).
 func TestCheckpoint_JSONIsBackwardAndForwardCompatible(t *testing.T) {
 	var legacy Checkpoint
 	if err := json.Unmarshal([]byte(`{"offset":5,"audit_size":5}`), &legacy); err != nil {

@@ -1,8 +1,7 @@
 package audit
 
 // Regression tests for ways a sealed log could be changed without the key
-// and still pass `audit verify`. Each was reproduced against the first
-// version of verify before it was fixed.
+// and still pass a naive `audit verify`.
 
 import (
 	"encoding/json"
@@ -221,8 +220,8 @@ func unsealedLogWithTrailingSeal(t *testing.T, seal *SealInfo, n int) string {
 	return path
 }
 
-// A seal declared after every entry protects nothing. With a key this used
-// to verify as intact, with 0 sealed entries and 3 unsealed ones.
+// A seal declared after every entry protects nothing. With a key it is a
+// break, not an intact log with 0 sealed entries and 3 unsealed ones.
 func TestVerify_SealDeclaredAfterEveryEntryFailsWithAKey(t *testing.T) {
 	path := unsealedLogWithTrailingSeal(t, &SealInfo{Alg: SealAlgHMACSHA256, KeyID: SealKeyID(testSealKey)}, 3)
 	mustBreak(t, path, VerifyOptions{Keys: [][]byte{testSealKey}}, "no entry is sealed")
@@ -258,7 +257,7 @@ func TestVerify_LogWithNoSealedEntryIsNotOK(t *testing.T) {
 
 // WithoutKey checks the structure of a log sealed with a key nobody gave:
 // it can't see a rewritten entry, but it sees entries added, removed or
-// left unsealed, which a report run without --key-file used to call sealed.
+// left unsealed, which a report run without --key-file must not call sealed.
 func TestVerify_WithoutKeyChecksTheStructure(t *testing.T) {
 	sealed := func(t *testing.T) string {
 		path := filepath.Join(t.TempDir(), "audit.jsonl")

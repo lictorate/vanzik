@@ -9,7 +9,7 @@
 //   - flush loop: on a ticker with a hard 1s floor, snapshots each in-memory
 //     structure and upserts it to the store. This runs on its own goroutine
 //     and NEVER touches the /v1/check request path, so the <3ms latency budget
-//     is unaffected (CLAUDE.md rule #1).
+//     is unaffected.
 //   - purge loop: periodically GCs stale rows (resolved approvals, idle costs,
 //     fully-refilled buckets), mirroring the in-memory eviction.
 //   - Close(): stops the loops and performs one final flush so the last second
@@ -29,9 +29,8 @@ import (
 	"lictorate.com/vanzik/v2/pkg/store"
 )
 
-// MinFlushInterval is the hard floor on the flush cadence (plan §2.4): the
-// syncer never writes more often than once per second, bounding write
-// amplification / WAL churn.
+// MinFlushInterval is the hard floor on the flush cadence: never more than
+// one write per second, bounding write amplification and WAL churn.
 const MinFlushInterval = 1 * time.Second
 
 // DefaultPurgeInterval is how often stale rows are GC'd. Much coarser than the
@@ -61,8 +60,8 @@ type Config struct {
 	ApprovalTTL time.Duration // resolved approvals
 	BucketTTL   time.Duration // fully-refilled buckets
 
-	// NodeID identifies THIS node when writing multi-node reconciliation rows
-	// (v1.0). Each node owns its own `(…, node_id)` consumption rows, so writes
+	// NodeID identifies THIS node when writing multi-node reconciliation rows.
+	// Each node owns its own `(…, node_id)` consumption rows, so writes
 	// are idempotent last-writer-wins with no cross-node read-modify-write race.
 	// Empty NodeID disables reconciliation (a row cannot be attributed).
 	NodeID string
@@ -77,11 +76,10 @@ type Config struct {
 // reconcileStore is the unexported capability interface that the multi-node
 // reconciler needs beyond the exported store.Store surface. It is satisfied by
 // the concrete *store.SQLiteStore and *store.PostgresStore (which carry the six
-// consumption methods), NOT by store.Store itself — the v1.0 lock (CLAUDE.md §4)
-// freezes store.Store, so new store operations live on the concrete types and
-// are reached here via a type assertion, mirroring cmd/vanzik's
-// persistentStore pattern. A Store that does not satisfy this interface simply
-// disables reconciliation.
+// consumption methods), NOT by store.Store itself: store.Store is frozen
+// (it gains no methods), so new store operations live on the concrete types and are
+// reached via a type assertion, as in cmd/vanzik's persistentStore. A Store
+// that does not satisfy it disables reconciliation.
 type reconcileStore interface {
 	UpsertRateConsumption(ctx context.Context, rows []store.RateConsumption) error
 	LoadRateConsumption(ctx context.Context) ([]store.RateConsumption, error)
@@ -91,13 +89,11 @@ type reconcileStore interface {
 	PurgeCostConsumption(ctx context.Context, cutoff time.Time) (int, error)
 }
 
-// approvalReconcileStore is the unexported capability the approval
-// cross-node-visibility reconciler needs. LoadApprovals is already part of the
-// exported store.Store surface (so every Store satisfies this today), but the
-// reconciler gates through an explicit capability interface — mirroring
-// reconcileStore — so arming is uniform with the rate/cost path and remains
-// correct if the exported surface is ever narrowed. A Store that does not
-// satisfy this simply disables approval reconciliation.
+// approvalReconcileStore is the capability the approval cross-node
+// reconciler needs. Every store.Store satisfies it today; the explicit gate
+// keeps arming uniform with reconcileStore and stays correct if the exported
+// surface is ever narrowed. A Store without it disables approval
+// reconciliation.
 type approvalReconcileStore interface {
 	LoadApprovals(ctx context.Context) ([]store.ApprovalRecord, error)
 }
@@ -117,7 +113,7 @@ type rateReconcileState struct {
 
 // costStateKey partitions cost reconcile state by (tenant, session) — the same
 // zero-trust partition checkCost uses, so tenant A can never reconcile into
-// tenant B (CLAUDE.md §3).
+// tenant B.
 type costStateKey struct {
 	tenant  string
 	session string
@@ -137,20 +133,17 @@ type Syncer struct {
 	stopOnce sync.Once
 	wg       sync.WaitGroup
 
-	// Reconcile capability + state. rc is non-nil ONLY when reconciliation is
-	// enabled (ReconcileInterval>0, NodeID set, and the store satisfies
-	// reconcileStore); when nil the reconcile ticker never starts. The maps are
-	// touched only by the single run() goroutine (and by tests calling reconcile
-	// directly), so they need no additional synchronization.
+	// rc is non-nil ONLY when reconciliation is enabled (ReconcileInterval>0,
+	// NodeID set, and the store satisfies reconcileStore). The maps are touched
+	// only by the run() goroutine (and tests calling reconcile directly), so
+	// they need no lock.
 	rc      reconcileStore
 	rateRec map[string]*rateReconcileState
 	costRec map[costStateKey]*costReconcileState
 
 	// ra is non-nil ONLY when approval cross-node reconciliation is enabled
-	// (same gate as rc: ReconcileInterval>0, NodeID set, and the store exposes
-	// LoadApprovals). When nil, reconcileApprovals is never invoked and the
-	// approval queue behaves exactly as in single-node mode. Touched only by the
-	// single run() goroutine (and by tests calling reconcileApprovals directly).
+	// (same gate as rc, with the store exposing LoadApprovals). Touched only by
+	// the run() goroutine (and tests calling reconcileApprovals directly).
 	ra approvalReconcileStore
 }
 
@@ -244,9 +237,7 @@ func (s *Syncer) run() {
 	purge := time.NewTicker(s.cfg.PurgeInterval)
 	defer purge.Stop()
 
-	// The reconcile ticker exists only when reconciliation is armed. A nil
-	// channel in the select simply never fires, so single-node / SQLite / no-caps
-	// deployments run the plain flush+purge loop with zero extra work.
+	// Unarmed, reconcileC stays nil and its select case never fires.
 	var reconcileC <-chan time.Time
 	if s.rc != nil || s.ra != nil {
 		rt := time.NewTicker(s.cfg.ReconcileInterval)
@@ -290,10 +281,8 @@ func (s *Syncer) reconcileWithTimeout() {
 	if err := s.reconcile(ctx, time.Now()); err != nil {
 		log.Printf("persist: reconcile error: %v", err)
 	}
-	// Approval cross-node visibility shares the reconcile ticker (design 1-A) and
-	// is armed independently of rate/cost reconcile (both gate on the same
-	// ReconcileInterval/NodeID, but the store capability check is separate). A
-	// reconcile error here never blocks or crashes anything (CLAUDE.md §2).
+	// Approval visibility shares the reconcile ticker but its store capability
+	// is checked separately. A reconcile error never blocks or crashes anything.
 	if s.ra != nil {
 		if err := s.reconcileApprovals(ctx); err != nil {
 			log.Printf("persist: approval reconcile error: %v", err)
@@ -306,7 +295,7 @@ func (s *Syncer) reconcileWithTimeout() {
 // push its absolute cumulative to the shared store, then pull other nodes'
 // consumption and fold the increment into the local limiter / cost accumulator.
 //
-// CLAUDE.md §1: this is background-only and reads the hot-path structures solely
+// Background-only: it reads the hot-path structures solely
 // through their existing Snapshot()/SnapshotCosts() accessors; it NEVER
 // instruments Allow/checkCost/RecordCost. The write-back happens through the
 // chunked-lock ApplyDeltas/ApplyCostDeltas.
@@ -461,8 +450,8 @@ func (s *Syncer) reconcileCost(ctx context.Context, now time.Time) error {
 	}
 	snaps := s.cfg.Engine.SnapshotCosts()
 
-	// Phase 1: derive this node's OWN reservation delta (excluding any others we
-	// previously folded in, via the lastCost baseline) and stage the cumulative.
+	// Phase 1: derive this node's OWN reservation delta (the lastCost baseline
+	// excludes other nodes' spend already folded in) and stage the cumulative.
 	live := make(map[costStateKey]struct{}, len(snaps))
 	var push []store.CostConsumption
 	for _, sn := range snaps {
@@ -546,16 +535,16 @@ type approvalKey struct {
 // reconcileApprovals gives THIS node cross-node visibility of the shared
 // approval queue: it loads all-tenant approval rows from the durable store and
 // MERGES them into the local in-memory queue so a decision a human made on
-// another node becomes visible here. Interval-driven (design 1-A); the
-// Postgres LISTEN/NOTIFY nudge is a separate follow-up (1-A-notify).
+// another node becomes visible here. Interval-driven only (no Postgres
+// LISTEN/NOTIFY nudge).
 //
-// CLAUDE.md §1: background-only. It reads the queue solely through Snapshot() (a
+// Background-only: it reads the queue solely through Snapshot() (a
 // read-lock copy) to bound the write set, and writes solely through the
 // chunked-lock ApplyRemote. The hot-path Lookup (pure in-memory RLock) is never
 // touched — this function calls no method that takes the queue's write lock for
 // an O(n) hold.
 //
-// CLAUDE.md §3: the merge key is (EffectiveTenant(TenantID), ID); a remote row
+// Tenant isolation: the merge key is (EffectiveTenant(TenantID), ID); a remote row
 // for tenant X can only touch entry (X, ID). The per-key conflict resolution
 // (DENY-wins, no-clobber of unflushed local pendings, never resurrect a resolved
 // action) lives in ApplyRemote and is applied under the queue lock against the
@@ -577,12 +566,10 @@ func (s *Syncer) reconcileApprovals(ctx context.Context) error {
 		return nil
 	}
 
-	// Snapshot the local queue under its read lock (NO O(n) write hold) and index
-	// by the merge key so we can drop remote rows that would provably not change
-	// anything — this bounds the number of records ApplyRemote merges under the
-	// write lock. The authoritative merge still runs in ApplyRemote against live
-	// state; this filter never produces a false positive that could hide a real
-	// update (see approvalMergeNoOp).
+	// Index a read-locked snapshot by merge key to drop remote rows that
+	// provably change nothing, bounding ApplyRemote's work under the write
+	// lock. The authoritative merge still runs in ApplyRemote against live
+	// state; this filter has no false positives (see approvalMergeNoOp).
 	local := make(map[approvalKey]*proxy.PendingAction)
 	for _, pa := range s.cfg.Approvals.Snapshot() {
 		local[approvalKey{tenant: store.EffectiveTenant(pa.TenantID), id: pa.ID}] = pa
@@ -642,9 +629,8 @@ func approvalMergeNoOp(l, r *proxy.PendingAction) bool {
 }
 
 // Flush snapshots every in-memory source and upserts it to the store in one
-// pass. Exposed (rather than purely internal) so tests and the shutdown path
-// can force a synchronous flush. Safe to call concurrently with the flush loop
-// only via Close (which stops the loop first).
+// pass, for tests and the shutdown path. Not safe concurrently with the
+// flush loop; Close stops the loop first.
 func (s *Syncer) Flush(ctx context.Context) error {
 	if s.cfg.Limiter != nil {
 		snaps := s.cfg.Limiter.Snapshot()
@@ -707,10 +693,8 @@ func (s *Syncer) Purge(ctx context.Context, now time.Time) error {
 			return err
 		}
 	}
-	// Multi-node consumption rows reuse the same purge loop (design: "Consumption
-	// -row purge reuses the purge loop"). Only runs when reconciliation is armed.
-	// Rate rows follow BucketTTL; cost rows follow CostTTL. Stale (no-longer-
-	// updated) rows age out by updated_at, mirroring the bucket/cost GC above.
+	// Multi-node consumption rows (only when reconciliation is armed) age out
+	// by updated_at: rate rows on BucketTTL, cost rows on CostTTL.
 	if s.rc != nil {
 		if s.cfg.BucketTTL > 0 {
 			if _, err := s.rc.PurgeRateConsumption(ctx, now.Add(-s.cfg.BucketTTL)); err != nil {
@@ -731,7 +715,7 @@ func (s *Syncer) Purge(ctx context.Context, now time.Time) error {
 func (s *Syncer) Close() {
 	s.stopOnce.Do(func() { close(s.done) })
 	s.wg.Wait()
-	// Final flush — the loop is stopped, so this is the only writer now.
+	// The loop is stopped: this is the only writer now.
 	ctx, cancel := context.WithTimeout(context.Background(), flushTimeout)
 	defer cancel()
 	if err := s.Flush(ctx); err != nil {

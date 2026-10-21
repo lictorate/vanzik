@@ -15,9 +15,8 @@ import (
 )
 
 // SQLiteStore is the single-node, zero-config Store backend. It owns one
-// database file holding every
-// persistence table, opened in WAL mode so the eventual direct-reading
-// dashboard can read concurrently with the write-behind syncer.
+// database file holding every persistence table, opened in WAL mode so
+// external readers can read concurrently with the write-behind syncer.
 //
 // Concurrency: MaxOpenConns is pinned to 1. The Store is a cold-path component
 // (write-behind flushes + boot hydration + occasional audit queries), so
@@ -33,10 +32,9 @@ type SQLiteStore struct {
 // any modernc in-memory DSN) yields an ephemeral store, used by tests.
 //
 // The database file and its -wal/-shm sidecars are held at mode 0600: they
-// carry the full audit trail plus approval/cost/bucket state, and the security
-// brief requires owner-only access (audit 2026-06, M2). The file is pre-created
-// 0600 so SQLite inherits that mode for the sidecars it creates, and existing
-// files from pre-fix versions are tightened on every open.
+// carry the full audit trail plus approval/cost/bucket state, so access is
+// owner-only. The file is pre-created 0600 so SQLite inherits that mode for
+// the sidecars it creates, and existing files are tightened on every open.
 func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	if !isMemoryDSN(path) {
 		f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
@@ -44,10 +42,9 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 			return nil, fmt.Errorf("store: create %q: %w", path, err)
 		}
 		_ = f.Close()
-		// Tighten files created by older versions under the process umask,
-		// including sidecars left over from a previous run. Chmod failures are
-		// non-fatal (e.g. filesystems without POSIX modes): the pre-create
-		// above already guarantees new deployments are 0600.
+		// Tighten files created under the process umask, including sidecars
+		// left over from a previous run. Chmod failures are non-fatal (e.g.
+		// filesystems without POSIX modes): new files are already 0600.
 		_ = os.Chmod(path, 0o600)
 		for _, sidecar := range []string{path + "-wal", path + "-shm"} {
 			if _, err := os.Stat(sidecar); err == nil {
@@ -79,11 +76,9 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	}
 
 	s := &SQLiteStore{db: db, path: path}
-	// Bounded like the Postgres constructor. SQLite is local so a
-	// hang is far less likely, but a locked database file or a stalled network
-	// mount can still block indefinitely, and an unbounded boot hang is the
-	// worst possible failure shape. Same deadline keeps the two backends'
-	// startup behavior identical.
+	// Bounded like the Postgres constructor: a locked database file or a
+	// stalled network mount can block indefinitely, and an unbounded boot
+	// hang is the worst failure shape.
 	ctx, cancel := context.WithTimeout(context.Background(), migrateTimeout)
 	defer cancel()
 	if err := s.Migrate(ctx); err != nil {
@@ -194,15 +189,14 @@ CREATE INDEX IF NOT EXISTS idx_cost_consumption_updated ON cost_consumption(upda
 `
 
 // Migrate creates the schema. Idempotent (CREATE ... IF NOT EXISTS), so it is
-// safe to run on every boot. Additive columns introduced after a table first
-// shipped are applied with guarded ALTERs — CREATE IF NOT EXISTS skips
-// existing tables, so a DB created by an older build would otherwise never
-// gain them.
+// safe to run on every boot. Additive columns are applied with guarded
+// ALTERs: CREATE IF NOT EXISTS skips existing tables, so a DB whose tables
+// lack them would otherwise never gain them.
 func (s *SQLiteStore) Migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("store: migrate: %w", err)
 	}
-	// approvals one-shot/actor columns; audit session columns (v1.4).
+	// approvals one-shot/actor columns; audit session columns.
 	additive := []string{
 		`ALTER TABLE approvals ADD COLUMN consumed_at   TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE approvals ADD COLUMN resolved_via  TEXT NOT NULL DEFAULT ''`,
@@ -616,15 +610,14 @@ func rowsAffected(res sql.Result) int {
 	return int(n)
 }
 
-// --- multi-node reconciliation (v1.0) ---
+// --- multi-node reconciliation ---
 //
 // RateConsumption and CostConsumption back multi-node rate-limit / session-cost
 // reconciliation. They are DELIBERATELY NOT part of the exported store.Store
-// interface (CLAUDE.md §4 v1.0 lock: store.Store gains no methods). The concrete
+// interface (store.Store is frozen: it gains no methods). The concrete
 // *SQLiteStore and *PostgresStore carry the six Upsert/Load/Purge methods, and
-// pkg/persist reaches them through an unexported capability interface (mirroring
-// cmd/vanzik's persistentStore pattern). Everything here is cold-path,
-// written and read only by the background reconcile syncer.
+// pkg/persist reaches them through an unexported capability interface. All
+// cold-path, used only by the background reconcile syncer.
 
 // RateConsumption is one node's ABSOLUTE cumulative consumption of a rate-limit
 // bucket within a fixed window (epoch). Rows are summed per (tenant, key, epoch)

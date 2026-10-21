@@ -272,8 +272,8 @@ func TestRotation_Pruning(t *testing.T) {
 	}
 }
 
-// TestRotation_ZeroConfigDoesNothing: the zero RotationConfig preserves
-// v0.4.0 behaviour — no archive files ever appear.
+// TestRotation_ZeroConfigDoesNothing: with the zero RotationConfig no
+// archive files ever appear.
 func TestRotation_ZeroConfigDoesNothing(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "audit.jsonl")
@@ -370,10 +370,8 @@ func TestPruneArchives_StandaloneCall(t *testing.T) {
 
 // TestAuditRotation pins the rotation contract: a FileLogger
 // constructed via NewFileLoggerWithRotation must produce a .gz archive
-// when MaxSize is crossed and Compress=true. This is the regression
-// coupon for main.go's wiring of --audit-* flags; the helper functions
-// (TestRotation_SizeTriggered, TestRotation_Compression) cover the
-// lower layers.
+// when MaxSize is crossed and Compress=true; TestRotation_SizeTriggered
+// and TestRotation_Compression cover the lower layers.
 func TestAuditRotation(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "audit.jsonl")

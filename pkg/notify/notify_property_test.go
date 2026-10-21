@@ -1,16 +1,12 @@
 package notify
 
-// AT-added concurrency property tests for the dispatcher.
-//
-// Properties under test:
+// Concurrency property tests for the dispatcher:
 //  1. Random concurrent Send + Close pairs never panic.
 //  2. Close returns within a bounded time (well under the slow-notifier
-//     wall-clock cost, proving that the in-flight context cancellation
-//     plumbed in v0.5 actually unblocks workers).
+//     wall-clock cost: the in-flight context cancellation unblocks workers).
 //
-// We bound the random space deliberately: testing/quick is configurable to
-// produce sensible workload sizes (≤ 64 goroutines, ≤ 256 events) so the
-// suite still finishes in a few seconds even under -race.
+// Workloads are bounded (≤ 64 goroutines, ≤ 256 events) so the suite
+// finishes in a few seconds even under -race.
 
 import (
 	"math/rand"
@@ -96,14 +92,10 @@ func TestDispatcher_ConcurrentSendCloseNoPanic(t *testing.T) {
 }
 
 // TestDispatcher_CloseBoundedTime asserts that Close returns within a
-// generous deadline (1s) even when notifiers are slow. The v0.5
-// context-plumbing fix means in-flight workers exit promptly when the
-// dispatcher's context is cancelled; without it, Close would have to
-// wait the full Notify duration.
-//
-// We use a noop notifier deliberately — the original cancellation test
-// (TestDispatcherCloseCancelsInflight) covers the HTTP-roundtrip path.
-// This test covers the simpler "lots of pending jobs" path.
+// generous deadline (1s) with lots of pending jobs: cancelling the
+// dispatcher's context makes in-flight workers exit instead of waiting out
+// each Notify. TestDispatcherCloseCancelsInflight covers the HTTP-roundtrip
+// path.
 func TestDispatcher_CloseBoundedTime(t *testing.T) {
 	d := NewDispatcherWithOpts(policy.NotificationCfg{}, 2, 64)
 	d.notifiers = []Notifier{&noopNotifier{}}
