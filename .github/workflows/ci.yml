@@ -229,9 +229,8 @@ jobs:
         # 3.10 is the floor (pyproject.toml requires-python = ">=3.10"); 3.11
         # and 3.12 are intermediate; 3.13 is the current stable and is also
         # declared in the trove classifiers, so it must be exercised here.
-        # 3.9 was dropped after upstream EOL (October 2025) and because the
-        # `mcp` extra requires >=3.10 anyway — keeping 3.9 in the matrix only
-        # invited broken installs.
+        # No 3.9: upstream EOL (October 2025), and the `mcp` extra requires
+        # >=3.10.
         python-version: ['3.10', '3.11', '3.12', '3.13']
     steps:
       - uses: actions/checkout@v4
@@ -297,30 +296,17 @@ jobs:
   # framework extra and runs only its targeted integration test file —
   # keeps install time bounded and isolates per-framework breakage.
   #
-  # Per-matrix blocking as of v1.0 (sub-task 2d): langchain and crewai are
-  # REQUIRED (allow_failure: false ⇒ a red leg fails CI); browser-use stays
-  # advisory (allow_failure: true) because its `playwright install` pulls
-  # ~200MB of Chromium from a CDN and is the known flake. This supersedes the
-  # original v0.5 posture, where the WHOLE job was non-blocking; the rationale
-  # for keeping one leg advisory is spelled out immediately below.
-  #
-  # Rationale for keeping browser-use advisory (carried from v0.9): these tests
-  # pin to LIVE upstream framework releases, so a red browser-use leg usually
-  # means upstream drift, not a Vanzik regression — gating merges on it
-  # would let an unrelated framework release block every merge. Failures still
-  # surface (the red leg + the weekly cron run) and the per-framework matrix
-  # isolates which one broke. The Vanzik-owned contract is covered by the
-  # BLOCKING `python-test` job's adapter unit tests AND — new in v1.0 — by the
-  # now-required langchain/crewai legs here; this job is the higher-fidelity,
-  # lower-stability coupon.
-  #
-  # The browser-use leg additionally requires Chromium binaries via
-  # `playwright install`; if that step fails (network flake, missing
-  # libs), only that matrix row goes red — and it does not fail CI.
+  # Every leg blocks except browser-use (allow_failure: true). Its
+  # `playwright install` pulls ~200MB of Chromium from a CDN and is the known
+  # flake, and it tests against LIVE upstream releases, so a red leg usually
+  # means upstream drift, not a Vanzik regression; gating merges on it would
+  # let an unrelated framework release block every merge. Its failures still
+  # surface (the red leg + the weekly cron run). The Vanzik-owned contract is
+  # covered by the blocking `python-test` adapter unit tests and the other
+  # legs here.
   integration-tests:
     runs-on: ubuntu-latest
-    # Per-matrix gating: langchain/crewai red ⇒ CI red; browser-use red ⇒
-    # CI still green. Driven by the allow_failure flag on each matrix entry.
+    # A red leg fails CI unless its matrix entry sets allow_failure.
     continue-on-error: ${{ matrix.allow_failure }}
     strategy:
       fail-fast: false
@@ -370,9 +356,8 @@ jobs:
         if: matrix.framework == 'browser-use'
         working-directory: plugins/python
         run: |
-          # Heavyweight: downloads ~200MB of Chromium. Marked
-          # `continue-on-error: true` at the job level so a transient
-          # CDN failure here does not block PRs.
+          # Downloads ~200MB of Chromium; the leg is advisory
+          # (allow_failure), so a transient CDN failure does not block PRs.
           python -m playwright install --with-deps chromium
 
       - name: Run integration tests (${{ matrix.framework }})
@@ -401,8 +386,8 @@ jobs:
 
   # Fresh install of every extra at once. Catches an extras set that no
   # longer resolves, resolves to a framework version the adapters don't
-  # support, or breaks an adapter — 1.1.1's [all] picked crewai 0.193, whose
-  # tool dispatch bypassed the CrewAI adapter. Advisory: an upstream release
+  # support, or breaks an adapter (e.g. [all] resolving crewai 0.193, whose
+  # tool dispatch bypassed the CrewAI adapter). Advisory: an upstream release
   # can break the resolution at any time, and the weekly cron surfaces it.
   python-extras-all:
     runs-on: ubuntu-latest
@@ -447,8 +432,8 @@ jobs:
     strategy:
       matrix:
         # 20 is the floor (package.json engines.node = ">=20.0.0"); 22 is
-        # Maintenance LTS; 24 is the current Active LTS. Node 18 was dropped
-        # after upstream EOL (2025-04-30). v0.5 R1 E2 closed.
+        # Maintenance LTS; 24 is the current Active LTS. No Node 18: upstream
+        # EOL (2025-04-30).
         node-version: ['20', '22', '24']
     steps:
       - uses: actions/checkout@v4

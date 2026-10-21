@@ -1,53 +1,34 @@
 """
 Vanzik LLM API Proxy — Anthropic Python SDK example.
 
-Same shape as openai-sdk-config.py but for the official `anthropic`
-package. Note Anthropic's URL convention differs from OpenAI's: there
-is **no `/v1` suffix** — the SDK appends `/v1/messages` itself.
-
-Verified against:
-  - anthropic==0.100.0 (https://github.com/anthropics/anthropic-sdk-python,
-    src/anthropic/_client.py, 2026-05-05). Constructor parameter
-    `base_url=` and env var `ANTHROPIC_BASE_URL`. The default value is
-    `https://api.anthropic.com` (no path).
-  - Vanzik 2.0 LLM API Proxy (`vanzik-llm-proxy --listen
-    127.0.0.1:8081`).
-
-Setup:
+Setup (Anthropic's base URL has no /v1 suffix: the SDK appends
+/v1/messages itself):
   pip install "anthropic>=0.40"
-  export ANTHROPIC_API_KEY=sk-ant-...           # your real Anthropic key
+  export ANTHROPIC_API_KEY=sk-ant-...              # your real Anthropic key
   export ANTHROPIC_BASE_URL=http://127.0.0.1:8081  # the proxy — NO /v1
 
 Run Vanzik side (two terminals):
 
   # Terminal 1
-  vanzik server \\
-      --policy configs/default.yaml \\
-      --dashboard \\
-      --watch \\
+  vanzik server \
+      --policy configs/default.yaml \
+      --dashboard \
+      --watch \
       --api-key "$VANZIK_API_KEY"
 
-  # Terminal 2 — same proxy as the OpenAI example: it speaks both
-  # /v1/chat/completions (OpenAI) AND /v1/messages (Anthropic).
-  vanzik-llm-proxy \\
-      --listen 127.0.0.1:8081 \\
-      --policy configs/default.yaml \\
-      --guard-url http://127.0.0.1:8080 \\
+  # Terminal 2 — the same proxy speaks /v1/chat/completions (OpenAI)
+  # and /v1/messages (Anthropic).
+  vanzik-llm-proxy \
+      --listen 127.0.0.1:8081 \
+      --policy configs/default.yaml \
+      --guard-url http://127.0.0.1:8080 \
       --api-key "$VANZIK_API_KEY"
 
 Then run this script:
   python examples/anthropic-sdk-config.py
 
-Expected behaviour:
-  - Tool-using turn: the proxy buffers the `tool_use` content_block
-    until `content_block_stop`, runs `Engine.Check`, and either flushes
-    byte-identical bytes (ALLOW) or emits a synthetic `text` block in
-    place at the same content-block index, plus `message_delta` with
-    `stop_reason: end_turn` and `usage` (DENY / REQUIRE_APPROVAL).
-    `messages.stream()` consumes the refusal like any other reply:
-    the final message has one text block and `usage.output_tokens` 0
-    (verified with anthropic 1.17.0).
-  - The dashboard shows the decision live with `transport=llm_api_proxy`.
+Verified SDK versions, expected ALLOW / DENY / REQUIRE_APPROVAL behaviour
+and gotchas: examples/anthropic-sdk-config.md.
 """
 
 from __future__ import annotations

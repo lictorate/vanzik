@@ -1,18 +1,6 @@
 """
 Vanzik LLM API Proxy — CrewAI example.
 
-Drives a real CrewAI Crew through the Vanzik LLM API Proxy by
-passing a CrewAI `LLM(...)` instance with `base_url=` set to the proxy.
-CrewAI delegates LLM calls to LiteLLM under the hood; LiteLLM honors
-the OpenAI-compatible base URL the same way the raw `openai` SDK does.
-
-Verified against:
-  - crewai 1.14.x — `from crewai import Agent, Crew, Task, LLM` and
-    `LLM(model=..., base_url=..., api_key=...)`. Source:
-    https://docs.crewai.com/en/learn/llm-connections (verified
-    2026-05-05). The `base_url=` parameter is canonical; the
-    `OPENAI_API_BASE` env var is honored as a fallback.
-
 Setup:
   pip install "crewai>=1.0,<2.0"
   export OPENAI_API_KEY=sk-...
@@ -23,31 +11,25 @@ Setup:
 Run Vanzik side (two terminals):
 
   # Terminal 1
-  vanzik server \\
-      --policy configs/default.yaml \\
-      --dashboard \\
-      --watch \\
+  vanzik server \
+      --policy configs/default.yaml \
+      --dashboard \
+      --watch \
       --api-key "$VANZIK_API_KEY"
 
   # Terminal 2
-  vanzik-llm-proxy \\
-      --listen 127.0.0.1:8081 \\
-      --policy configs/default.yaml \\
-      --guard-url http://127.0.0.1:8080 \\
+  vanzik-llm-proxy \
+      --listen 127.0.0.1:8081 \
+      --policy configs/default.yaml \
+      --guard-url http://127.0.0.1:8080 \
       --api-key "$VANZIK_API_KEY"
 
 Then run this script:
   python examples/crewai-agent-config.py
 
-Expected behaviour:
-  - The Crew kicks off; the agent's first turn calls a tool. The
-    proxy gates the tool_call before LiteLLM streams it to CrewAI.
-    On DENY, the model "decides" not to call the tool and returns a
-    synthetic assistant message instead — CrewAI logs the agent's
-    final answer as the refusal text.
-  - The dashboard shows the decision live, transport chip
-    `llm_api_proxy`. Filter the audit log:
-        vanzik audit --transport llm_api_proxy --limit 20
+The `list_tmp_files` tool needs a `tool_scope_map` entry and an allow
+rule first. That policy snippet, verified versions, expected behaviour
+and gotchas: examples/crewai-agent-config.md.
 """
 
 from __future__ import annotations

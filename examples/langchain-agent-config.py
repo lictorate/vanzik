@@ -1,24 +1,6 @@
 """
 Vanzik LLM API Proxy — LangChain (langchain-openai) example.
 
-Drives a real LangChain agent through the Vanzik LLM API Proxy.
-The agent is plain `langchain_openai.ChatOpenAI` bound to a Python tool;
-nothing about the agent code changes when going through the proxy —
-only the `base_url=` argument moves from "https://api.openai.com/v1"
-(implicit) to the proxy's `/v1` URL.
-
-Verified against:
-  - langchain-openai 1.x — `from langchain_openai import ChatOpenAI`,
-    constructor parameter `base_url=...`. Source:
-    https://docs.langchain.com/oss/python/integrations/chat/openai
-    (verified 2026-05-05). The legacy `openai_api_base=` parameter is
-    still accepted by langchain-openai 1.x but `base_url=` is the
-    documented form going forward.
-  - langchain-core 1.3.x for the `bind_tools` API on chat models.
-  - openai==2.35.1 underneath — the same `OPENAI_BASE_URL` env var
-    works as a fallback if you prefer not to pass `base_url=`
-    explicitly.
-
 Setup:
   pip install "langchain>=0.3,<2.0" "langchain-openai>=0.2"
   export OPENAI_API_KEY=sk-...
@@ -28,48 +10,26 @@ Setup:
 Run Vanzik side (two terminals):
 
   # Terminal 1
-  vanzik server \\
-      --policy configs/default.yaml \\
-      --dashboard \\
-      --watch \\
+  vanzik server \
+      --policy configs/default.yaml \
+      --dashboard \
+      --watch \
       --api-key "$VANZIK_API_KEY"
 
   # Terminal 2
-  vanzik-llm-proxy \\
-      --listen 127.0.0.1:8081 \\
-      --policy configs/default.yaml \\
-      --guard-url http://127.0.0.1:8080 \\
+  vanzik-llm-proxy \
+      --listen 127.0.0.1:8081 \
+      --policy configs/default.yaml \
+      --guard-url http://127.0.0.1:8080 \
       --api-key "$VANZIK_API_KEY"
 
 Then run this script:
   python examples/langchain-agent-config.py
 
-Expected behaviour:
-  - The model decides to call `list_tmp_files`. Vanzik's default
-    LLM tool-scope map routes the tool name → scope `unmapped` (it's
-    not a built-in name like `bash`/`read_file`). Map it to a scope in
-    your policy, and allow it there (`tool_scope_map` is a list):
-
-        tool_scope_map:
-          - pattern: "list_tmp_files"
-            scope: shell
-
-        rules:
-          - scope: shell
-            allow:
-              - pattern: "list_tmp_files"
-
-    For a tool mapped to `shell` the proxy checks the tool's `command`
-    argument; this tool has none, so the check runs with the tool name
-    as the command, which is why the allow rule names it. The mapping
-    alone still gets the shell scope's default DENY. Without the
-    mapping, the central engine's default-deny on the unmapped scope
-    kicks in (as designed — see docs/POLICY_REFERENCE.md § "LLM API
-    Proxy tool scope mapping"). In configs/default.yaml, add both lines
-    to the existing `tool_scope_map:` list and `shell` block instead
-    of a second block; see examples/langchain-agent-config.md.
-  - The dashboard shows the decision live, transport chip
-    `llm_api_proxy`.
+The `list_tmp_files` tool needs a `tool_scope_map` entry and an allow
+rule first; without them it reaches the engine as scope `unmapped` and is
+denied. That policy snippet, verified versions, expected behaviour and
+gotchas: examples/langchain-agent-config.md.
 """
 
 from __future__ import annotations

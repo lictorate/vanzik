@@ -1,18 +1,6 @@
 """
 Vanzik LLM API Proxy — OpenAI Python SDK example.
 
-This is the "no framework" path: a raw `openai` client whose `base_url`
-is pointed at the Vanzik LLM API Proxy. Existing code that already
-talks to the OpenAI Chat Completions API works unchanged after exporting
-one environment variable.
-
-Verified against:
-  - openai==2.35.1 (https://github.com/openai/openai-python, 2026-05-05).
-    Constructor parameter `base_url=` and env var `OPENAI_BASE_URL` are
-    the canonical knobs; both honor a `/v1` suffix.
-  - Vanzik 2.0 LLM API Proxy (`vanzik-llm-proxy --listen
-    127.0.0.1:8081`).
-
 Setup:
   pip install "openai>=1.0"
   export OPENAI_API_KEY=sk-...                    # your real OpenAI key
@@ -21,37 +9,24 @@ Setup:
 Run Vanzik side (two terminals):
 
   # Terminal 1 — central policy server + dashboard
-  vanzik server \\
-      --policy configs/default.yaml \\
-      --dashboard \\
-      --watch \\
+  vanzik server \
+      --policy configs/default.yaml \
+      --dashboard \
+      --watch \
       --api-key "$VANZIK_API_KEY"
 
   # Terminal 2 — LLM API Proxy (OpenAI-shape on /v1/*)
-  vanzik-llm-proxy \\
-      --listen 127.0.0.1:8081 \\
-      --policy configs/default.yaml \\
-      --guard-url http://127.0.0.1:8080 \\
+  vanzik-llm-proxy \
+      --listen 127.0.0.1:8081 \
+      --policy configs/default.yaml \
+      --guard-url http://127.0.0.1:8080 \
       --api-key "$VANZIK_API_KEY"
 
 Then run this script:
   python examples/openai-sdk-config.py
 
-Expected behaviour with the bundled `configs/default.yaml`:
-  - Plain text completion: passes through, byte-identical to a direct
-    OpenAI call.
-  - `bash` tool call for `ls /tmp`: routed via the default
-    LLM tool-scope map to scope `shell`; the policy ALLOWs it and the
-    SDK receives the original streamed tool-call deltas.
-  - `bash` tool call for `dd if=/dev/zero of=/dev/sda`: scope `shell`
-    denies; the proxy rewrites the SSE stream as a synthetic assistant
-    text message starting with `Vanzik denied this action.`
-  - `bash` tool call for `rm -rf /etc` (or `sudo apt update`): the policy
-    asks for approval; the synthetic text starts with `Vanzik paused this
-    action pending human approval.` and names the approval id.
-
-Open the dashboard at http://127.0.0.1:8080/dashboard to watch each
-decision land live (transport chip: `llm_api_proxy`).
+Verified SDK versions, expected ALLOW / DENY / REQUIRE_APPROVAL behaviour
+and gotchas: examples/openai-sdk-config.md.
 """
 
 from __future__ import annotations

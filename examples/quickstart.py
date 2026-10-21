@@ -20,7 +20,6 @@ and make API calls.
 from vanzik import Guard
 
 def main():
-    # Connect to Vanzik
     guard = Guard("http://localhost:8080", agent_id="quickstart-demo")
 
     print("=" * 60)

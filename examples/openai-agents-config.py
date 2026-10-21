@@ -1,17 +1,10 @@
 """
 Vanzik OpenAI Agents SDK adapter example.
 
-Runs a real OpenAI Agents SDK agent (PyPI ``openai-agents``, import name
-``agents``) whose function tool is gated by Vanzik with
-``guard_tools``. Every tool call is checked against the central
-Vanzik server's ``/v1/check`` before the tool body runs; a DENY or
-REQUIRE_APPROVAL stops the run and raises to this script.
-
-Verified against:
-  - openai-agents 0.23.x (supported range: >=0.3.3,<1.0, the pin in
-    plugins/python/pyproject.toml). Source:
-    https://openai.github.io/openai-agents-python/tools/ (verified
-    2026-10-14).
+An OpenAI Agents SDK agent whose function tool is gated with
+``guard_tools``: each call is checked against the Vanzik server's
+``/v1/check`` before the tool body runs, and a DENY or REQUIRE_APPROVAL
+raises to this script.
 
 Setup:
   pip install 'vanzik[openai-agents]'
@@ -20,25 +13,19 @@ Setup:
 
 Run the Vanzik server (one terminal):
 
-  vanzik server \\
-      --policy configs/default.yaml \\
-      --dashboard \\
-      --watch \\
+  vanzik server \
+      --policy configs/default.yaml \
+      --dashboard \
+      --watch \
       --api-key "$VANZIK_API_KEY"
 
 Then run this script:
   python examples/openai-agents-config.py "list the files in /tmp"
   python examples/openai-agents-config.py "delete /tmp/vanzik-demo recursively"
 
-Expected behaviour with configs/default.yaml:
-  - ``ls /tmp`` matches ``allow: ls *`` in the shell scope: the tool
-    runs and the agent answers with the listing.
-  - ``rm -rf /tmp/vanzik-demo`` matches ``require_approval: rm -rf *``:
-    the tool does not run, and Runner.run raises
-    VanzikApprovalRequired carrying the approval id and URL.
-  - Anything the policy denies raises VanzikDenied; the tool does
-    not run and the model never sees a result.
-  The dashboard (http://localhost:8080/dashboard) shows each decision.
+With configs/default.yaml the first runs the tool and the second raises
+VanzikApprovalRequired. Verified versions, expected behaviour and
+gotchas: examples/openai-agents-config.md.
 """
 
 from __future__ import annotations

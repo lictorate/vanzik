@@ -22,8 +22,7 @@ description: "Restrictive defaults suitable for development agents"
 rules:
   # --- File System ---
   # Path rules always use `paths:` (a list) + `action:` (read|write|delete).
-  # Use `**` for multi-segment globs — `*` alone crosses "/" but also
-  # matches arbitrary chars, which is rarely what you want for a path.
+  # Use `**` for multi-segment globs; `*` also crosses "/" (see the header).
   - scope: filesystem
     allow:
       - action: read
@@ -51,7 +50,6 @@ rules:
   # string. `*` here happily crosses spaces AND slashes — that's usually
   # what you want for shell. The anchored match covers the whole command,
   # so `rm -rf *` matches `rm -rf /home/user` but not `sudo rm -rf /`.
-  # Order matters: deny is checked before require_approval before allow.
   #
   # A command with shell syntax (`;`, `&&`, `|`, `$( )`, backticks, quotes,
   # redirections, line breaks) is checked one command at a time, and its
@@ -102,8 +100,8 @@ rules:
       - pattern: "git *"
 
   # --- Network / API Calls ---
-  # Wildcard gotcha: `*.foo.com` matches `api.foo.com` but NOT `foo.com`.
-  # To cover both, list the apex domain explicitly alongside the wildcard.
+  # `*.foo.com` doesn't match `foo.com`: list the apex domain next to the
+  # wildcard to cover both.
   - scope: network
     allow:
       - domain: "api.openai.com"
@@ -142,9 +140,8 @@ rules:
   # fires; the Command field carries the (redacted) value, and meta.field
   # carries the field name. See docs/POLICY_REFERENCE.md#data-scope.
   #
-  # By default we DO NOT enable any data rules, because every workflow
-  # needs at least one allow rule to make progress and there is no
-  # universal answer. Uncomment and tune for your deployment:
+  # No data rules are enabled by default: every workflow needs its own
+  # allow rules and there is no universal answer. Uncomment and tune:
   #
   # - scope: data
   #   deny:
@@ -153,20 +150,17 @@ rules:
   #     - domain: "*.internal.local"              # form submissions to internal sites only
 
   # --- MCP Gateway (tools/call gating) ---
-  # The MCP Gateway (vanzik-mcp-gateway) routes every host
-  # tools/call through Engine.Check with scope=mcp_tool. In
-  # --policy-mode strict (default) it ALSO fires a second Engine.Check
-  # against the mapped existing scope (filesystem, network, shell,
-  # browser, data) so existing rules apply to MCP traffic without
+  # The MCP Gateway (vanzik-mcp-gateway) checks every tools/call with
+  # scope=mcp_tool. In --policy-mode strict (default) it ALSO checks the
+  # mapped existing scope (filesystem, network, shell, browser, data; see
+  # tool_scope_map below) so existing rules apply to MCP traffic without
   # duplication. See docs/MCP_GATEWAY.md and
   # docs/POLICY_REFERENCE.md#mcp_tool-scope.
   #
-  # IMPORTANT: in strict mode the mcp_tool leg is checked FIRST and
-  # short-circuits on non-ALLOW. If you ship a policy with no
-  # mcp_tool rules, the default-deny fall-through fires and EVERY
-  # MCP tools/call denies — see docs/MCP_GATEWAY.md for the full
-  # dual-check semantics. The block below is the safe-default rule
-  # set used by the MCP quickstart; tune for your deployment.
+  # IMPORTANT: the mcp_tool leg is checked FIRST and short-circuits on
+  # non-ALLOW. A policy with no mcp_tool rules falls through to
+  # default-deny, so EVERY MCP tools/call is denied. The block below is
+  # the safe default the MCP quickstart uses; tune for your deployment.
   - scope: mcp_tool
     deny:
       # Block any namespace's write/delete tools by name. The four write
@@ -200,48 +194,40 @@ rules:
       - pattern: "*:fetch_*"
       - pattern: "*:http_*"
     allow:
-      # Default-allow for safe read/list/get tools across any
-      # upstream namespace. The dual-check still gates the *mapped*
-      # scope (filesystem, network, ...) per tool_scope_map.
+      # Safe read/list/get tools in any namespace. The dual-check still
+      # gates the *mapped* scope (filesystem, network, ...).
       - pattern: "*:read_*"
       - pattern: "*:list_*"
       - pattern: "*:get_*"
-      # The MCP filesystem reference server's tools (read_text_file,
-      # list_directory, etc.) are also covered by *:read_* / *:list_*
-      # but we whitelist the entire fs: namespace so search/info tools
-      # without a read_ prefix still pass the mcp_tool leg. The
-      # filesystem rules above remain authoritative for path-level
-      # gating via the dual-check.
+      # The whole fs: namespace, so the filesystem server's search/info
+      # tools without a read_/list_ prefix pass the mcp_tool leg too. The
+      # filesystem rules above still gate their paths via the dual-check.
       - pattern: "fs:*"
       # MCP "everything" sample server used by the quickstart docs.
       - pattern: "everything:*"
 
-# tool_scope_map declares the tool-name → existing-scope mapping used
-# by BOTH the MCP Gateway (--policy-mode strict dual-check) and the
-# LLM API Proxy (gates upstream tool_calls against operator policy).
-# Patterns are glob-matched; first match wins. Operators write more
-# specific patterns first.
+# tool_scope_map maps tool names to existing scopes for BOTH the MCP
+# Gateway (--policy-mode strict dual-check) and the LLM API Proxy (which
+# gates upstream tool_calls). Patterns are globs and the first match wins,
+# so put more specific patterns first.
 #
 # Allowed scope values: shell, filesystem, network, browser, data,
 # cost, mcp_tool. (mcp_tool here would re-run the same scope twice —
 # usually a typo for the MCP gateway, never useful for the LLM proxy.)
 #
-# Two namespaces are addressed by this single section:
+# Tool names come in two forms:
 #
 #   1. MCP Gateway tool names are namespaced as `<server>:<tool>`
 #      (e.g. `fs:read_text_file`, `github:list_issues`).
 #   2. LLM API Proxy tool names are bare (e.g. `bash`, `read_file`,
-#      `web_search`). The LLM proxy ships with a default map for
-#      common tool names baked into the binary
-#      (pkg/llmproxy/scope_map.go); operator entries below override
-#      or extend those defaults — see
-#      docs/POLICY_REFERENCE.md#llm-api-proxy-tool-scope-mapping.
+#      `web_search`). The proxy has a built-in default map for common
+#      names (pkg/llmproxy/scope_map.go); entries here override or extend
+#      it — see docs/POLICY_REFERENCE.md#llm-api-proxy-tool-scope-mapping.
 #
-# Tools not matched by any entry in either layer (operator + bundled
-# defaults) get scope=`unmapped` at gate time. The policy engine has
-# no built-in `unmapped` rules, so the gate fails closed (DENY).
-# Operators who want unknown LLM tools to flow through must write an
-# explicit `scope: unmapped` rule.
+# A tool matched by neither these entries nor the built-in defaults gets
+# scope=`unmapped`. There are no built-in `unmapped` rules, so it fails
+# closed (DENY); write an explicit `scope: unmapped` rule to let unknown
+# LLM tools through.
 #
 # The default map below covers the upstreams shipped in
 # examples/*-config.json (fs / fetch / github). Add entries for any

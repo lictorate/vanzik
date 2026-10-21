@@ -40,23 +40,8 @@ audit log so every decision is unambiguous.
 
 ## Setup (5 steps)
 
-The example config starts three downstream MCP servers, each with its own
-launcher:
-
-| Upstream | Launcher | Install |
-|---|---|---|
-| `fs` — filesystem server | `npx` | [Node.js](https://nodejs.org/) 20+ |
-| `fetch` — fetch server | `uvx` | [uv](https://docs.astral.sh/uv/getting-started/installation/) |
-| `github` — [GitHub's MCP server](https://github.com/github/github-mcp-server) | `docker` | [Docker](https://docs.docker.com/get-started/get-docker/) |
-
-Install the launchers for the upstreams you keep and delete the
-`--upstream` entries you don't need. A missing launcher disables only
-that namespace: the gateway logs
-`info mcpgw: startup: upstream "fetch" failed to spawn: …` and serves the
-others. The GitHub server reads `GITHUB_PERSONAL_ACCESS_TOKEN` from the
-config's `env` block; the gateway passes its environment to every
-upstream, and `docker run -e GITHUB_PERSONAL_ACCESS_TOKEN` forwards it
-into the container.
+Install the launchers (`npx`, `uvx`, `docker`) for the upstreams you keep;
+see [Downstream servers](README.md#downstream-servers).
 
 1. **Install the binaries** (Go 1.26+):
 
@@ -77,25 +62,11 @@ into the container.
    to the binary.
 
 2. **Pick a policy.** The config points `--policy` at
-   `/etc/vanzik/default.yaml`, the starter policy a root install of the
-   [one-line installer](../docs/SETUP.md#1-install) writes. After a user
-   install the starter is `~/.config/vanzik/default.yaml`: put its
-   absolute path (for example `/home/you/.config/vanzik/default.yaml`)
-   in the config, since nothing expands `~` there. Installed with
-   `go install`? Copy `configs/default.yaml` from this repo into place:
-
-   ```bash
-   sudo mkdir -p /etc/vanzik
-   sudo cp configs/default.yaml /etc/vanzik/default.yaml
-   ```
-
-   With `--policy-mode strict` the gateway exits 1 when the file is
-   missing.
+   `/etc/vanzik/default.yaml`; for a user install or a `go install`
+   setup, see [Policy file](README.md#policy-file).
 
 3. **Generate an API key** and put it in the `env` block of the JSON
-   (the gateway reads `VANZIK_API_KEY` from the subprocess
-   environment when the `--api-key` flag is absent — see "API key
-   handling" below):
+   (see "API key handling" below):
 
    ```bash
    export VANZIK_API_KEY="$(openssl rand -hex 32)"
@@ -137,32 +108,14 @@ If actions appear in Claude but never show on the dashboard, see the
 
 ## API key handling
 
-Do **not** pass `--api-key "$VANZIK_API_KEY"` as an `args` entry.
-Claude Desktop does **not** shell-expand `$VAR` references inside the
-JSON `args` array — the gateway would receive the literal string
-`$VANZIK_API_KEY` and send it as the key. Instead, use the
-`env` block above to inject the key as an environment variable; the
-gateway picks up `VANZIK_API_KEY` automatically when the
-`--api-key` flag is absent.
-
-Today the gateway calls only `/v1/check`, which the server leaves open,
-so a missing or literal key doesn't stop it working. The key is still the
-bearer it sends on every call, so set the real one.
-
-If you really must pass the key on the command line, write the literal
-key into the `args` entry — but that bakes a secret into your config
-file, so prefer the `env` block.
+Claude Desktop does not shell-expand `$VAR` inside JSON `args`: put the
+key in the `env` block and omit `--api-key`. See
+[API key handling](README.md#api-key-handling).
 
 ## Tenant ID
 
-`--tenant-id` picks the tenant whose policy evaluates the gateway's
-calls (they go to `/v1/t/<tenant>/check`). Keep `local` — the policy
-the server loads with `--policy` — unless you've registered another
-tenant on the central server with
-`vanzik tenant put <id> --policy <file.yaml>`. A tenant the server
-doesn't know answers `404`, which the gateway
-treats like an unreachable server: `--fail-mode` decides, so with `deny`
-every call is refused.
+Keep `--tenant-id local` unless you've registered another tenant; see
+[Tenant ID](README.md#tenant-id).
 
 ## Remote MCP servers over HTTP
 
@@ -192,6 +145,5 @@ The URL must be `https`, or `http` to `localhost`. Its tools appear as
 
 ## Trimming the example
 
-The bundled config wires `fs`, `fetch`, and `github` upstreams. Remove any
-you don't need (each one is a subprocess the gateway starts with it) and
-add others from <https://github.com/modelcontextprotocol/servers>.
+The bundled config wires `fs`, `fetch`, and `github` upstreams; see
+[Downstream servers](README.md#downstream-servers) to drop or add some.

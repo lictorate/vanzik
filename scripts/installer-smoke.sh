@@ -84,7 +84,7 @@ if tail -n 1 "$conf/default.yaml" | grep -q "operator edit"; then ok "rerun kept
 
 # 5. The PATH hint names the file a zsh user's shell reads (macOS's default
 #    shell never reads ~/.profile). Only the checkout's installer is held to
-#    this; a published one predating the fix still says ~/.profile.
+#    this; an older published one still says ~/.profile.
 if [ "$MODE" = local ] && [ "$(id -u)" != "0" ]; then
   hint="$(PATH=/usr/bin:/bin SHELL=/bin/zsh VANZIK_VERSION="$WANT" /bin/sh "$HERE/install.sh" 2>&1)" || bad "zsh-hint run failed"
   if echo "$hint" | grep -q ">> ~/.zshrc"; then ok "PATH hint for a zsh user names ~/.zshrc"; else echo "$hint"; bad "zsh PATH hint wrong"; fi

@@ -8,7 +8,7 @@
 # The builder runs on the build host's own platform and cross-compiles for the
 # target (TARGETOS/TARGETARCH, set by BuildKit for each `--platform`). Every
 # dependency is pure Go, so CGO stays off and a multi-arch image needs no CPU
-# emulation. A plain `docker build` targets the host, as before.
+# emulation. A plain `docker build` targets the host.
 FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine AS builder
 
 WORKDIR /app
@@ -63,8 +63,8 @@ EXPOSE 8080
 # Liveness for orchestrators. /health is unauthenticated by design and the
 # server binds 127.0.0.1 unless --api-key is set, so the probe runs from inside
 # the container against loopback. NOTE: this reports "process is serving", not
-# "state hydration succeeded" — a boot where hydration failed still answers 200
-# (audit B9). Use it for restarts, not as an enforcement-readiness signal.
+# "state hydration succeeded" — a boot where hydration failed still answers
+# 200. Use it for restarts, not as an enforcement-readiness signal.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD wget -q --spider http://127.0.0.1:8080/health || exit 1
 

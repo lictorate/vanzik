@@ -48,23 +48,8 @@ environment.
 
 ## Setup
 
-The example config starts three downstream MCP servers, each with its own
-launcher:
-
-| Upstream | Launcher | Install |
-|---|---|---|
-| `fs` — filesystem server | `npx` | [Node.js](https://nodejs.org/) 20+ |
-| `fetch` — fetch server | `uvx` | [uv](https://docs.astral.sh/uv/getting-started/installation/) |
-| `github` — [GitHub's MCP server](https://github.com/github/github-mcp-server) | `docker` | [Docker](https://docs.docker.com/get-started/get-docker/) |
-
-Install the launchers for the upstreams you keep and delete the
-`--upstream` entries you don't need. A missing launcher disables only
-that namespace: the gateway logs
-`info mcpgw: startup: upstream "fetch" failed to spawn: …` and serves the
-others. The GitHub server reads `GITHUB_PERSONAL_ACCESS_TOKEN` from the
-config's `env` block; the gateway passes its environment to every
-upstream, and `docker run -e GITHUB_PERSONAL_ACCESS_TOKEN` forwards it
-into the container.
+Install the launchers (`npx`, `uvx`, `docker`) for the upstreams you keep;
+see [Downstream servers](README.md#downstream-servers).
 
 1. **Install binaries** (Go 1.26+):
 
@@ -74,17 +59,9 @@ into the container.
    ```
 
 2. **Pick a policy.** The config points `--policy` at
-   `/etc/vanzik/default.yaml`, the starter policy a root install of the
-   [one-line installer](../docs/SETUP.md#1-install) writes; the gateway
-   and the server must load the same file. After a user install the
-   starter is `~/.config/vanzik/default.yaml`: put its absolute path in
-   the config, since nothing expands `~` there. Installed with
-   `go install`? Copy `configs/default.yaml` from this repo into place:
-
-   ```bash
-   sudo mkdir -p /etc/vanzik
-   sudo cp configs/default.yaml /etc/vanzik/default.yaml
-   ```
+   `/etc/vanzik/default.yaml`; the gateway and the server must load the
+   same file. For a user install or a `go install` setup, see
+   [Policy file](README.md#policy-file).
 
    For a policy that lives in one project instead, copy it to
    `.vanzik/policy.yaml` there, use
@@ -142,29 +119,17 @@ In Cursor's chat (Composer):
 
 ## API key handling
 
-Do **not** pass `--api-key "$VANZIK_API_KEY"` as an `args` entry.
 Cursor's `${env:VAR}` interpolation has been unreliable across
-versions, and JSON-level `$VAR` shell-expansion never happens. The
-safe path is to set `VANZIK_API_KEY` in the `env` block (or
-inherited from Cursor's parent shell) and **omit** the `--api-key`
-flag entirely — the gateway picks up the env var automatically when
-the flag is absent.
-
-Today the gateway calls only `/v1/check`, which the server leaves open,
-so a missing or literal key doesn't stop it working. The key is still the
-bearer it sends on every call, so set the real one.
+versions, and plain `$VAR` is never expanded: set `VANZIK_API_KEY` in
+the `env` block (or inherit it from Cursor's parent shell) and omit
+`--api-key`. See [API key handling](README.md#api-key-handling).
 
 ## Tenant ID
 
-`--tenant-id` picks the tenant whose policy evaluates the gateway's
-calls (they go to `/v1/t/<tenant>/check`). Keep `local` — the policy
-the server loads with `--policy` — unless you've registered another
-tenant on the central server with
-`vanzik tenant put <id> --policy <file.yaml>`. A tenant the server
-doesn't know (including a templated value such as
-`cursor-${env:USER}` that you haven't registered) answers `404`, which the gateway
-treats like an unreachable server: `--fail-mode` decides, so with `deny`
-every call is refused.
+Keep `--tenant-id local` unless you've registered another tenant; see
+[Tenant ID](README.md#tenant-id). A templated value such as
+`cursor-${env:USER}` counts too: each value it expands to must be
+registered, or the server answers `404`.
 
 ## Notes
 
@@ -173,7 +138,5 @@ every call is refused.
   changes.
 - If you have an existing top-level `mcpServers` block, add the
   `vanzik` entry inside it; Cursor merges entries by name.
-- The `env` field on a server entry is forwarded to the gateway's parent
-  process, which then forwards it to each spawned upstream — but
-  `${env:VAR}` interpolation happens at Cursor's level, before the gateway
-  sees the args.
+- Cursor expands `${env:VAR}` before the gateway sees the args; the
+  `env` entries reach the gateway and every upstream it spawns.

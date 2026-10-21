@@ -167,18 +167,13 @@ policy_suite() {
 }
 
 python_suite() {
-  # Probe for an interpreter that can actually INSTALL, not merely one that
-  # answers --version. A bare `python` on PATH is routinely an unrelated
-  # virtualenv with no pip, and this suite's first action is a pip install —
-  # so a --version-only check happily selects an interpreter that cannot run
-  # the suite, and the whole thing fails with a confusing "No module named
-  # pip" instead of skipping cleanly.
+  # Probe for an interpreter with pip, not merely one that answers
+  # --version: a bare `python` on PATH is often a virtualenv without pip, and
+  # the suite would then fail with "No module named pip" instead of skipping.
   #
-  # `py` is the Windows Python launcher and the canonical entry point there;
-  # it is tried explicitly because on Windows `python3` is usually a Microsoft
-  # Store stub that fails and `python` may be any venv that happens to be
-  # first on PATH. Matches this script's existing Windows support (see the
-  # .exe handling for VANZIK_BIN).
+  # `py` is the Windows Python launcher. It is tried explicitly because on
+  # Windows `python3` is usually a Microsoft Store stub and `python` may be
+  # any venv first on PATH.
   PY_CMD=()
   local c
   for c in python3 python py; do
