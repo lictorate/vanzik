@@ -723,10 +723,10 @@ g = Guard("http://localhost:8080", agent_id="my-agent", tenant_id="")  # → /v1
 import { Vanzik } from "@lictorate/vanzik";
 
 // Default — legacy /v1/... URLs.
-const g = new Vanzik({ baseUrl: "http://localhost:8080", agentId: "my-agent" });
+const local = new Vanzik({ baseUrl: "http://localhost:8080", agentId: "my-agent" });
 
 // Tenant-aware — /v1/t/acme/... URLs.
-const g = new Vanzik({
+const acme = new Vanzik({
   baseUrl: "http://localhost:8080",
   agentId: "my-agent",
   tenantId: "acme",
