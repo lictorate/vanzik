@@ -277,7 +277,7 @@ All adapters import lazily — the extras you do not install are never imported 
 |---|---|---|
 | LangChain | `vanzik.adapters.langchain` — `GuardedTool`, `GuardedToolkit` | Wrap a tool list; every `run`/`arun` is policy-checked. |
 | CrewAI | `vanzik.adapters.crewai` — `GuardedCrewTool`, `guard_crew_tools` | Same, hooking both `run` and `_run`. |
-| browser-use | `vanzik.adapters.browseruse` — `GuardedBrowser` | Gate navigation, actions, and form input; `wrap_page` enforces `goto` transparently. |
+| browser-use | `vanzik.adapters.browseruse` — `GuardedBrowser` | Gate navigation, actions, and form input; `wrap_page` returns a page whose 14 action methods (`goto`, `click`, `fill`, `type`, `evaluate`, …) are checked first. |
 | MCP | `vanzik.adapters.mcp` — `GuardedMCPServer` (or `python -m vanzik.adapters.mcp`) | A guarded stdio MCP server; every `tools/call` is checked first. |
 | OpenAI Agents SDK | `vanzik.adapters.openai_agents` — `guard_tool`, `guard_tools`, `vanzik_tool_guardrail` | Gated copies of an agent's `FunctionTool`s; a deny raises out of `Runner.run`, or the guardrail shows it to the model. |
 
@@ -293,25 +293,59 @@ return semantics are documented once in [`ADAPTERS.md`](ADAPTERS.md).
 
 The repo's `tests/test_end_to_end_real_server.py` does exactly this: spawn `./vanzik serve --policy <test-policy.yaml>` on a random port, talk to it with `Guard`, and assert decisions. This is the most realistic path and what CI uses.
 
-### Option B — `responses` / `httpretty`
+### Option B — a stdlib `http.server` stub
 
-For unit tests, stub the HTTP layer:
+For unit tests, stand up a local HTTP server that answers `/v1/check` with a canned decision. The SDK sends its requests with `urllib`, so mocks that patch the `requests` library (such as `responses`) never see the call: the check fails closed and the test only looks like it passed. A real socket on `127.0.0.1` works and needs nothing beyond the standard library:
 
 ```python
-import responses
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+import pytest
 from vanzik import Guard
 
-@responses.activate
-def test_denies_rm_rf():
-    responses.add(
-        responses.POST,
-        "http://localhost:8080/v1/check",
-        json={"decision": "DENY", "reason": "destructive command", "matched_rule": "deny:shell:rm-rf"},
-    )
-    guard = Guard("http://localhost:8080")
+
+class StubVanzik(BaseHTTPRequestHandler):
+    """Answers every POST /v1/check with one canned decision."""
+
+    def do_POST(self):
+        if self.path != "/v1/check":
+            self.send_error(404)
+            return
+        length = int(self.headers.get("Content-Length", 0))
+        self.server.requests.append(json.loads(self.rfile.read(length)))
+        body = json.dumps({
+            "decision": "DENY",
+            "reason": "destructive command",
+            "matched_rule": "deny:shell:rm-rf",
+        }).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):  # keep pytest output quiet
+        pass
+
+
+@pytest.fixture
+def stub_vanzik():
+    server = HTTPServer(("127.0.0.1", 0), StubVanzik)  # port 0: any free port
+    server.requests = []
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield server
+    server.shutdown()
+    server.server_close()
+
+
+def test_denies_rm_rf(stub_vanzik):
+    guard = Guard(f"http://127.0.0.1:{stub_vanzik.server_port}")
     r = guard.check("shell", command="rm -rf /")
     assert r.denied
     assert "destructive" in r.reason
+    assert stub_vanzik.requests[0]["command"] == "rm -rf /"
 ```
 
 ### Option C — `fail_mode="allow"` for disconnected tests

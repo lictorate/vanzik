@@ -634,7 +634,7 @@ export class Vanzik {
  * throwing immediately on REQUIRE_APPROVAL — mirrors the Python SDK's
  * `wait_for_approval=True`.
  */
-export interface GuardedOptions<T extends (...args: unknown[]) => Promise<unknown>> {
+export interface GuardedOptions<T extends (...args: any[]) => Promise<any>> {
   /** Custom extractor for the `CheckOptions` payload from the wrapped function's args. */
   getCheckOptions?: (...args: Parameters<T>) => CheckOptions;
   /** Block until a human approves/denies when the decision is REQUIRE_APPROVAL. Default false. */
@@ -667,19 +667,19 @@ export interface GuardedOptions<T extends (...args: unknown[]) => Promise<unknow
  * });
  * ```
  */
-export function guarded<T extends (...args: unknown[]) => Promise<unknown>>(
+export function guarded<T extends (...args: any[]) => Promise<any>>(
   guard: Vanzik,
   scope: string,
   fn: T,
   getCheckOptions?: (...args: Parameters<T>) => CheckOptions
 ): T;
-export function guarded<T extends (...args: unknown[]) => Promise<unknown>>(
+export function guarded<T extends (...args: any[]) => Promise<any>>(
   guard: Vanzik,
   scope: string,
   fn: T,
   options: GuardedOptions<T>
 ): T;
-export function guarded<T extends (...args: unknown[]) => Promise<unknown>>(
+export function guarded<T extends (...args: any[]) => Promise<any>>(
   guard: Vanzik,
   scope: string,
   fn: T,

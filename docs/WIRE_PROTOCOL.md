@@ -13,8 +13,9 @@ and are re-exported as type aliases from
 
 ## Schema versioning
 
-Every request and response carries a `schema_version` field. v0.5+ servers
-emit `"v1"` on every response and accept any of:
+Every response carries a `schema_version` field: v0.5+ servers emit `"v1"`
+on every response. Requests may omit it (the first-party SDKs do; see
+below). The server accepts any of:
 
 - `schema_version` omitted → defaulted to `"v1"`
 - `schema_version: "v1"` → accepted
@@ -103,8 +104,8 @@ This is the canonical fixture at
 | `decision`       | enum              | yes | One of `"ALLOW"`, `"DENY"`, `"REQUIRE_APPROVAL"`. |
 | `reason`         | string            | yes | Human-readable explanation. Stable enough for log aggregation but not part of the policy contract — wording may evolve. |
 | `matched_rule`   | string            | usually | Identifier of the rule that produced the decision (e.g. `"allow:shell:ls"`, `"deny:filesystem:path_traversal"`, `"deny:ratelimit:shell"`). Empty only on synthetic results that do not correspond to a single rule. |
-| `approval_id`    | string            | only on `REQUIRE_APPROVAL` | Format: `ap_` followed by 32 hex chars. Pass to `/v1/approve/{id}`, `/v1/deny/{id}`, `/v1/status/{id}`. |
-| `approval_url`   | string (URL)      | only on `REQUIRE_APPROVAL` | Absolute URL clients can present to a human reviewer. |
+| `approval_id`    | string            | on `REQUIRE_APPROVAL`, and on the `ALLOW` / `DENY` a replayed approval returns (`matched_rule` `allow:approved` / `deny:approved`); omitted otherwise | Format: `ap_` followed by 32 hex chars. Pass to `/v1/approve/{id}`, `/v1/deny/{id}`, `/v1/status/{id}`. |
+| `approval_url`   | string (URL)      | only when `decision == REQUIRE_APPROVAL` | Absolute URL clients can present to a human reviewer. |
 
 ### Example
 
@@ -151,9 +152,12 @@ is a subset of the v1 schema. Specifically:
   it. This is a documented optimization — adding `schema_version: "v1"`
   to every request is a no-op for v0.5 servers and forward-compatible.
 - Both fail closed by default when the proxy is unreachable (DENY
-  decision with `reason: "Vanzik unreachable: …"`). The TypeScript
-  SDK additionally honors `failMode: 'allow'` for callers whose threat
-  model treats Vanzik as best-effort.
+  decision with `reason: "Vanzik unreachable (deny): …"` from Python,
+  `"Vanzik unreachable: …"` from TypeScript). Both accept fail-open for
+  callers whose threat model treats Vanzik as best-effort:
+  `Guard(fail_mode="allow")` in Python, `failMode: 'allow'` in
+  TypeScript. The decision is then `ALLOW`, still with a
+  `Vanzik unreachable` reason (`(allow)` in Python's).
 
 ## Related documentation
 

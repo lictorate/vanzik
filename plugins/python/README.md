@@ -35,7 +35,8 @@ guard = Guard(
     api_key="…",                        # or set VANZIK_API_KEY (needed for approve/deny/status)
 )
 
-result = guard.check("shell", command="rm -rf ./old_data")
+command = "rm -rf ./old_data"
+result = guard.check("shell", command=command)
 
 if result.allowed:
     execute(command)
@@ -87,7 +88,7 @@ def run_command(cmd: str):
 
 try:
     run_command("ls")
-    run_command("rm -rf /")        # raises VanzikDenied
+    run_command("dd if=/dev/zero of=/dev/sda")  # raises VanzikDenied
 except VanzikDenied as e:
     log(f"blocked: {e.result.reason}")
 ```
@@ -142,10 +143,12 @@ browser = GuardedBrowser(guard_url="http://localhost:8080")
 if browser.check_navigation("https://example.com").allowed:
     await page.goto("https://example.com")
 
-# Or wrap the page directly so goto() enforces policy for you:
+# Or wrap the page directly so its action methods enforce policy for you:
 guarded_page = browser.wrap_page(page)
 await guarded_page.goto("https://example.com")   # raises PermissionError on deny/approval
 ```
+
+`wrap_page` gates 14 page methods: `goto`, `click`, `fill`, `type`, `press`, `select_option`, `check`, `uncheck`, `evaluate`, `evaluate_handle`, `set_extra_http_headers`, `route`, `expose_function` and `add_init_script`. `fill` and `type` use the `data` scope. Only read-only attributes such as `url`, `title` and `content` pass through; anything else raises `AttributeError`. See [ADAPTERS.md](../../docs/ADAPTERS.md#browser-use--guardedbrowser--guardedpage).
 
 ### MCP
 
@@ -187,11 +190,11 @@ except VanzikDenied as e:
 
 ## API reference (summary)
 
-### `Guard(base_url="", agent_id="", timeout=5, api_key="", fail_mode="deny", tenant_id=None)`
+### `Guard(base_url="", agent_id="", timeout=5, api_key="", fail_mode="deny", tenant_id=None, parent_session_id=None)`
 
 | Method | Behavior |
 |---|---|
-| `check(scope, *, action, command, path, domain, url, session_id, est_cost, meta, approval_id)` | POST `/v1/check` (`approval_id` replays a resolved approval — see the quick start). Returns `CheckResult`. Transport failure → fail-closed `DENY` (or `ALLOW` if `fail_mode="allow"`). |
+| `check(scope, *, action, command, path, domain, url, session_id, est_cost, meta, approval_id, parent_session_id)` | POST `/v1/check` (`approval_id` replays a resolved approval — see the quick start). Returns `CheckResult`. Transport failure → fail-closed `DENY` (or `ALLOW` if `fail_mode="allow"`). |
 | `approve(id)` / `deny(id)` | POST `/v1/approve/{id}` / `/v1/deny/{id}`. Returns `bool` success. Sends Bearer if `api_key` set. |
 | `wait_for_approval(id, timeout=300, poll_interval=2)` | Polls `GET /v1/status/{id}` until `resolved` or deadline. Timeout → `CheckResult(DENY, "Approval timed out")`. |
 
