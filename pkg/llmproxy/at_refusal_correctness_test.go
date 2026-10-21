@@ -176,7 +176,7 @@ func TestAT_RefusalCorrectness_OpenAI_Approval(t *testing.T) {
 	for _, want := range []string{
 		"ap_test_round_trip",
 		"http://localhost:8080/dashboard",
-		"_meta.dev.vanzik/approval_id", // round-trip hint
+		"X-Vanzik-Approval-ID header", // round-trip hint
 		"require_approval:shell:rm",
 		"paused this action pending human approval",
 	} {

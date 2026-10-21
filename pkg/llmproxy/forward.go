@@ -364,6 +364,7 @@ func buildOpenAINonStreamingCheck(s *Server, r *http.Request, resp *ChatCompleti
 		AgentID:         agent,
 		SessionID:       strings.TrimSpace(r.Header.Get("X-Session-ID")),
 		ParentSessionID: strings.TrimSpace(r.Header.Get(ParentSessionHeader)),
+		ApprovalID:      strings.TrimSpace(r.Header.Get(ApprovalIDHeader)),
 		TenantID:        s.cfg.TenantID,
 		Model:           resp.Model,
 		Stream:          false,
@@ -428,6 +429,7 @@ func buildAnthropicNonStreamingCheck(s *Server, r *http.Request, resp *Anthropic
 		AgentID:         agent,
 		SessionID:       strings.TrimSpace(r.Header.Get("X-Session-ID")),
 		ParentSessionID: strings.TrimSpace(r.Header.Get(ParentSessionHeader)),
+		ApprovalID:      strings.TrimSpace(r.Header.Get(ApprovalIDHeader)),
 		TenantID:        s.cfg.TenantID,
 		Model:           resp.Model,
 		Stream:          false,
@@ -530,6 +532,10 @@ func copyForwardableHeaders(src, dst http.Header) {
 		// Explicitly DO NOT propagate the proxy's own auth header
 		// to the upstream — it's an inbound-only credential.
 		if http.CanonicalHeaderKey(k) == http.CanonicalHeaderKey(ProxyAuthHeader) {
+			continue
+		}
+		// Same for the approval id: it is meant for /v1/check only.
+		if http.CanonicalHeaderKey(k) == http.CanonicalHeaderKey(ApprovalIDHeader) {
 			continue
 		}
 		for _, v := range vs {

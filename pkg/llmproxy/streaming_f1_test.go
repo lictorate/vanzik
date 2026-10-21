@@ -102,6 +102,10 @@ func TestStreaming_OpenAI_MalformedCompletion_FailsClosedAuditsAndResets(t *test
 	if strings.Contains(got, "call_bad") {
 		t.Errorf("malformed tool_call id leaked into client output (not fail-closed): %q", got)
 	}
+	// The refusal carries its own [DONE]; upstream's must not follow it.
+	if n := strings.Count(got, "data: [DONE]"); n != 1 {
+		t.Errorf("client saw %d [DONE] lines, want exactly 1: %q", n, got)
+	}
 
 	// (b) audit + (c) reset/resume: PolicyCheck must have been invoked for
 	// the malformed call (audit gap closed) AND for the subsequent valid
