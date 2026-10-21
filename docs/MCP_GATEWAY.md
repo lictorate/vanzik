@@ -323,8 +323,14 @@ Operators write existing scope rules:
 ```yaml
 - scope: filesystem
   deny:
-    - paths: ["/etc/**", "/root/**"]
+    - action: read
+      paths: ["/etc/**", "/root/**"]
+    - action: write
+      paths: ["/etc/**", "/root/**"]
 ```
+
+A filesystem path rule needs an `action` (`read`, `write` or `delete`);
+without one it matches nothing.
 
 …and they want those rules to apply whether the agent reaches
 `/etc/passwd` via the SDK, the LLM proxy's tool-call extraction, **or**
@@ -398,7 +404,10 @@ rules:
       - pattern: "github:delete_*"
       - pattern: "fs:write_file"
         conditions:
-          # require_prior so an explicit allow of read_file qualifies write
+          # The deny fires only after an fs:read_* was allowed in the
+          # last 5m: a read-then-write in one session is blocked. With no
+          # prior read the rule doesn't match, and the write falls
+          # through to the default DENY (nothing below allows it).
           - require_prior: "fs:read_*"
             time_window: "5m"
     require_approval:
@@ -410,9 +419,15 @@ rules:
   # Existing filesystem rules apply via the dual-check
   - scope: filesystem
     deny:
-      - paths: ["/etc/**", "/root/**", "/.ssh/**"]
+      - action: read
+        paths: ["/etc/**", "/root/**", "/.ssh/**"]
+      - action: write
+        paths: ["/etc/**", "/root/**", "/.ssh/**"]
     allow:
-      - paths: ["/tmp/**"]
+      - action: read
+        paths: ["/tmp/**"]
+      - action: write
+        paths: ["/tmp/**"]
 
   - scope: network
     deny:
