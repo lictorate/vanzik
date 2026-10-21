@@ -98,6 +98,8 @@ func parsePolicyBytesWithWarnings(data []byte) (*Policy, []string, error) {
 	// Non-fatal lint: scope names one or two edits away from a built-in
 	// scope are probably typos (`shel`), whose rules would never apply.
 	warnings = append(warnings, lintScopeNames(&pol)...)
+	// Non-fatal lint: a path rule without an action never matches a path.
+	warnings = append(warnings, lintPathRulesWithoutAction(&pol)...)
 
 	return &pol, warnings, nil
 }
@@ -161,6 +163,41 @@ func lintScopeNames(pol *Policy) []string {
 					"policy: %s[%d] scope %q is not a built-in scope — did you mean %q? "+
 						"Custom scopes are allowed, but its rules only apply to requests whose scope is exactly %q.",
 					loc, i, rs.Scope, near, rs.Scope))
+			}
+		}
+	}
+	check("rules", pol.Rules)
+	for agentID, cfg := range pol.Agents {
+		check(fmt.Sprintf("agents.%s.override", agentID), cfg.Override)
+	}
+	return warnings
+}
+
+// lintPathRulesWithoutAction warns about rules that list paths but no action.
+// matchRule compares paths only when the rule's action equals the request's
+// (read, write, delete), so such a rule's paths never match anything: an
+// allow silently allows nothing and a deny silently denies nothing.
+func lintPathRulesWithoutAction(pol *Policy) []string {
+	var warnings []string
+	check := func(loc string, sets []RuleSet) {
+		for i, rs := range sets {
+			for _, list := range []struct {
+				kind  string
+				rules []Rule
+			}{
+				{"deny", rs.Deny},
+				{"require_approval", rs.RequireApproval},
+				{"allow", rs.Allow},
+			} {
+				for j, r := range list.rules {
+					if len(r.Paths) == 0 || r.Action != "" {
+						continue
+					}
+					warnings = append(warnings, fmt.Sprintf(
+						"policy: %s[%d](%s).%s[%d] has paths but no action, so its paths never match; "+
+							"add an action (read, write or delete) to the rule.",
+						loc, i, rs.Scope, list.kind, j))
+				}
 			}
 		}
 	}

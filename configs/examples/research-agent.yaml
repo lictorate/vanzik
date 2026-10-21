@@ -101,9 +101,9 @@ rules:
     deny:
       - pattern: "*ssn:*"
         message: "SSN values must not be submitted to web forms"
-      # Loose credit-card heuristic — 13-19 contiguous digits with optional separators.
-      - pattern: "*[0-9][0-9][0-9][0-9] *[0-9][0-9][0-9][0-9]*"
-        message: "Card-number-shaped value blocked"
+      # Patterns know only `*` and `?` (no `[0-9]` classes), so a value's
+      # shape, such as a card number, can't be matched. Gate by marker,
+      # as above, and by destination, as below.
       - domain: "*.bank.*"
         message: "Form submissions to banking sites are blocked"
     allow:
@@ -112,15 +112,16 @@ rules:
       - domain: "*.wikipedia.org"
 
   # --- Cost ---
-  # Session totals are accumulated in-memory per `session_id`, per-instance
-  # only. Restart loses totals. `alert_threshold` promotes a single action
-  # above that amount to REQUIRE_APPROVAL without reserving the cost;
-  # `max_per_*` enforce hard DENY.
+  # Session totals are accumulated per `session_id` and survive a restart
+  # when the server runs with `--persist` (the default); with
+  # `--persist=false` a restart loses them. `alert_threshold` promotes a
+  # single action above that amount to REQUIRE_APPROVAL without reserving
+  # the cost; `max_per_*` enforce hard DENY.
   - scope: cost
     limits:
       max_per_action: "$0.25"
       max_per_session: "$15.00"
-      alert_threshold: "$10.00"
+      alert_threshold: "$0.15"   # must be below max_per_action, which is checked first
 
 notifications:
   approval_required:
