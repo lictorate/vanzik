@@ -35,7 +35,7 @@ Vanzik changes how it binds based on whether `--api-key` is set:
 | **unset** | `127.0.0.1:<port>` **only** | Processes on the same host (all gated endpoints become open) |
 | **set** | `0.0.0.0:<port>` (all interfaces) | Anything with the Bearer token (or a valid session cookie) |
 
-**(v1.2)** `--bind <host>` overrides the address: with `--api-key` set, Vanzik listens on exactly `<host>:<port>`. Without a key only loopback hosts (`127.0.0.1`, `::1`, `localhost`) are accepted; a non-loopback `--bind` without `--api-key` exits 2 at startup rather than exposing the open gated endpoints.
+`--bind <host>` overrides the address: with `--api-key` set, Vanzik listens on exactly `<host>:<port>`. Without a key only loopback hosts (`127.0.0.1`, `::1`, `localhost`) are accepted; a non-loopback `--bind` without `--api-key` exits 2 at startup rather than exposing the open gated endpoints.
 
 Source: the bind-address logic in `proxy.NewServer` (`pkg/proxy/server.go`) and `validateBind` (`cmd/vanzik/main.go`).
 
@@ -124,7 +124,7 @@ server {
 }
 ```
 
-With nginx on the same host, start Vanzik with `--bind 127.0.0.1` **(v1.2)** as well as `--api-key`, so the plaintext port is reachable only through nginx and not from the network:
+With nginx on the same host, start Vanzik with `--bind 127.0.0.1` as well as `--api-key`, so the plaintext port is reachable only through nginx and not from the network:
 
 ```bash
 vanzik server --api-key "$VANZIK_API_KEY" --bind 127.0.0.1 --tls-terminated-upstream \
@@ -224,7 +224,7 @@ spec:
           persistentVolumeClaim: { claimName: vanzik-audit }
 ```
 
-> **Multi-instance:** on the default SQLite store, rate-limit buckets and session-cost accumulators are per-instance — `replicas: > 1` lets an agent burst past per-scope limits by hitting different pods. Since v1.0, point every replica at PostgreSQL (`--store-dsn postgres://…`) with a distinct `--node-id` (in Kubernetes, pass the pod name) to share approval / rate-limit / cost state; distributed limiting is bounded-overshoot, converging every `--reconcile-interval` (default 2s). See [`docs/OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments).
+> **Multi-instance:** on the default SQLite store, rate-limit buckets and session-cost accumulators are per-instance — `replicas: > 1` lets an agent burst past per-scope limits by hitting different pods. Point every replica at PostgreSQL (`--store-dsn postgres://…`) with a distinct `--node-id` (in Kubernetes, pass the pod name) to share approval / rate-limit / cost state; distributed limiting is bounded-overshoot, converging every `--reconcile-interval` (default 2s). See [`docs/OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments).
 
 ---
 

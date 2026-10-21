@@ -103,9 +103,9 @@ vanzik server \
   --dashboard
 ```
 
-The v0.6 persistence knobs (`--persist`, `--store-dsn`, `--data-dir`, `--audit-backend`) are covered in [`CLI.md`](CLI.md#persistence--multi-tenancy-v06).
+The persistence knobs (`--persist`, `--store-dsn`, `--data-dir`, `--audit-backend`) are covered in [`CLI.md`](CLI.md#persistence--multi-tenancy-v06).
 
-**Multi-node (v1.0, PostgreSQL only):** `--reconcile-interval` (default `2s`) is the one knob that trades convergence for store traffic — it bounds both the distributed rate-limit overshoot (≈ `interval × peak rate` per extra replica) and the cross-node approval staleness (a resolution or one-shot consumption on another node lands within one interval). Halving it halves both windows and doubles reconcile queries; the `/v1/check` hot path is untouched either way. `--node-id` is identity, not tuning — just keep it distinct per replica.
+**Multi-node (PostgreSQL only):** `--reconcile-interval` (default `2s`) is the one knob that trades convergence for store traffic — it bounds both the distributed rate-limit overshoot (≈ `interval × peak rate` per extra replica) and the cross-node approval staleness (a resolution or one-shot consumption on another node lands within one interval). Halving it halves both windows and doubles reconcile queries; the `/v1/check` hot path is untouched either way. `--node-id` is identity, not tuning — just keep it distinct per replica.
 
 See [`CLI.md`](CLI.md) for the full list.
 
@@ -135,13 +135,7 @@ If you need any of these configurable in YAML, open an issue with the use case.
 
 ## Environment variables
 
-| Var | Consumed by | Default |
-|---|---|---|
-| `VANZIK_API_KEY` | `server` (when `--api-key` is unset), the CLI client subcommands, the MCP gateway and LLM proxy, the SDKs | empty |
-| `VANZIK_POLICY` | `server`, `validate`, `check`, `test` (when `--policy` is unset) | unset |
-| `VANZIK_URL` | the CLI client subcommands, the MCP gateway and LLM proxy (when `--url` / `--guard-url` is unset), the SDKs | `http://localhost:8080` (CLI, SDKs), `http://127.0.0.1:8080` (gateway, proxy) |
-
-A flag always wins over its variable. The full list is in [`CLI.md` § Environment variables](CLI.md#environment-variables).
+None of the knobs on this page has an environment variable. `VANZIK_API_KEY`, `VANZIK_URL` and `VANZIK_POLICY` stand in for flags; a flag always wins. The full list: [`CLI.md` § Environment variables](CLI.md#environment-variables).
 
 ---
 

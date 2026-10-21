@@ -9,9 +9,7 @@ responses.
 
 For cross-cutting concerns (binary structure, audit transport tag,
 deployment topologies, fail-mode flag) see
-[`docs/PROXY_ARCHITECTURE.md`](./PROXY_ARCHITECTURE.md). A Python
-preview shipped earlier in `plugins/python/vanzik/adapters/mcp.py`
-remains as a fallback for environments that cannot run a Go binary.
+[`docs/PROXY_ARCHITECTURE.md`](./PROXY_ARCHITECTURE.md).
 
 ---
 
@@ -55,19 +53,14 @@ to call the central Vanzik server's `/v1/check`.
 
 ### 1.1 Why Go (not Python)
 
-The Go gateway is a thin client of the central server. It imports
-`pkg/mcpgw` and `pkg/policy`, the latter only to read the policy's
-`tool_scope_map`, plus the `/v1/check` client it shares with the LLM API
-proxy (`pkg/internal/gateclient`). Every decision is an HTTP
-`/v1/check` call: the engine, the approval queue, the audit log and the
-notifications all live in the central server. The gateway writes no
-audit log of its own; the only file it writes is the
-`--fail-audit-log` JSONL under `--fail-mode fail-closed-with-audit`
-(it links `pkg/audit` and `pkg/notify` for that file's entry shape and
-redaction). The
-Python `GuardedMCPGateway` in `plugins/python/vanzik/adapters/mcp.py`
-remains as a fallback for environments that can't run a Go binary, but
-the docs default to the Go binary.
+The Go gateway is a thin client of the central server: it reads the
+policy file only for `tool_scope_map`, and every decision is an HTTP
+`/v1/check` call. The engine, the approval queue, the audit log and the
+notifications all live in the central server. The only file the gateway
+writes is the `--fail-audit-log` JSONL under `--fail-mode
+fail-closed-with-audit`. The Python `GuardedMCPGateway` in
+`plugins/python/vanzik/adapters/mcp.py` remains as a fallback for
+environments that can't run a Go binary.
 
 ---
 
@@ -214,9 +207,9 @@ itself can faithfully proxy.
 
 | capability       | gateway behaviour                                          |
 |------------------|------------------------------------------------------------|
-| `tools`          | always advertised. `listChanged: true` *(v0.7)* — the gateway forwards upstream `notifications/tools/list_changed` to the host so clients re-pull `tools/list` when any upstream's tool set changes. |
-| `resources`      | **masked out — never advertised**, even when an upstream supports it. `resources/*` method routing is not implemented (deferred; `#mcp-resources`), so `MergeCapabilities` drops the upstream `resources` capability. Advertising it would show the host resources that every `resources/read` rejects with `-32601 MethodNotFound`. |
-| `prompts`        | **masked out — never advertised**, same rationale as `resources` (`prompts/*` routing is not implemented; deferred under `#mcp-resources`). |
+| `tools`          | always advertised. `listChanged: true` — the gateway forwards upstream `notifications/tools/list_changed` to the host so clients re-pull `tools/list` when any upstream's tool set changes. |
+| `resources`      | **masked out — never advertised**, even when an upstream supports it. `resources/*` routing is not implemented, and advertising it would show the host resources that every `resources/read` rejects with `-32601 MethodNotFound`. |
+| `prompts`        | **masked out — never advertised**, same rationale as `resources` (`prompts/*` routing is not implemented). |
 | `logging`        | always advertised; gateway forwards `logging/setLevel` to every upstream. |
 | `completions`    | not advertised. |
 
@@ -239,8 +232,7 @@ unambiguously identifies the prefix as gateway-injected.
 > servers (e.g., `admin.tools.list` from the spec example). Using `.`
 > as the prefix delimiter would create ambiguity with such upstreams.
 > Colon stands out and the spec only says SHOULD on the allowed-char
-> set, so this is a controlled deviation. Document it loudly in
-> `--help`.
+> set, so this is a controlled deviation.
 
 ### 4.2 `tools/list` aggregation
 
@@ -353,7 +345,7 @@ duplication.
 
 #### 4.4.2 Cost: two Engine.Check calls per tool call
 
-Empirically (v0.4.x microbench), one `Engine.Check` runs ~5–15 µs on a
+In a microbenchmark, one `Engine.Check` runs ~5–15 µs on a
 small policy. Two is still ≤ 30 µs — well below the network round-trip
 to a downstream MCP server. The cost is acceptable.
 
@@ -542,15 +534,15 @@ The `arg_<key>` values are **redacted** by the central server before the
 entry is written (`vanzik serve --audit-redact`, on by default), through
 `pkg/notify.DefaultRedactor` plus the policy's
 `notifications.redaction.extra_patterns`. Bearer tokens, AWS
-keys, GitHub tokens, Slack tokens, `key=value` secret patterns and, from
-v1.2.0, `sk-…` and Google API keys, JWTs, PEM private keys and
+keys, GitHub tokens, Slack tokens, `key=value` secret patterns,
+`sk-…` and Google API keys, JWTs, PEM private keys and
 `Authorization` / `x-api-key` header values are scrubbed.
 
 `session_id` comes from the MCP client's name (`mcp-gateway:<name>`), so
 two hosts running the same client share a session, and its
-`cost.max_per_session` budget. **(v1.4)** To tell them apart, each
+`cost.max_per_session` budget. To tell them apart, each
 gateway process picks a random id at start and sends it on every check
-as `meta.gateway_connection`; the session id stays as it was. The
+as `meta.gateway_connection`; the session id is unchanged. The
 dashboard's session replay shows it under each entry.
 
 The dashboard renders the `transport: "mcp_gateway"` chip in the audit
@@ -605,15 +597,11 @@ approves on the dashboard, the model retries the same `tools/call` with
 The round-trip is single-hop and stateless on the gateway — the
 central server owns the truth:
 
-1. The bridge reads `_meta["dev.vanzik/approval_id"]` and stamps
-   it on the internal `ToolsCallRequest.ApprovalID`.
-2. `HTTPPolicyClient.Check` propagates the value as a top-level
-   `approval_id` field on the `/v1/check` body (alongside the existing
-   `meta.approval_id` echo, which is retained for audit-trail
-   discoverability).
-3. The central server's `handleCheck`, when it sees a non-empty
-   `approval_id` on the wire, consults its `ApprovalQueue` *before*
-   running policy:
+1. The gateway sends `_meta["dev.vanzik/approval_id"]` as the top-level
+   `approval_id` of the `/v1/check` body, and also as `meta.approval_id`
+   so the audit entry shows it.
+2. The central server, seeing a non-empty `approval_id`, consults its
+   approval queue *before* running policy:
    - **resolved=true && decision=ALLOW** → returns
      `decision: ALLOW, matched_rule: "allow:approved"`. The audit
      log records this as a separate entry tagged
@@ -654,8 +642,9 @@ gateway instances behind a load balancer.
 
 ## 7. Reconnect strategy
 
-Each upstream subprocess is owned by an "upstream manager" goroutine.
-Detection: stdin/stdout EOF or process exit signal.
+A stdio upstream is degraded when its stdout reaches EOF or the process
+exits. The gateway restarts it with this backoff (`--reconnect-cap`
+sets the longest wait):
 
 ```go
 backoff := []time.Duration{
@@ -670,7 +659,6 @@ backoff := []time.Duration{
 
 While in degraded state:
 
-- The namespace flag is set.
 - `tools/list` aggregation **excludes** the namespace's tools (the
   client just doesn't see them — the model can't try to call them).
 - `tools/call` to a degraded namespace returns the gateway's own
@@ -688,12 +676,9 @@ While in degraded state:
   degradation shows only in the gateway's stderr log.
 
 Recovery: when the subprocess restarts and re-completes `initialize`,
-the namespace flag clears and the next `tools/list` aggregation
-re-includes its tools.
-
-The reconnect loop has a hard ceiling of 60s between attempts — a
-permanently-broken upstream stays degraded indefinitely without
-hammering the system.
+the next `tools/list` aggregation re-includes its tools. A
+permanently-broken upstream stays degraded, retried at most once per
+cap interval.
 
 An `--upstream-http` server has no process to watch. It is degraded when
 it cannot be reached: a connection failure or HTTP 502/503/504. A slow
@@ -715,14 +700,11 @@ tools.
 Per spec: newline-delimited UTF-8 JSON. **No embedded newlines** in any
 JSON-RPC message. The gateway:
 
-- Reads from stdin with a `bufio.Reader` and `readFrame`, which caps a
-  frame at 4 MiB (`MaxStdoutLineBytes`; tool argument JSON can
-  legitimately be large). An oversized frame is dropped, answered with
-  `-32600` when its id can be read, and the gateway keeps going.
-- Writes to stdout via a `*os.File` direct write, one frame at a time,
-  with a `\n` terminator.
-- Holds a write mutex for stdout so concurrent goroutines (say, two
-  upstreams responding to two in-flight requests) don't interleave.
+- Caps an incoming frame at 4 MiB (tool argument JSON can legitimately
+  be large). An oversized frame is dropped, answered with `-32600` when
+  its id can be read, and the gateway keeps going.
+- Writes each frame to stdout whole, with a `\n` terminator, under one
+  lock, so concurrent responses never interleave.
 
 ### 8.2 JSON parse errors
 
@@ -750,22 +732,10 @@ the gateway silently drops as the Python adapter does.
 
 ### 8.3 Concurrency model
 
-- **Stdin reader**: one goroutine reads frames and hands them to the
-  main loop, which calls `dispatchFrame` for each.
-- **Dispatch**: `dispatchFrame` runs each `tools/call` in its own
-  goroutine so calls run concurrently. Other JSON-RPC methods
-  (initialize, tools/list, ping) are handled synchronously to keep
-  their order.
-- **Per stdio upstream**: one reader goroutine (`readLoop`) routes each
-  response to the waiting caller through a pending map keyed by the
-  gateway-internal request id; another goroutine drains the
-  subprocess's stderr into the log, and a supervisor restarts the
-  subprocess. There is no writer goroutine: the calling goroutine
-  writes the frame to the subprocess's stdin under a write mutex.
-- **Stdout**: no writer goroutine either. `writeResponse` and
-  `writeNotification` write each frame straight to stdout under one
-  mutex (`outMu`), so concurrent responses don't interleave. There is
-  no `Sync()` call.
+Each `tools/call` runs concurrently; other methods (`initialize`,
+`tools/list`, `ping`) are handled in arrival order. Each upstream request
+gets a gateway-internal id, which routes the upstream's response back to
+the waiting call. An upstream's stderr goes to the gateway's log.
 
 ### 8.4 Cancellation
 
@@ -773,8 +743,7 @@ When the host sends `notifications/cancelled`, the gateway broadcasts
 the notification to every healthy upstream. **This is currently a
 best-effort no-op.** The notification's `params.requestId` is in the
 host's id space, but the gateway rewrites every request id to a
-gateway-internal id before sending it upstream (the upstream id space is
-per-connection — see `StdioUpstream.Send`). A forwarded cancellation
+gateway-internal id before sending it upstream. A forwarded cancellation
 therefore never matches an in-flight upstream request, and the upstream
 cannot act on it. The gateway also does **not** cancel the goroutine
 awaiting the response: the `tools/call` runs to completion (or
@@ -782,15 +751,13 @@ awaiting the response: the `tools/call` runs to completion (or
 host, which — having cancelled — may ignore it. No `CANCELLED` audit
 entry is written.
 
-Real cancellation requires threading a host↔upstream request-id map
-through the transport so the gateway can translate `requestId` on the
-way out. That is deferred — see `Bridge.handleNotification`.
+Real cancellation would need a host↔upstream request-id map so the
+gateway can translate `requestId` on the way out; it is not implemented.
 
 ### 8.5 Streamable HTTP upstreams
 
 `--upstream-http` servers use the MCP Streamable HTTP transport
-(protocol revision `2025-06-18`, `basic/transports`). `HTTPUpstream` in
-`pkg/mcpgw/http_upstream.go`:
+(protocol revision `2025-06-18`, `basic/transports`). The gateway:
 
 - POSTs every JSON-RPC message to the one MCP endpoint, with
   `Content-Type: application/json` and
@@ -821,25 +788,10 @@ way out. That is deferred — see `Bridge.handleNotification`.
 
 ## 9. Test strategy
 
-| layer                    | tests                                                                       |
-|--------------------------|-----------------------------------------------------------------------------|
-| Frame parser             | malformed JSON, embedded newline, oversize line, UTF-8 boundary             |
-| Initialize               | version negotiation matrix (client newer/older/equal vs gateway support set)|
-| Tools/list aggregation   | 0/1/N upstreams, paging, name collision across namespaces                   |
-| Tools/call routing       | unknown namespace, ALLOW, DENY, REQUIRE_APPROVAL, retry-with-approval-id    |
-| Dual-check               | `mcp_tool` allow + `filesystem` deny → DENY; both allow → ALLOW             |
-| Reconnect                | upstream crashes mid-stream, backoff schedule respected, recovery clears flag|
-| Approval round-trip      | _meta prefix variants, expired id (404), unresolved id (still pending)      |
-| Cancellation             | `notifications/cancelled` is accepted and forwarded, and is a no-op (§ 8.4) |
-| Stdout serialisation     | concurrent upstream responses don't interleave bytes                        |
-| Real upstream            | spawn the stub MCP server subprocess via the real `StdioUpstream`, drive a full session|
-
-The "real upstream" tests (`pkg/mcpgw/at_real_protocol_test.go`) run
-`Bridge` plus the real `StdioUpstream` against a stub MCP server
-subprocess built from `pkg/mcpgw/testdata/stub_server`, instead of
-`npx -y @modelcontextprotocol/server-everything`, so they need no
-network and give deterministic replies. They run in the blocking Go
-`test` job with the rest of `go test ./...`, and skip under `-short`.
+The tests live in `pkg/mcpgw`. The end-to-end ones (`at_*_test.go`) drive
+a full session against a stub MCP server built from
+`pkg/mcpgw/testdata/stub_server`, so they need no network; they run with
+`go test ./...` and skip under `-short`.
 
 ---
 
@@ -848,18 +800,16 @@ network and give deterministic replies. They run in the blocking Go
 - **`resources/*` and `prompts/*` are not routed.** The gateway
   dispatches `initialize`, `tools/list`, `tools/call`, `ping`, and
   `logging/setLevel`; every other method — including all `resources/*`
-  and `prompts/*` requests — falls through to `-32601 MethodNotFound`
-  (the default case in `Bridge.dispatchFrame`). The `resources` and
-  `prompts` capabilities are also **masked out** of the `initialize`
-  response (`MergeCapabilities`, see § 3.3) so a host never offers them.
-  Deferred: `#mcp-resources` (tracked in the code at `pkg/mcpgw/bridge.go`).
+  and `prompts/*` requests — gets `-32601 MethodNotFound`. The
+  `resources` and `prompts` capabilities are also **masked out** of the
+  `initialize` response (§ 3.3) so a host never offers them. Tracked as
+  `#mcp-resources`.
 - **Server-initiated requests are not supported.** MCP lets a server
   open a request back to the client (`sampling/createMessage`,
   `roots/list`, `elicitation/create`). The gateway is a tools-only
   firewall: such a frame from an upstream carries an `id` + `method`,
-  matches no pending response, and is dropped (logged at Info in
-  `StdioUpstream.readLoop`, or `HTTPUpstream.route` for an HTTP
-  upstream). The host never sees it, so a downstream that
+  matches no pending response, and is dropped (logged at Info). The
+  host never sees it, so a downstream that
   depends on server-initiated flows will appear to hang on that feature
   while its tools keep working normally.
 - **`notifications/cancelled` is a best-effort no-op** — the gateway

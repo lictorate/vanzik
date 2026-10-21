@@ -1,10 +1,10 @@
 # Service Level Objectives — Vanzik v2.0
 
-**Status:** baseline established (captured on v0.5.0; still the recorded
-floor). Targets below are operational expectations for a single-replica
+**Status:** baseline established (§Baseline below).
+Targets below are operational expectations for a single-replica
 deployment running the in-process file-backed audit logger (the default);
 revisit when deployments adopt the store-backed audit
-(`--audit-backend=store`, v0.6+). Multi-node deployments (v1.0, PostgreSQL
+(`--audit-backend=store`). Multi-node deployments (PostgreSQL
 — see [`COMPATIBILITY.md`](COMPATIBILITY.md#topology)) apply these targets
 **per replica**; reconciliation is background-only and does not touch the
 `/v1/check` path.
@@ -33,7 +33,7 @@ The targets below assume:
   from its in-memory `PriorActionIndex`, not by scanning the audit log
   (see [`POLICY_REFERENCE.md`](POLICY_REFERENCE.md)), so they stay inside
   these targets. Only an embedder that wires a `HistoryQuerier` alone gets
-  the older log-scan path.
+  a log-scan path.
 - **Cost-scope traffic is a minority of total volume.** Cost requests
   acquire a write lock; sustained heavy contention on the cost scope is
   out-of-scope.
@@ -45,11 +45,11 @@ The targets below assume:
 | `/v1/check` p50 latency     | **< 1 ms**           | Engine path is in-memory; audit write is a single `json.Encode` to a buffered file. |
 | `/v1/check` p95 latency     | **< 3 ms**           | Allows one fsync per request to stay inside 3 ms. |
 | `/v1/check` p99 latency     | **< 5 ms** at 1k RPS | GC pause + sporadic file-system sync. |
-| Throughput (sustained)      | **≥ 1 000 RPS**      | Per replica; since v1.0, scale horizontally with the PostgreSQL backend (per-replica targets unchanged — reconciliation is background-only). |
+| Throughput (sustained)      | **≥ 1 000 RPS**      | Per replica; scale horizontally with the PostgreSQL backend (per-replica targets unchanged — reconciliation is background-only). |
 | Audit-write durability lag  | **< 100 ms**         | Time between `Log()` returning and the entry being readable by `Query`. |
 | Approval-required emit lag  | **< 250 ms**         | `notify.Dispatcher` queue depth + a single webhook hop. |
 
-These targets are backed two ways as of v1.0: the micro-benchmarks in
+These targets are backed two ways: the micro-benchmarks in
 §Baseline below, and a CI latency gate (`TestEngineCheck_P99LatencyGate`,
 `pkg/policy`) that fails the build if `Engine.Check` p99 crosses the 3 ms
 budget with the persistence syncer active (measured ≪0.1 ms for the bare
@@ -99,15 +99,14 @@ end-to-end RPS measurements — but they bound the per-request floor.
   deny does fewer string ops than the allow message format. This bounds
   the worst-case `Check()` shape we ship by default.
 - `globMatch` with `**` against a 5-segment path is ≈ 200 ns regardless
-  of match/no-match. The two-allocation cost is the segment-split slices;
-  a future zero-alloc rewrite is queued in `R4 E1`.
+  of match/no-match. The two-allocation cost is the segment-split slices.
 - `FileLogger.Log` at 4.5 µs / 2 allocs / 336 B is within an order of
   magnitude of the syscall floor for an `O_APPEND` write of a ≈ 200 B
   JSON line. Replacing the per-record `json.Encoder` with batched writes
-  is the obvious next optimisation (deferred — `R4 F2`).
+  is the obvious next optimisation.
 - `Dispatcher.Send` on a fully wedged queue cost ≈ 3 µs at this capture.
-  Current builds drop the event without allocating (0 B/op, 0 allocs/op),
-  so the 483 B / 30 allocs in the table are the v0.5.0 figure only.
+  Current builds drop the event without allocating (0 B/op, 0 allocs/op);
+  the 483 B / 30 allocs in the table are from the baseline build.
 
 ## Re-running the baseline
 
@@ -122,7 +121,7 @@ benchmarks shift materially (≥ 10 % regression).
 
 ## Validation plan
 
-The benchmarks above are the v0.5.0 floor. Since v0.9, CI enforces the
+The benchmarks above are the recorded floor. CI enforces the
 engine-path budget on every push via `TestEngineCheck_P99LatencyGate`
 plus the HTTP-path persistence-on check
 (`TestIntegration_HotPathLatencyWithPersistence`). What remains for full
@@ -130,8 +129,7 @@ SLO validation:
 
 1. A `vegeta`/`hey` harness against `vanzik server` running with
    `--policy configs/default.yaml` and a tmpfs-backed audit log,
-   driving 1 kRPS sustained for 5 minutes. **Still not automated** as
-   of v1.0 (the in-suite concurrent soak — `pkg/persist`, 32 workers,
+   driving 1 kRPS sustained for 5 minutes. **Not automated yet** (the in-suite concurrent soak — `pkg/persist`, 32 workers,
    ~11 kRPS locally — is the closest current proxy for it).
 2. Latency histograms exported via `/metrics`
    (`vanzik_request_duration_ms`,

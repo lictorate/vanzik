@@ -79,7 +79,7 @@ Hard ceiling on `?limit=`. Clients requesting more than this receive this many r
 
 ## `notifications`
 
-The `notifications` section already carries `approval_required`, `on_deny`, and `redaction` in v0.4.0. v0.4.1 adds `dispatch_timeout` and per-target `timeout`.
+Besides `approval_required`, `on_deny` and `redaction` ([POLICY_REFERENCE § Notifications](POLICY_REFERENCE.md#notifications)), the `notifications` section takes these timeouts.
 
 ### `notifications.dispatch_timeout`
 
@@ -90,7 +90,7 @@ The `notifications` section already carries `approval_required`, `on_deny`, and 
 | **Affects** | `http.Client.Timeout` used by webhook and Slack notifiers |
 | **Validation** | Must parse cleanly and be `> 0`. |
 
-Default per-notification HTTP timeout for webhook and Slack targets. Console and log notifiers ignore it — they are synchronous and local. A slow webhook that used to block dispatcher workers for the full hard-coded 10s can now be cut down (or up) without a binary change.
+Default per-notification HTTP timeout for webhook and Slack targets. Console and log notifiers ignore it — they are synchronous and local. Lower it so a slow webhook can't hold dispatcher workers for the full 10s.
 
 ### `notifications.approval_required[].timeout`, `notifications.on_deny[].timeout`
 
@@ -107,7 +107,7 @@ Per-target override. Use this when you run one webhook that is consistently slow
 
 Policy hot reload (always on; `--watch` only adds a log line per reload) re-parses the file and swaps the `policy.Engine`'s policy pointer. **Runtime tunables resolved at startup do not change on reload** — `proxy.session.ttl` and `proxy.request.max_body_bytes` are latched into the `Server` struct, and the notify dispatcher's per-notifier `http.Client.Timeout` is set when each client is constructed. Change these in the policy file and the new values apply on the next process restart.
 
-Rule-level keys (allow/deny/require_approval, rate limits, cost limits) continue to reload live as they did in v0.4.0.
+Rule-level keys (allow/deny/require_approval, rate limits, cost limits) reload live.
 
 ## Validation errors
 

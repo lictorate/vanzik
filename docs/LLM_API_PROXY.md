@@ -9,11 +9,6 @@ For cross-cutting concerns (binary structure, audit transport tag,
 deployment topologies, fail-mode flag) see
 [`docs/PROXY_ARCHITECTURE.md`](./PROXY_ARCHITECTURE.md).
 
-The core technical idea — pause/resume of an LLM SSE stream when a
-tool call needs gating — has direct parallels to mid-stream rewrites
-in HTTP-mitm tools (go-mitmproxy's stream addons) but is novel in the
-LLM-proxy space.
-
 ---
 
 ## 1. Architecture
@@ -130,7 +125,7 @@ like any other header):
 |---|---|---|
 | `X-Agent-ID` | `agent_id` | `llm-proxy` when absent. |
 | `X-Session-ID` | `session_id` | Keys `cost.max_per_session` and the audit's sessions. |
-| `X-Vanzik-Parent-Session` | `parent_session_id` | **(v1.4)** The session that started this one, e.g. the orchestrator's session when a sub-agent calls the model. Not used by policy; [`GET /v1/sessions`](API.md#get-v1sessions--tenant-aware-mirror) and the dashboard's Sessions view use it to link the two. Omitted when the header is absent. |
+| `X-Vanzik-Parent-Session` | `parent_session_id` | The session that started this one, e.g. the orchestrator's session when a sub-agent calls the model. Not used by policy; [`GET /v1/sessions`](API.md#get-v1sessions--tenant-aware-mirror) and the dashboard's Sessions view use it to link the two. Omitted when the header is absent. |
 
 ### 3.2 Body handling
 
@@ -242,11 +237,11 @@ author has not seen is, by Vanzik's policy contract, denied.
 
 ## 5. Streaming pause / resume / rewrite — the hard one
 
-This is the core technical innovation. When the response is streaming
-and the model is calling tools, the proxy must:
+When the response is streaming and the model is calling tools, the
+proxy must:
 
 1. Read the SSE stream from upstream chunk by chunk.
-2. Parse tool-call deltas (different shape per provider — see § 5.0
+2. Parse tool-call deltas (different shape per provider — see § 5.1
    and § 5.2).
 3. **Accumulate** until a tool call is complete.
 4. **Pause** the stream to the client (do not flush partial deltas
@@ -360,13 +355,9 @@ Critical observations:
 
 ### 5.3 Pause/resume mechanism (both providers)
 
-Per-request state lives in a provider accumulator
-(`OpenAIToolCallAccumulator` in `openai_parser.go`,
-`AnthropicAccumulator` in `anthropic_parser.go`): the tool call being
-assembled, the raw upstream events held back until it is gated, and
-their running size, capped by `--max-buffer-bytes`. The read/gate/flush
-loop is `runOpenAIStreamLoop` / `runAnthropicStreamLoop` in
-`streaming.go`. The pseudocode below shows the logic, not the code.
+Per request, the proxy holds the tool call being assembled and the raw
+upstream events held back until it is gated, capped by
+`--max-buffer-bytes`. The pseudocode below shows the logic, not the code.
 
 Algorithm (OpenAI):
 
@@ -446,9 +437,9 @@ Wait for human approval, then retry the same call.
 
 § 11.3 covers the retry.
 
-> **Design note on `tool` role injection.** An earlier draft proposed
-> injecting a synthetic `role: "tool"` message with a fake
-> `tool_call_id`. That has two problems: (a) `role: "tool"` messages
+> **Design note on `tool` role injection.** Injecting a synthetic
+> `role: "tool"` message with a fake `tool_call_id` instead has two
+> problems: (a) `role: "tool"` messages
 > are valid in **request** turns, not response deltas — the OpenAI
 > response schema only emits `role: "assistant"`; (b) the agent's SDK
 > would expect a paired `tool_calls[*].id` it had already buffered,
@@ -500,32 +491,29 @@ refusal is recorded in the central audit trail with the exact DENY the
 client received (see **Audit fidelity** below), the buffered malformed
 bytes are discarded (never forwarded), and the accumulator is reset so
 any *later* valid tool call in the same stream is still gated. Malformed
-**non-completion** deltas are unchanged: dropped silently, because
-corruption that matters resurfaces at completion, where it now denies.
-(Before v1.0 a malformed completion was silently dropped — no refusal, no
-audit entry, and the stream went dark for the rest of the connection.)
+**non-completion** deltas are dropped silently, because corruption that
+matters resurfaces at completion, where it denies.
 
 #### Undecodable non-streaming bodies that carry a tool call fail closed
 
 A **non-streaming** response is gated by decoding it into the typed
 response struct and inspecting the tool calls it contains. A body that
 fails that decode is forwarded verbatim — Vanzik never rewrites an
-already-corrupt wire — with one exception, added after audit finding B6.
+already-corrupt wire — with one exception.
 
 Go's decoder is stricter than a client SDK's in one specific way: it
 aborts on a **type-mismatched** field the struct declares, such as
 `"created": "1730000000"` where the spec says integer. A Python or
 TypeScript SDK parsing the same bytes ignores the odd field and executes
-the `tool_calls` sitting beside it. So "Vanzik cannot decode it" did
-not imply "the client cannot use it", and the gap forwarded a tool call
-the firewall never evaluated.
+the `tool_calls` sitting beside it. So "Vanzik cannot decode it" does
+not imply "the client cannot use it".
 
-Before falling back to passthrough the proxy now asks the narrower
+Before falling back to passthrough the proxy asks the narrower
 question — does this body carry a tool call at all? — using a probe that
 constrains only the path to `tool_calls` / `tool_use` and nothing else.
 If one is present the response is refused under the fixed rule
 `deny:llm_api_proxy:undecodable_tool_call`. If none is present the body
-passes through exactly as before.
+passes through unchanged.
 
 **Where to see it.** The refusal is recorded in the **central audit
 trail** with the DENY the client actually received, via the same
@@ -581,13 +569,10 @@ for one oversized SSE event and for cumulative arguments past
 `--max-buffer-bytes`). Each entry carries the rule, tenant, agent and
 provider, plus whatever tool identity the parser observed before
 refusing — often none, since a stream refused because its bytes cannot
-be bound to a call is by definition one where no call assembled. Before
-v1.1.0 these refusals reached the client and left no trace an operator
-could see: the gate never ran, so nothing was written, and the only
-signal was a process-local counter with no scrape endpoint.
+be bound to a call is by definition one where no call assembled.
 
-`n > 1` with tool calls is the only capability this costs, and it did not
-previously work correctly — the merged arguments were already wrong.
+`n > 1` with tool calls is the only capability this costs, and it can't
+be gated correctly anyway — the merged arguments would be wrong.
 Every mainstream agent framework sends `n = 1`, which is untouched.
 
 #### A stream that ends mid-tool-call is gated, not dropped
@@ -601,12 +586,11 @@ still buffered, the cycle is **completed**, not abandoned:
   `deny:llm_api_proxy:malformed_tool_call` above: denied and audited.
 
 The buffered bytes are never flushed unexamined — that would hand the
-client the ungated call this whole mechanism exists to gate. Before
-v1.0 they were silently discarded instead, which left the client with
-an empty `200`, the gate un-run and no audit entry: the firewall went
-dark exactly where a truncated tool call was in flight. `[DONE]` is
-treated as the end of stream in its own right, so a gateway that holds
-the connection open after it no longer delays the verdict.
+client the ungated call this whole mechanism exists to gate, and
+discarding them would leave the client an empty `200` with no audit
+entry. `[DONE]` is treated as the end of stream in its own right, so a
+gateway that holds the connection open after it does not delay the
+verdict.
 
 ##### Audit fidelity
 
@@ -620,7 +604,7 @@ the proxy POSTs the client-visible DENY to the central server's
 `POST /v1/audit` is auth-gated. **If the central server runs with
 `--api-key`, give this proxy `--api-key` too** — otherwise the audit POST
 returns 401. On any `/v1/audit` failure the proxy does **not** drop the
-entry: it best-effort falls back to the pre-v1.0 `/v1/check` audit path,
+entry: it best-effort falls back to the `/v1/check` audit path,
 which still writes a transport-tagged entry (carrying the *engine* verdict,
 not the DENY). So fidelity degrades to the lower-fidelity path without
 `--api-key`, but audit **coverage never does** — a forced refusal is always
@@ -636,9 +620,8 @@ whitespace, or change Unicode escape forms — any of which can break
 client SDKs that rely on byte-level invariants (some agents hash the
 delta stream for reproducibility).
 
-This invariant is testable: capture an upstream stream once, replay it
-through the proxy with an ALLOW policy, byte-diff the output. The CI
-suite asserts the diff is empty.
+CI replays captured upstream streams through the proxy with an ALLOW
+policy and asserts the byte diff is empty.
 
 ### 5.6 Pause/resume mechanism — buffer bound
 
@@ -669,25 +652,13 @@ Why 1 MiB:
 
 ## 6. Concurrency model
 
-- Standard Go `http.Handler` per-request goroutine isolation.
-- Each request gets its own accumulator → its own buffer,
-  parser state, and accumulator. **No shared mutable state** between
-  requests.
-- The upstream HTTP client is shared (with a per-host connection pool
-  via `http.Transport`), but per-request response readers are independent.
-- The `/v1/check` HTTP client is shared. It uses a small connection
-  pool; the central guard server's `MaxRequestBodySize` of 1 MiB is
-  far above the per-tool-call check payload size so we never hit body
-  limits for the side channel.
-- Cancellation: when the client closes the connection
-  (`r.Context().Done()` fires), the proxy cancels both the upstream
-  read and any in-flight `/v1/check` call, then drops buffers.
-
-`bufio.Scanner` is **not** used for SSE parsing because SSE events
-don't have a hard line bound (and Go's scanner has a 64 KiB default
-that's awkward to raise for streams). Instead, the proxy uses a
-hand-rolled `bufio.Reader` loop that reads up to `\n\n` (SSE event
-delimiter), bounded by `--max-buffer-bytes`.
+- Each request has its own buffer and parser state; **no mutable state
+  is shared** between requests. The upstream and `/v1/check` HTTP
+  clients (and their connection pools) are shared.
+- When the client closes the connection, the proxy cancels both the
+  upstream read and any in-flight `/v1/check` call, then drops buffers.
+- An SSE event is read up to its `\n\n` delimiter with no fixed line
+  limit other than `--max-buffer-bytes`.
 
 ---
 
@@ -788,24 +759,9 @@ stream. Operators can tune the limits in policy YAML
 
 ## 9. Test strategy
 
-| layer                              | tests                                                                                                |
-|------------------------------------|------------------------------------------------------------------------------------------------------|
-| Header passthrough                 | Authorization, x-api-key, OpenAI-Organization survive round trip                                     |
-| Body passthrough (non-streaming)   | byte-diff request body upstream-side                                                                 |
-| OpenAI tool-call accumulator       | single tool, multiple tools (interleaved indices), `name` whole vs split, `arguments` 1 byte at a time |
-| OpenAI gate trigger                | `finish_reason="tool_calls"` triggers; absent triggers don't                                          |
-| Anthropic tool-block accumulator   | single block, multiple text+tool_use blocks, partial_json across N events                             |
-| Anthropic gate trigger             | `content_block_stop` for a `tool_use` block triggers; for `text` doesn't                              |
-| ALLOW byte-identity                | replay-and-diff captured upstream stream                                                              |
-| DENY synthetic refusal (OpenAI)    | client receives valid SSE with `[DONE]` terminator; SDK parses without error                          |
-| DENY synthetic refusal (Anthropic) | client receives `text` block + `message_stop`; SDK parses                                             |
-| REQUIRE_APPROVAL                   | approval URL embedded in synthetic content; retry not auto-handled (operator approves, agent re-prompts) |
-| Buffer-overflow                    | synthetic refusal at `--max-buffer-bytes`; metric increments                                          |
-| Concurrency                        | 100 concurrent streams, no cross-request state leakage                                                |
-| Cancellation                       | client disconnect cancels upstream + /v1/check                                                        |
-| Pass-through endpoints             | /v1/embeddings, /v1/models forwarded without a policy check or audit entry                            |
-| Unmapped tool                      | `scope: "unmapped"`; default-deny when no rule configured                                             |
-| Upstream                           | scripted fake upstreams (Go `httptest`, Python mocks in `plugins/python/tests/integration`); no provider key in CI |
+The tests use scripted fake upstreams (Go `httptest` in `pkg/llmproxy`,
+with captured streams in `pkg/llmproxy/testdata`; Python mocks in
+`plugins/python/tests/integration`), so CI needs no provider key.
 
 ---
 
@@ -835,9 +791,9 @@ LangChain (`langchain-openai`), and CrewAI (LiteLLM under the hood).
 Each example is a runnable Python script with a paired `.md`
 walkthrough. The fastest end-to-end is
 [`docs/QUICKSTART_LLM_PROXY.md`](./QUICKSTART_LLM_PROXY.md).
-The examples need Vanzik 2.0: the approval retry header
-(`X-Vanzik-Approval-ID`, § 11.3) is new in 2.0, and Anthropic refusal
-streams from earlier proxies crash `messages.stream()`.
+The examples need Vanzik 2.0 or later: older proxies lack the approval
+retry header (`X-Vanzik-Approval-ID`, § 11.3), and their Anthropic
+refusal streams crash `messages.stream()`.
 
 | SDK | Example | Path convention |
 |---|---|---|

@@ -1,6 +1,6 @@
 # Policy Reference
 
-Canonical reference for the Vanzik policy YAML format as of **v2.0.0**.
+Canonical reference for the Vanzik policy YAML format.
 
 Source of truth: `pkg/policy/engine.go` (types) and `pkg/policy/engine.go:Engine.Check` (evaluation). Examples here are the shapes the Go YAML decoder accepts — unknown keys are silently ignored.
 
@@ -71,7 +71,7 @@ rules:
 | `mcp_tool` | none (generic) | `pattern` matched against `<namespace>:<tool>` — see [mcp_tool scope](#mcp_tool-scope) |
 | *any other string* | none | generic; `pattern`/`action`/`domain` all still work — a custom scope applies to requests that send exactly that scope string. A name one or two edits from a built-in one is flagged at load as a likely typo |
 
-**One rule set per scope.** If a scope appears in more than one block of `rules:` (or of one agent's `override:`), the blocks are merged at load, in file order: their `deny`, `require_approval` and `allow` rules are combined, so deny → require_approval → allow precedence holds across them. `vanzik validate` prints a `WARN` line for each merge. A `rate_limit` or `limits` set in more than one of the merged blocks must be identical, or the policy is rejected. Before v1.2.0 the first block that decided won, and a `deny` in a later block for the same scope never applied.
+**One rule set per scope.** If a scope appears in more than one block of `rules:` (or of one agent's `override:`), the blocks are merged at load, in file order: their `deny`, `require_approval` and `allow` rules are combined, so deny → require_approval → allow precedence holds across them. `vanzik validate` prints a `WARN` line for each merge. A `rate_limit` or `limits` set in more than one of the merged blocks must be identical, or the policy is rejected.
 
 ### Scope field reference
 
@@ -126,7 +126,7 @@ The engine does not expand `~`: a rule path `~/.ssh/**` only matches a request p
 | `require_prior` | string | A prior `ALLOW`ed action (matched by exact equality **or** glob) that must have been logged for this `agent_id` + `scope` within `time_window`. |
 | `time_window` | string | Go duration string (e.g., `"10m"`, `"1h"`). Interpreted relative to `now` at the time of the check. |
 
-**Backed by an in-memory index of the audit log.** The server keeps a `PriorActionIndex` (`pkg/policy/history_index.go`) of the newest `ALLOW` per tenant, `agent_id`, scope and action or command. It is seeded from the audit log at startup and updated on every `ALLOW`, so a condition check is a map lookup, not a log scan. The index has a TTL and size caps; history older than the TTL, or dropped at a cap, cannot satisfy a condition. Embedders that only set a `HistoryQuerier` get the older log-scan path, with a one-time warning.
+**Backed by an in-memory index of the audit log.** The server keeps a `PriorActionIndex` (`pkg/policy/history_index.go`) of the newest `ALLOW` per tenant, `agent_id`, scope and action or command. It is seeded from the audit log at startup and updated on every `ALLOW`, so a condition check is a map lookup, not a log scan. The index has a TTL and size caps; history older than the TTL, or dropped at a cap, cannot satisfy a condition. Embedders that only set a `HistoryQuerier` get a log-scan path, with a one-time warning.
 
 ### Footgun: `time_window` without `require_prior`
 
@@ -136,7 +136,7 @@ Setting only `time_window` is rejected at policy load — `LoadFromFile` fails w
 rules[0]("…").conditions[0]: time_window without require_prior is rejected; pair time_window with require_prior or remove it
 ```
 
-In v0.4.x this was a silent no-op that only logged a WARNING; it **became a hard policy-load error in v0.5.0** (see [`DEPRECATIONS.md`](DEPRECATIONS.md)). Either remove the orphan `time_window` or add a `require_prior` clause.
+Either remove the orphan `time_window` or add a `require_prior` clause.
 
 To test a `require_prior` rule without a server, give the case `prior:` actions; see [Testing policies](#testing-policies).
 
@@ -144,7 +144,7 @@ To test a `require_prior` rule without a server, give the case `prior:` actions;
 
 If the `HistoryQuerier` is not wired (it is by default in `NewServer`), the condition is treated as **unsatisfied** and the rule does not match. This is fail-closed for `allow` rules and fail-open for `deny`/`require_approval` — review any condition-bearing rules with that in mind.
 
-If the history lookup returns an error (since v1.4), the stricter reading wins: a condition-gated `deny` or `require_approval` rule **fires**, and a condition-gated `allow` rule does not match. A condition that is definitely not met still makes the rule miss.
+If the history lookup returns an error, the stricter reading wins: a condition-gated `deny` or `require_approval` rule **fires**, and a condition-gated `allow` rule does not match. A condition that is definitely not met still makes the rule miss.
 
 ---
 
@@ -165,7 +165,7 @@ If the history lookup returns an error (since v1.4), the stricter reading wins: 
 
 **Key is `<scope>:<tenant>:<agent_id>`.** Per-tenant, per-agent, per-scope; requests without an `agent_id` share one `anonymous` bucket per scope and tenant.
 
-**In-memory; per-instance on the default SQLite store.** Multi-replica deployments on SQLite do not share buckets — agents can burst past the nominal cap by hitting different pods. With the v1.0 PostgreSQL backend, replicas share consumption via background reconcile (bounded-overshoot: brief bursts can still exceed the cap by ≈ `reconcile-interval × peak rate` per extra replica). See [`docs/OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments).
+**In-memory; per-instance on the default SQLite store.** Multi-replica deployments on SQLite do not share buckets — agents can burst past the nominal cap by hitting different pods. With the PostgreSQL backend, replicas share consumption via background reconcile (bounded-overshoot: brief bursts can still exceed the cap by ≈ `reconcile-interval × peak rate` per extra replica). See [`docs/OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments).
 
 A rate-limit denial produces `CheckResult{Decision: DENY, Rule: "deny:ratelimit:<scope>"}` and increments `vanzik_rate_limited_total`.
 
@@ -246,9 +246,9 @@ The Python SDK applies a redactor (mirrored from `pkg/notify.DefaultRedactor`) t
 
 - Empty / whitespace values pass through unchanged.
 - Values longer than **256 chars** are replaced with `<redacted; len=N>` so audit logs never carry paste-buffer-sized PII.
-- Shorter values run through the regex redactor, which has the same patterns as the server's (Bearer tokens, AWS `AKIA…`, GitHub and Slack tokens, `secret=…`, and from v1.2.0 `sk-…` and Google keys, JWTs, PEM keys and credential headers).
+- Shorter values run through the regex redactor, which has the same patterns as the server's (Bearer tokens, AWS `AKIA…`, GitHub and Slack tokens, `secret=…`, `sk-…` and Google keys, JWTs, PEM keys and credential headers).
 
-Since v1.2.0 the server also masks secrets in every request before it reaches the audit trail (`serve --audit-redact`, on by default — see [OPERATIONS § Audit redaction](OPERATIONS.md#audit-redaction)), so a value that reaches the server unredacted is masked there too.
+The server also masks secrets in every request before it reaches the audit trail (`serve --audit-redact`, on by default — see [OPERATIONS § Audit redaction](OPERATIONS.md#audit-redaction)), so a value that reaches the server unredacted is masked there too.
 
 The field NAME (in `meta.field`) is NOT redacted — operators need it stable for rule authoring. Raw values do not land in the audit log unless they survive the redactor cleanly. Regex / classifier-based PII detection baked into a built-in rule library, so operators don't have to spell out SSN/CC formats themselves, is not implemented yet (`#data-pii`).
 
@@ -340,7 +340,7 @@ When the dual-check fires, the gateway projects the tool-call arguments into the
 | Mapped scope | Argument projection |
 |---|---|
 | `filesystem` | `Path` ← first non-empty of `path`/`file_path`/`filepath`/`target_path`/`destination`/`src`/`dst`. `Action` ← inferred from tool-name verb (`read`/`write`/`delete`). Search and tree tools (`search_files`, `directory_tree`) are reads. A `paths` array argument (e.g. `read_multiple_files`) gets one filesystem check per entry, and every one must allow. |
-| `network` | `URL` ← `url` arg. `Domain` ← the URL's host when there is a `url` arg (empty for a relative or malformed URL, so the call is denied); otherwise the `domain`/`host`/`hostname` arg. **(v1.2)** A `domain`/`host`/`hostname` arg no longer overrides the URL's host: the model writes the arguments and could pair an allow-listed domain with a URL on another host. |
+| `network` | `URL` ← `url` arg. `Domain` ← the URL's host when there is a `url` arg (empty for a relative or malformed URL, so the call is denied); otherwise the `domain`/`host`/`hostname` arg. A `domain`/`host`/`hostname` arg never overrides the URL's host: the model writes the arguments and could pair an allow-listed domain with a URL on another host. |
 | `browser` | `URL` + `Domain` as for network; `Action` ← un-prefixed tool name. |
 | `shell` | `Command` ← first non-empty of `command`/`cmd`/`script`. Falls back to `<ns>:<tool>` + serialised `args`. |
 | `data` | `Command` ← first non-empty of `value`/`content`/`text`/`data`. `Action` ← `"form_input"`. `URL`/`Domain` projected as for network. |
@@ -386,7 +386,7 @@ Wildcard patterns (`playwright_*`, etc.) match the family conventions used by An
 
 ### Operator overrides and extensions
 
-Entries declared in `tool_scope_map:` are merged with the bundled defaults so that **operator entries beat defaults on collision** (operator entries appear first in the merged list, and the matcher is first-match-wins). The merge does not mutate the policy snapshot — the live `Provider.Watch` callback can swap `Policy.ToolScopeMap` atomically without race-prone slice aliasing.
+Entries declared in `tool_scope_map:` are merged with the bundled defaults so that **operator entries beat defaults on collision** (operator entries appear first in the merged list, and the matcher is first-match-wins).
 
 ```yaml
 tool_scope_map:
@@ -517,7 +517,7 @@ notifications:
 
 - `approval_required` → fired when a rule matches `REQUIRE_APPROVAL`.
 - `on_deny` → fired when a rule matches `DENY`.
-- `redaction.extra_patterns` → Go `regexp` (RE2) patterns appended to the built-in redactor list (bearer tokens and credential headers, `AKIA…`, GitHub `gh?_…`/`github_pat_…`, `xox?-…`, `sk-…`, `AIza…`, JWTs, PEM private keys, `secret=`/`token=`/`password=`/`api_key=`). Applied to `Command`, `Path`, `Domain`, `URL`, `Action`, `Reason`, and every `Meta` value before dispatch — and, since v1.2.0, before the request reaches the audit trail, SSE stream and pending list (`serve --audit-redact`; the `--policy` file's patterns only). Invalid regex → policy load fails.
+- `redaction.extra_patterns` → Go `regexp` (RE2) patterns appended to the built-in redactor list (bearer tokens and credential headers, `AKIA…`, GitHub `gh?_…`/`github_pat_…`, `xox?-…`, `sk-…`, `AIza…`, JWTs, PEM private keys, `secret=`/`token=`/`password=`/`api_key=`). Applied to `Command`, `Path`, `Domain`, `URL`, `Action`, `Reason`, and every `Meta` value before dispatch — and before the request reaches the audit trail, SSE stream and pending list (`serve --audit-redact`; the `--policy` file's patterns only). Invalid regex → policy load fails.
 - `dispatch_timeout` — Go duration; default `10s`. Per-target `timeout` overrides it.
 
 | `type` | Purpose | Honors `timeout` |
@@ -533,7 +533,7 @@ Unknown types fall back to `log` with `level: "warn"`.
 
 ## Proxy tunables
 
-All under the optional `proxy:` block. Absent values fall back to the `Default*` constants in `pkg/policy/engine.go:92-98`.
+All under the optional `proxy:` block. Absent values use the defaults noted below.
 
 ```yaml
 proxy:
@@ -570,18 +570,18 @@ For a single `POST /v1/check` call:
 
 ## Compound shell commands
 
-A shell rule's `pattern` is a glob over the whole `command` string, and a single `*` matches every character, including `;`, `&&`, `|`, `$(`, backticks, `>` and line breaks. So since v1.2.0, when a `shell` request's command contains any shell syntax (an operator, quote, backslash, `$`, backtick, parenthesis, redirection or line break), the engine evaluates it the way a POSIX shell would run it:
+A shell rule's `pattern` is a glob over the whole `command` string, and a single `*` matches every character, including `;`, `&&`, `|`, `$(`, backticks, `>` and line breaks. So when a `shell` request's command contains any shell syntax (an operator, quote, backslash, `$`, backtick, parenthesis, redirection or line break), the engine evaluates it the way a POSIX shell would run it:
 
-1. **Whole-string `deny` and `require_approval` rules first.** Patterns written for a full command line, such as `":(){ :|:& };:"` or `"curl * | bash"`, keep matching. Since v1.4 they are also matched against each command string another shell runs (below) and against each pipeline of two or more commands, with the commands' wrappers removed. So `bash -c ':(){ :|:& };:'` hits a fork-bomb deny, and `curl * | *sh` also catches `eval 'curl … | sh'`, `cd /tmp && curl … | sh` and `timeout 60 curl … | sh`. A deny decides. An approval no longer ends the check (v1.4): the steps below still run, and a deny rule that matches any part of the command (`sudo ls; dd if=/dev/zero of=/dev/sda`, a redirection into `~/.ssh`) wins. A part that no rule allows doesn't override the approval, since the person approving sees the whole line.
+1. **Whole-string `deny` and `require_approval` rules first.** Patterns written for a full command line, such as `":(){ :|:& };:"` or `"curl * | bash"`, keep matching. They are also matched against each command string another shell runs (below) and against each pipeline of two or more commands, with the commands' wrappers removed. So `bash -c ':(){ :|:& };:'` hits a fork-bomb deny, and `curl * | *sh` also catches `eval 'curl … | sh'`, `cd /tmp && curl … | sh` and `timeout 60 curl … | sh`. A deny decides. An approval doesn't end the check: the steps below still run, and a deny rule that matches any part of the command (`sudo ls; dd if=/dev/zero of=/dev/sda`, a redirection into `~/.ssh`) wins. A part that no rule allows doesn't override the approval, since the person approving sees the whole line.
 2. **Split into simple commands.** `;`, `&`, `&&`, `||`, `|`, `|&` and line breaks separate commands. Commands inside `$( … )`, backticks, `<( … )` / `>( … )` and `( … )` subshells are commands of their own. Quotes and backslashes are removed the way the shell removes them, so `git "push"` is checked as `git push` and `s""udo` as `sudo`, and runs of whitespace become one space. A leading `!`, `if`, `then`, `else`, `elif`, `do`, `while`, `until`, `time` or `{` is dropped, and so is a closing `}`.
-   **A command string run by another shell is split too** (v1.4). The script of a shell given `-c` (alone or in a cluster such as `-lc` or `-ec`) or `--command`, the arguments of `eval` (after an optional `--`), fish's `-C` / `--init-command`, and a here-string fed to a shell that reads its script from standard input (`bash <<< '…'`, `sh -s <<< '…'`, `bash /dev/stdin <<< '…'`) are split the same way. Their commands are checked as commands of their own, alongside the outer one. The shells are `sh`, `bash`, `rbash`, `zsh`, `dash`, `ksh`, `rksh`, `mksh`, `pdksh`, `oksh`, `ash`, `yash`, `posh`, `fish`, `csh` and `tcsh`, also with a version in the name (`bash5`, `ksh93`). A here-string fed to any other command is data. Without this, `bash -c 'rm -rf /'` read as one `bash` command and passed a catch-all allow.
-   **The command behind a wrapper is matched too** (v1.4). Leading assignments (`NAME=value`, `NAME+=value`, `a[i]=value`), `!` and these launchers, with their own options and operands, are looked through. This is the whole list:
+   **A command string run by another shell is split too.** The script of a shell given `-c` (alone or in a cluster such as `-lc` or `-ec`) or `--command`, the arguments of `eval` (after an optional `--`), fish's `-C` / `--init-command`, and a here-string fed to a shell that reads its script from standard input (`bash <<< '…'`, `sh -s <<< '…'`, `bash /dev/stdin <<< '…'`) are split the same way. Their commands are checked as commands of their own, alongside the outer one. The shells are `sh`, `bash`, `rbash`, `zsh`, `dash`, `ksh`, `rksh`, `mksh`, `pdksh`, `oksh`, `ash`, `yash`, `posh`, `fish`, `csh` and `tcsh`, also with a version in the name (`bash5`, `ksh93`). A here-string fed to any other command is data. Otherwise `bash -c 'rm -rf /'` would read as one `bash` command and pass a catch-all allow.
+   **The command behind a wrapper is matched too.** Leading assignments (`NAME=value`, `NAME+=value`, `a[i]=value`), `!` and these launchers, with their own options and operands, are looked through. This is the whole list:
    - Shell builtins and process tools: `env`, `command`, `exec`, `builtin`, `nohup`, `nice`, `time`, `timeout`, `flock` (and `flock FILE -c '…'`, which runs `sh -c`), `taskset`, `chrt`, `ionice`, `stdbuf`, `setsid`, `unshare`, `arch`, `caffeinate`, `busybox`, `xargs`, `strace`, `ltrace`, `fakeroot`.
    - Privilege and root changes: `sudo`, `doas`, `pkexec`, `runuser` (`-u USER cmd`, or `-c '…'`), `setpriv`, `chroot`, `sg` (`sg GROUP -c '…'` runs `sh -c`).
    - Project and package launchers: `npx` (and `npx -c '…'`), `npm exec` / `npm x`, `pnpm exec` / `pnpm dlx`, `yarn exec` / `yarn dlx`, `uv run`, `poetry run`, `bundle exec`, `direnv exec DIR`, `mise exec` / `mise x` (the command after `--`, or `-c '…'`), `nix-shell --run '…'`, `nix develop` / `nix shell` with `-c` or `--command`, `conda run` (also `mamba` and `micromamba`).
-   Each command found behind them is matched against the `deny` and `require_approval` rules, so `timeout 5 rm -rf /`, `env sudo ls` and `FOO=1 rm -rf /` hit `rm -rf *` and `sudo *`. Whether the command may run at all is still decided by the full command: under a `sudo *` approval rule, `sudo reboot` asks as before, without also needing an allow rule for `reboot`. An option that runs no command (`command -v`, `sudo -l`, `chrt -p`) stops the unwrapping. `xargs` adds arguments from its input that aren't in the text, so `xargs rm -rf` is matched as `rm -rf`, which `rm -rf *` doesn't match.
+   Each command found behind them is matched against the `deny` and `require_approval` rules, so `timeout 5 rm -rf /`, `env sudo ls` and `FOO=1 rm -rf /` hit `rm -rf *` and `sudo *`. Whether the command may run at all is still decided by the full command: under a `sudo *` approval rule, `sudo reboot` asks for approval without also needing an allow rule for `reboot`. An option that runs no command (`command -v`, `sudo -l`, `chrt -p`) stops the unwrapping. `xargs` adds arguments from its input that aren't in the text, so `xargs rm -rf` is matched as `rm -rf`, which `rm -rf *` doesn't match.
    Shell, `eval` and wrapper names are matched without case and without `.exe`, since macOS and Windows file systems run `BASH` and `/BIN/SH` as `bash` and `sh`. These commands take this path even without other shell syntax: `eval rm -rf /` and `env rm -rf /` are checked as `rm -rf /`.
-   **`$'…'` strings are decoded** (v1.4) as bash decodes them (`\n`, `\t`, `\xHH`, octal, `\uHHHH`, `\cX` and the rest), so `$'rm' -rf /tmp/x` is checked as `rm -rf /tmp/x` and the script of `bash -c $'ls\nrm -rf /'` as two commands. A NUL (`\0`, `\x00`) ends the string, as in bash, so `read -d $'\0'` works. `$"…"` is read like `"…"`.
+   **`$'…'` strings are decoded** as bash decodes them (`\n`, `\t`, `\xHH`, octal, `\uHHHH`, `\cX` and the rest), so `$'rm' -rf /tmp/x` is checked as `rm -rf /tmp/x` and the script of `bash -c $'ls\nrm -rf /'` as two commands. A NUL (`\0`, `\x00`) ends the string, as in bash, so `read -d $'\0'` works. `$"…"` is read like `"…"`.
 3. **Each command runs through `deny` → `require_approval` → `allow`**, with its conditions. A command no rule allows is denied.
 4. **Each file redirection is a filesystem check.** `> file`, `>> file`, `>| file`, `&> file`, `2> file` and `<> file` are checked as a `filesystem` `write` of the target, and `< file` as a `read`, against the policy's `filesystem` rules (default deny if it has none). `/dev/null`, `/dev/stdout`, `/dev/stderr`, `/dev/stdin`, `/dev/tty`, `/dev/fd/*` and descriptor duplications such as `2>&1` are ignored.
 5. **The most severe result wins:** DENY, then REQUIRE_APPROVAL, then ALLOW. The reason names the deciding command, for example `Matches approval rule in shell scope (command 2 of 2: "rm -rf /")`.
@@ -614,7 +614,7 @@ The coding-agent blocks (`configs/claude-code.yaml`, `configs/codex.yaml` and th
 
 **Allow rules that contain shell syntax** are matched command by command: `allow: "ls * | grep *"` allows `ls /tmp | grep x` (two commands, each matching its glob) but not `ls /tmp | grep x; rm -rf /` (three commands). Only the commands are compared, not the operators between them. Redirections are still checked against the filesystem rules. Only real shell syntax in the pattern makes it work this way: `allow: "bash -lc *"` is a plain pattern for the `bash -lc` command itself, and the commands in its script still need rules of their own.
 
-**What the engine won't guess.** Heredocs (`<<`), arithmetic expansion (`$(( … ))`), parameter expansions that can run a command (`${x:-$(…)}`), unbalanced quotes or parentheses, a `$'…'` escape that can't be decoded safely (a missing digit, a value that isn't a byte or a Unicode code point), more than 64 commands (or 64 command strings, or 64 wrapped commands), more than 16 wrappers or two `env -S` strings in one command, or nesting deeper than 8 levels → `DENY deny:shell:unparseable_command`. A command string inside another command (the script of `bash -c`, `eval` or a here-string fed to a shell) that can't be split, or nests too deep, is not denied: since v1.4 it asks for approval as `require_approval:shell:unparseable_script`, with a reason saying Vanzik couldn't read the script, so a person can look at it. Deny and approval rules are still matched against the script's text first, and the outer command is still checked, so under an allowlist without `bash`, `bash -c 'echo $((1+2))'` is still denied.
+**What the engine won't guess.** Heredocs (`<<`), arithmetic expansion (`$(( … ))`), parameter expansions that can run a command (`${x:-$(…)}`), unbalanced quotes or parentheses, a `$'…'` escape that can't be decoded safely (a missing digit, a value that isn't a byte or a Unicode code point), more than 64 commands (or 64 command strings, or 64 wrapped commands), more than 16 wrappers or two `env -S` strings in one command, or nesting deeper than 8 levels → `DENY deny:shell:unparseable_command`. A command string inside another command (the script of `bash -c`, `eval` or a here-string fed to a shell) that can't be split, or nests too deep, is not denied: it asks for approval as `require_approval:shell:unparseable_script`, with a reason saying Vanzik couldn't read the script, so a person can look at it. Deny and approval rules are still matched against the script's text first, and the outer command is still checked, so under an allowlist without `bash`, `bash -c 'echo $((1+2))'` is still denied.
 
 **What it can't see.** Matching reads the command text, not what a program does with its arguments or its input. These run code the engine doesn't look into:
 
@@ -699,12 +699,11 @@ allow:
   - domain: "*.foo.com"
 ```
 
-Domain matching is **case-insensitive** (v1.0): the request's domain and the
+Domain matching is **case-insensitive**: the request's domain and the
 rule's `domain` patterns are both lowercased before matching, so a deny rule
-for `evil.com` also matches `EVIL.com` — DNS names are case-equivalent, and
-before v1.0 a mixed-case request could slip past a lowercase deny rule.
+for `evil.com` also matches `EVIL.com` — DNS names are case-equivalent.
 
-Hosts are also written one way before matching (v1.4), on both sides, so a
+Hosts are also written one way before matching, on both sides, so a
 rule on an address catches the other spellings that reach it:
 
 | Request host | Matched as |
@@ -726,8 +725,8 @@ its URL (`http://localhost:3000/`): `allow: localhost:3000` doesn't allow
 `localhost:22`, and `deny: internal.example.com:8443` doesn't deny port 443.
 A rule `domain` without a port matches the host on any port.
 
-Browsers, Node, curl and the C library all accept these forms, so before
-v1.4 a request written in one of them could slip past a deny rule on the
+Browsers, Node, curl and the C library all accept these forms; without
+this, a request written in one of them would slip past a deny rule on the
 plain address.
 
 Rules compare names, not where a name resolves. A DNS name that points at an
@@ -753,21 +752,21 @@ AWS's IPv6 endpoint `fd00:ec2::254`.
 
 ## Load-time validation
 
-Every policy load — the `--policy` file, a hot reload, a tenant policy from the store, `vanzik validate` — goes through `parsePolicyBytesWithWarnings` (`pkg/policy/policy_load.go`), which enforces:
+Every policy load — the `--policy` file, a hot reload, a tenant policy from the store, `vanzik validate` — enforces:
 
 - `version` present, non-empty.
 - `name` present, non-empty.
 - `filesystem` rule `paths` do not contain `..` after normalization.
 - Every `notifications.redaction.extra_patterns` entry compiles as a Go regexp.
-- `conditions.time_window` without `require_prior` is rejected as a hard load error (since v0.5.0).
-- Blocks for the same scope are merged; a `rate_limit` or `limits` that differs between them is a load error (since v1.2.0).
+- `conditions.time_window` without `require_prior` is rejected as a hard load error.
+- Blocks for the same scope are merged; a `rate_limit` or `limits` that differs between them is a load error.
 
 **Non-fatal warnings** are logged at load and printed by `vanzik validate` (to stderr, prefixed `WARN:`); the policy still loads:
 
-- (v1.2.0) a scope that appears in more than one block — the blocks were merged (see [Rule sets and scopes](#rule-sets-and-scopes));
-- (v1.2.0) a scope name that isn't built-in but is one or two edits away from one (`shel`, `filesytem`, `Shell`): its rules only apply to requests whose scope is spelled exactly that way, so it is almost always a typo;
-- (v2.0.0) a rule with `paths` but no `action`: paths are compared only when the rule's `action` equals the request's, so its paths never match anything (an allow allows nothing, a deny denies nothing). Add `action: read`, `write` or `delete`;
-- (v1.0) a rule path pattern that contains `/` but no `**` (e.g. `/workspace/*`) — its single `*` crosses `/` and matches recursively (`/workspace/a/b/secret.env`), usually broader than intended. Switch to `**` (segment-aware) if you meant one level. See [Single-star `*` crosses `/`](#single-star--crosses-).
+- a scope that appears in more than one block — the blocks were merged (see [Rule sets and scopes](#rule-sets-and-scopes));
+- a scope name that isn't built-in but is one or two edits away from one (`shel`, `filesytem`, `Shell`): its rules only apply to requests whose scope is spelled exactly that way, so it is almost always a typo;
+- a rule with `paths` but no `action`: paths are compared only when the rule's `action` equals the request's, so its paths never match anything (an allow allows nothing, a deny denies nothing). Add `action: read`, `write` or `delete`;
+- a rule path pattern that contains `/` but no `**` (e.g. `/workspace/*`) — its single `*` crosses `/` and matches recursively (`/workspace/a/b/secret.env`), usually broader than intended. Switch to `**` (segment-aware) if you meant one level. See [Single-star `*` crosses `/`](#single-star--crosses-).
 
 There is **no** schema validation beyond the above — typos in field names are silently ignored by the YAML decoder. Always run `vanzik validate --policy <file>` after edits; wire `vanzik validate --strict` into CI against every policy file you ship, so warnings fail the build.
 

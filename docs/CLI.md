@@ -2,7 +2,7 @@
 
 Every `vanzik` (central server) subcommand, every flag, every env-var fallback. Source of truth: `cmd/vanzik/main.go` and `cmd/vanzik/cli.go`.
 
-> **Scope:** this page documents the `vanzik` binary — the central server that owns the policy engine, audit log, approval queue, and dashboard. For the v0.5 wire-level proxy binaries see [`MCP_GATEWAY.md`](MCP_GATEWAY.md) (`vanzik-mcp-gateway`) and [`LLM_API_PROXY.md`](LLM_API_PROXY.md) (`vanzik-llm-proxy`).
+> **Scope:** this page documents the `vanzik` binary — the central server that owns the policy engine, audit log, approval queue, and dashboard. For the wire-level proxy binaries see [`MCP_GATEWAY.md`](MCP_GATEWAY.md) (`vanzik-mcp-gateway`) and [`LLM_API_PROXY.md`](LLM_API_PROXY.md) (`vanzik-llm-proxy`).
 
 ```
 vanzik <command> [flags]
@@ -68,10 +68,10 @@ Set Vanzik up on this computer, keep it current and remove it, from a menu: move
 | Starter policy (an existing one is kept) | `~/.config/vanzik/default.yaml` | `%APPDATA%\vanzik\default.yaml` |
 | Data folder: audit log, state database, server log | `~/.local/share/vanzik` | `%LOCALAPPDATA%\Vanzik\data` |
 | API key, readable only by you | `~/.config/vanzik/api-key` | `%APPDATA%\vanzik\api-key` |
-| Audit seal key, readable only by you (v1.4, new setups) | `~/.local/share/vanzik/audit-seal.key` | `%LOCALAPPDATA%\Vanzik\data\audit-seal.key` |
+| Audit seal key, readable only by you (new setups) | `~/.local/share/vanzik/audit-seal.key` | `%LOCALAPPDATA%\Vanzik\data\audit-seal.key` |
 | Start at login, without admin rights | systemd user service `vanzik.service` / LaunchAgent `com.lictorate.vanzik` | Task Scheduler task `Vanzik`, at your logon |
 
-The service runs `vanzik server --policy … --data-dir … --audit-log … --port 8080 --bind 127.0.0.1 --dashboard --api-key-file … --audit-seal --audit-seal-key-file …`, on the next free port when 8080 is taken. The keys go in as files, so they never appear in the service definition or the process list. Since v1.4 a new setup seals the audit log (see [`vanzik audit verify`](#vanzik-audit-verify)); a setup made by an earlier version keeps its command line when you run setup again. `XDG_CONFIG_HOME` and `XDG_DATA_HOME` move the Linux and macOS folders.
+The service runs `vanzik server --policy … --data-dir … --audit-log … --port 8080 --bind 127.0.0.1 --dashboard --api-key-file … --audit-seal --audit-seal-key-file …`, on the next free port when 8080 is taken. The keys go in as files, so they never appear in the service definition or the process list. A new setup seals the audit log (see [`vanzik audit verify`](#vanzik-audit-verify)); an existing setup keeps its command line when you run setup again. `XDG_CONFIG_HOME` and `XDG_DATA_HOME` move the Linux and macOS folders.
 
 **Later runs** show whether the server is running and offer: open the dashboard (the API key goes to the clipboard for its login), update, start or restart the server, connection details (the URL, where the key is, the lines for the SDKs, and a Claude Desktop block with no secret in it), open the policy file, change settings, and — last, under a divider — uninstall.
 
@@ -118,46 +118,46 @@ Start the Vanzik server. This is the only subcommand that runs a long-lived proc
 |---|---|---|
 | `--policy <path>` | found automatically | Path to policy YAML. When not given, see [Policy file](#policy-file). Rejected at startup if missing or invalid; the startup log names the file it loaded. |
 | `--port <int>` | `8080` | TCP port. See bind behavior below. |
-| `--bind <host>` | *(empty)* | **(v1.2)** Host or IP to listen on, e.g. `127.0.0.1` behind a same-host reverse proxy. Empty keeps the default bind behavior below. A non-loopback `--bind` without `--api-key` is refused at startup (exit 2). |
+| `--bind <host>` | *(empty)* | Host or IP to listen on, e.g. `127.0.0.1` behind a same-host reverse proxy. Empty keeps the default bind behavior below. A non-loopback `--bind` without `--api-key` is refused at startup (exit 2). |
 | `--dashboard` | off | Serve `/dashboard` HTML + `/api/stream` SSE. Required for human approval UI. |
 | `--watch` | off | Log a line each time the policy file is reloaded. The reload itself always happens, with or without this flag (fsnotify events, with a 2 s mtime poll as fallback); no restart needed after policy edits. |
-| `--audit-log <path>` | `audit.jsonl` | Append-only JSON Lines file. Mode `0600`. Rotation is on by default; configurable via `--audit-max-size-mb`, `--audit-max-backups`, `--audit-max-age-days`, `--audit-compress`. Operators following older guidance should NOT also configure logrotate against `audit.jsonl` — the dual-rotator chain corrupts the rotation index. See [`OPERATIONS.md`](OPERATIONS.md#audit-log-rotation). |
+| `--audit-log <path>` | `audit.jsonl` | Append-only JSON Lines file. Mode `0600`. Rotation is on by default; configurable via `--audit-max-size-mb`, `--audit-max-backups`, `--audit-max-age-days`, `--audit-compress`. Do NOT also configure logrotate against `audit.jsonl`: two rotators on one file corrupt the rotation index. See [`OPERATIONS.md`](OPERATIONS.md#audit-log-rotation). |
 | `--api-key <key>` | `$VANZIK_API_KEY` | Bearer token for gated endpoints. **If empty, the server binds to `127.0.0.1` only** (localhost-only). |
 | `--api-key-file <path>` | *(empty)* | Read the API key from the first line of this file instead of the command line, where other users of the machine could see it. `--api-key` wins over it; it wins over `VANZIK_API_KEY`. The server refuses to start when the file can't be read or is empty, rather than run unprotected. `vanzik setup` uses it. |
 | `--base-url <url>` | `http://localhost:<port>` | External URL used when constructing `approval_url` in check responses. Set this behind a reverse proxy. |
 | `--allowed-origin <url>` | *(empty)* | Exact CORS origin. Empty = permissive-localhost (accepts any `http://localhost:*` or `http://127.0.0.1:*`). Set to `https://app.example` for strict single-origin. |
 | `--tls-terminated-upstream` | off | Issue session cookies with `Secure` even when `r.TLS == nil`. Set when behind a TLS-terminating proxy that does not forward `X-Forwarded-Proto`. See [`DEPLOYMENT.md`](DEPLOYMENT.md). |
-| `--session-cost-ttl <dur>` | `0` (never expire) | Evict idle session-cost accumulator entries. Example: `24h`. Zero keeps v0.4.0 behavior. |
+| `--session-cost-ttl <dur>` | `0` (never expire) | Evict idle session-cost accumulator entries. Example: `24h`. |
 | `--session-cost-sweep-interval <dur>` | `max(ttl/4, 1m)` | Sweeper cadence. Ignored when `--session-cost-ttl 0`. |
 | `--approval-validity <dur>` | `5m` | How long a resolved approval is honored by the `/v1/check` approval-id retry, measured from resolution. Past the window the retry re-enters the approval flow under a new id. `0` disables the bound. Default matches the SDKs' `wait_for_approval` poll window. Resolved ALLOWs are additionally **one-shot** regardless of this flag — see [`APPROVAL_WORKFLOW.md`](APPROVAL_WORKFLOW.md#one-shot-consumption-and-validity). |
-| `--audit-max-size-mb <int>` | `100` | Rotate when the live audit file reaches this MiB. `0` disables rotation entirely (v0.4.x behavior — unbounded growth). See [`OPERATIONS.md`](OPERATIONS.md#audit-log-rotation). |
+| `--audit-max-size-mb <int>` | `100` | Rotate when the live audit file reaches this MiB. `0` disables rotation entirely (unbounded growth). See [`OPERATIONS.md`](OPERATIONS.md#audit-log-rotation). |
 | `--audit-max-backups <int>` | `5` | Maximum number of rotated archives to retain. `0` keeps all archives indefinitely. |
 | `--audit-max-age-days <int>` | `30` | Maximum age (days) of archived audit files. Older archives pruned at rotation time. `0` disables age-based pruning. |
 | `--audit-compress` | `true` | gzip-compress rotated archives. Disable for plain JSONL siblings. |
-| `--audit-redact` | `true` | **(v1.2)** Mask secrets (API keys, tokens, passwords, private keys, credential headers — see [OPERATIONS § Audit redaction](OPERATIONS.md#audit-redaction)) in requests before they reach the audit log, `GET /v1/audit`, the SSE stream, the dashboard and the pending-approvals list. The policy's `notifications.redaction.extra_patterns` apply too. `false` stores requests verbatim and logs a startup warning. |
-| `--audit-buffered` | `true` | Wrap the audit logger in a bounded async queue with disk-overflow durability so `/v1/check` no longer waits on the audit mutex. Disable to write straight to FileLogger (v0.4.x behavior). |
+| `--audit-redact` | `true` | Mask secrets (API keys, tokens, passwords, private keys, credential headers — see [OPERATIONS § Audit redaction](OPERATIONS.md#audit-redaction)) in requests before they reach the audit log, `GET /v1/audit`, the SSE stream, the dashboard and the pending-approvals list. The policy's `notifications.redaction.extra_patterns` apply too. `false` stores requests verbatim and logs a startup warning. |
+| `--audit-buffered` | `true` | Wrap the audit logger in a bounded async queue with disk-overflow durability so `/v1/check` does not wait on the audit mutex. `false` writes to the file synchronously. |
 | `--audit-queue-size <int>` | `1024` | Bounded queue size for the buffered async logger. Ignored unless `--audit-buffered`. |
 | `--audit-workers <int>` | `4` | Worker goroutines draining the buffered audit queue. Ignored unless `--audit-buffered`. |
 | `--audit-overflow-path <path>` | `<audit-log>.overflow.jsonl` | Disk-overflow spill file used when the buffered queue saturates. Ignored unless `--audit-buffered`. |
-| `--audit-seal` | off | **(v1.4)** Seal the audit log into a hash chain that [`vanzik audit verify`](#vanzik-audit-verify) checks for edited, removed or reordered entries. File backend only: with `--audit-backend=store` the server refuses to start (exit 2). Not encryption. See [OPERATIONS § Sealing and anchoring](OPERATIONS.md#sealing-and-anchoring). |
-| `--audit-seal-key-file <path>` | *(empty)* | **(v1.4)** HMAC-SHA256 key for `--audit-seal`: the file's content, surrounding whitespace ignored. The server refuses to start when the file is missing, empty, or (on Unix) readable by every user. Without it the chain is plain SHA-256, which anyone who can write the file can recompute; the server warns at startup. Given without `--audit-seal`, it is a usage error. `vanzik setup` uses it. |
-| `--audit-anchor-interval <dur>` | `5m` | **(v1.4)** How often to log the head of the sealed chain (`audit anchor segment=… seq=… hash=…`) and set `vanzik_audit_seal_seq`, when something new was sealed. Anchors are also published at startup, at each rotation and at shutdown. `0` turns the periodic anchor off. Ignored unless `--audit-seal`. |
-| `--notify-spool <path>` | *(empty)* | *(v0.7)* JSONL spool file for notification events that overflow the dispatch queue — spooled events are redelivered by a recovery loop (including leftovers from a previous process) instead of dropped. Empty disables (drop-on-full). |
+| `--audit-seal` | off | Seal the audit log into a hash chain that [`vanzik audit verify`](#vanzik-audit-verify) checks for edited, removed or reordered entries. File backend only: with `--audit-backend=store` the server refuses to start (exit 2). Not encryption. See [OPERATIONS § Sealing and anchoring](OPERATIONS.md#sealing-and-anchoring). |
+| `--audit-seal-key-file <path>` | *(empty)* | HMAC-SHA256 key for `--audit-seal`: the file's content, surrounding whitespace ignored. The server refuses to start when the file is missing, empty, or (on Unix) readable by every user. Without it the chain is plain SHA-256, which anyone who can write the file can recompute; the server warns at startup. Given without `--audit-seal`, it is a usage error. `vanzik setup` uses it. |
+| `--audit-anchor-interval <dur>` | `5m` | How often to log the head of the sealed chain (`audit anchor segment=… seq=… hash=…`) and set `vanzik_audit_seal_seq`, when something new was sealed. Anchors are also published at startup, at each rotation and at shutdown. `0` turns the periodic anchor off. Ignored unless `--audit-seal`. |
+| `--notify-spool <path>` | *(empty)* | JSONL spool file for notification events that overflow the dispatch queue — spooled events are redelivered by a recovery loop (including leftovers from a previous process) instead of dropped. Empty disables (drop-on-full). |
 | `--debug-pprof` | off | Expose Go pprof handlers on a **separate localhost-only** listener (`--debug-pprof-port`). Off by default; enable for performance investigations only. Tunnel via `kubectl port-forward` / `ssh -L` to access remotely — this listener never binds beyond `127.0.0.1`. |
 | `--debug-pprof-port <int>` | `6060` | Port for the localhost-only pprof listener. Ignored unless `--debug-pprof`. |
-| `--persist` | `true` | **(v0.6)** Persist runtime state (approvals, rate-limit buckets, cost accumulators) to a durable store so it survives restarts. Zero-config: auto-creates `vanzik.db` (SQLite). Set `false` for pure in-memory (pre-v0.6 behavior). The store is **never** on the `/v1/check` hot path — a background syncer flushes snapshots on a ≥1 s tick and hydrates memory on boot. The one exception is tenant lookup on `/v1/t/<tenant>/…` routes: a tenant not yet in the in-memory cache is read from the store on its first lookup, and an unregistered tenant id costs at most one store read per `--tenant-policy-refresh-interval` (one per lookup when the interval is 0). See [Persistence & multi-tenancy](#persistence--multi-tenancy-v06). |
-| `--store-dsn <dsn>` | *(empty)* | **(v0.6)** Durable store location. Empty ⇒ zero-config SQLite at `<data-dir>/vanzik.db`; a SQLite file path is also accepted. **(v1.0)** A `postgres://` / `postgresql://` DSN selects the PostgreSQL backend — required for [multi-node deployments](OPERATIONS.md#multi-instance-deployments). Ignored when `--persist=false`. |
-| `--data-dir <path>` | `.` | **(v0.6)** Directory for the zero-config SQLite database (`vanzik.db` + its `-wal`/`-shm` sidecars). Ignored when `--store-dsn` is set or `--persist=false`. |
-| `--node-id <id>` | *(hostname)* | **(v1.0)** This replica's identity in the shared PostgreSQL store. Must be distinct per replica (two processes on one host need explicit values; in Kubernetes pass the pod name). No effect on the SQLite backend. |
-| `--reconcile-interval <dur>` | `2s` | **(v1.0)** Cadence of the background reconcile that merges other nodes' rate/cost consumption and approval state into this node's in-memory view (and publishes this node's). Postgres-only: forced off on the SQLite backend. Smaller ⇒ tighter rate-limit overshoot bound and fresher cross-node approvals, more store traffic. Never touches the `/v1/check` hot path. |
-| `--audit-backend <file\|store>` | `file` | **(v0.6)** Where the audit trail lives. `file` = JSONL (rotation + migration, the default). `store` = the durable store's indexed `audit_entries` table (one-file deployment, indexed `/v1/audit` queries). `store` requires `--persist` and always runs buffered (async) — a synchronous DB write per request would break the <3 ms budget, so buffering is forced. |
+| `--persist` | `true` | Persist runtime state (approvals, rate-limit buckets, cost accumulators) to a durable store so it survives restarts. Zero-config: auto-creates `vanzik.db` (SQLite). Set `false` for pure in-memory state. The store is off the `/v1/check` hot path except for first-time tenant lookups — see [Persistence & multi-tenancy](#persistence--multi-tenancy-v06). |
+| `--store-dsn <dsn>` | *(empty)* | Durable store location. Empty ⇒ zero-config SQLite at `<data-dir>/vanzik.db`; a SQLite file path is also accepted. A `postgres://` / `postgresql://` DSN selects the PostgreSQL backend — required for [multi-node deployments](OPERATIONS.md#multi-instance-deployments). Ignored when `--persist=false`. |
+| `--data-dir <path>` | `.` | Directory for the zero-config SQLite database (`vanzik.db` + its `-wal`/`-shm` sidecars). Ignored when `--store-dsn` is set or `--persist=false`. |
+| `--node-id <id>` | *(hostname)* | This replica's identity in the shared PostgreSQL store. Must be distinct per replica (two processes on one host need explicit values; in Kubernetes pass the pod name). No effect on the SQLite backend. |
+| `--reconcile-interval <dur>` | `2s` | Cadence of the background reconcile that merges other nodes' rate/cost consumption and approval state into this node's in-memory view (and publishes this node's). Postgres-only: forced off on the SQLite backend. Smaller ⇒ tighter rate-limit overshoot bound and fresher cross-node approvals, more store traffic. Never touches the `/v1/check` hot path. |
+| `--audit-backend <file\|store>` | `file` | Where the audit trail lives. `file` = JSONL (rotation + migration, the default). `store` = the durable store's indexed `audit_entries` table (one-file deployment, indexed `/v1/audit` queries). `store` requires `--persist` and always runs buffered (async) — a synchronous DB write per request would break the <3 ms budget, so buffering is forced. |
 
 ### Policy file
 
 When `--policy` is not given, `server`, `validate`, `check` and `test` use the first of:
 
 1. `$VANZIK_POLICY`.
-2. `configs/default.yaml` in the current folder (the flag's default, so running from a checkout works as before).
+2. `configs/default.yaml` in the current folder (the flag's default, so running from a checkout works).
 3. The starter policy the [installer](SETUP.md#1-install) writes: `$XDG_CONFIG_HOME/vanzik/default.yaml` (else `~/.config/vanzik/default.yaml`, on macOS too), then `/etc/vanzik/default.yaml` (a root install, and the container image). On Windows, `%APPDATA%\vanzik\default.yaml`.
 
 If none exists, the command stops and lists where it looked. `validate`, `check` and `test` print `Using policy file <path> (…)` on stderr when the file wasn't named with `--policy`; the server's startup log always names it (`Loaded policy: <name> from <path> …`).
@@ -166,7 +166,7 @@ If none exists, the command stops and lists where it looked. `validate`, `check`
 
 - `--api-key` **set**: binds on `0.0.0.0:<port>` (all interfaces).
 - `--api-key` **unset**: binds on `127.0.0.1:<port>` only. An INFO line is logged at startup. Remote agents cannot connect. This is the #1 source of "connection refused" for new users.
-- `--bind <host>` **(v1.2)**: binds on `<host>:<port>` instead. With `--api-key` any address is accepted; without one only a loopback address (`127.0.0.1`, `::1`, `localhost`) is, and anything else exits 2 before listening. Use `--bind 127.0.0.1` with `--api-key` when a reverse proxy on the same host is the only client.
+- `--bind <host>`: binds on `<host>:<port>` instead. With `--api-key` any address is accepted; without one only a loopback address (`127.0.0.1`, `::1`, `localhost`) is, and anything else exits 2 before listening. Use `--bind 127.0.0.1` with `--api-key` when a reverse proxy on the same host is the only client.
 
 ### Persistence & multi-tenancy (v0.6)
 
@@ -175,9 +175,9 @@ By default `server` is **stateful**: runtime state survives a restart. On a clea
 - **hydrates** the in-memory approval queue, rate-limit buckets, and cost accumulators from the store on boot, then
 - **write-behind syncs** them back on a background ticker (≥ 1 s) and on graceful shutdown.
 
-The store is a *cold-path* component — it is never read or written on the `/v1/check` request path, so the <3 ms p99 budget is unaffected. The one exception is tenant lookup on `/v1/t/<tenant>/…` routes: a tenant not yet in the in-memory cache is read from the store on its first lookup, and an unregistered tenant id costs at most one store read per `--tenant-policy-refresh-interval` (one per lookup when the interval is 0). Disable with `--persist=false` for the legacy pure-in-memory behavior.
+The store is a *cold-path* component — it is never read or written on the `/v1/check` request path, so the <3 ms p99 budget is unaffected. The one exception is tenant lookup on `/v1/t/<tenant>/…` routes: a tenant not yet in the in-memory cache is read from the store on its first lookup, and an unregistered tenant id costs at most one store read per `--tenant-policy-refresh-interval` (one per lookup when the interval is 0). `--persist=false` keeps all state in memory only.
 
-**Multi-node (v1.0).** With `--store-dsn postgres://…`, every replica shares the same durable tier and additionally reconciles its in-memory state with the other nodes every `--reconcile-interval` (default 2s), identified by `--node-id`. Memory stays authoritative per node — reconciliation is background-only, so distributed rate/cost limiting is bounded-overshoot rather than globally strict, and cross-node approval staleness is at most one interval. Semantics and sizing guidance: [`OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments).
+**Multi-node.** With `--store-dsn postgres://…`, every replica shares the same durable tier and additionally reconciles its in-memory state with the other nodes every `--reconcile-interval` (default 2s), identified by `--node-id`. Memory stays authoritative per node — reconciliation is background-only, so distributed rate/cost limiting is bounded-overshoot rather than globally strict, and cross-node approval staleness is at most one interval. Semantics and sizing guidance: [`OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments).
 
 **Tenancy.** The `local` tenant's policy comes from `--policy`. Additional tenants are registered in the store with [`vanzik tenant`](#vanzik-tenant-v06) and addressed via the `/v1/t/<tenant>/...` route family; each tenant is evaluated against its **own** policy, with isolated approvals, rate limits, cost accumulators, and audit. A tenant that has no registered policy is rejected over HTTP with `404 {"error":"tenant not found"}` (see [`API.md`](API.md#url-families-legacy-vs-tenant-aware-v05)); the offline [`vanzik check --tenant-id`](#vanzik-check) path returns a synthetic DENY with `matched_rule="deny:tenant:not_found"`.
 
@@ -226,7 +226,7 @@ Non-fatal warnings go to stderr as `WARN: …` lines and don't change the exit c
 | Flag | Default | Description |
 |---|---|---|
 | `--policy <path>` | found automatically | Policy file to validate. Same as giving it as an argument; passing both is an error. |
-| `--strict` | `false` | **(v1.2)** Exit `1` if the policy loads with any warning. |
+| `--strict` | `false` | Exit `1` if the policy loads with any warning. |
 
 ```bash
 vanzik validate configs/examples/trading-bot.yaml
@@ -271,7 +271,7 @@ Exactly one of these selects how requests enter the subcommand. Specifying more 
 | `--request '<json>'` | One JSON object inline on the command line |
 | `--stdin` | One JSON object read from stdin |
 | `--batch` | JSON Lines (one request per line) read from stdin |
-| `--watch <file>` | *(v0.7)* Follow a JSONL file (tail -f) and verdict each appended request — one policy load for the whole stream, policy hot-reloads on edit. Runs until SIGINT/SIGTERM, then exits with the aggregate code |
+| `--watch <file>` | Follow a JSONL file (tail -f) and verdict each appended request — one policy load for the whole stream, policy hot-reloads on edit. Runs until SIGINT/SIGTERM, then exits with the aggregate code |
 
 ### Flags
 
@@ -306,7 +306,7 @@ The subcommand returns a structured exit code so shell pipelines can branch on t
 | `2` | REQUIRE_APPROVAL — single mode; or any approval and no deny in batch mode. |
 | `3` | Error — missing/invalid policy, malformed JSON, flag misuse (including an unexpected argument), mutually exclusive modes. |
 
-Severity precedence in batch mode is **error > deny > approval > allow**, regardless of numeric exit-code ordering. (`exitDeny=1` numerically precedes `exitApproval=2`, but a deny still dominates because a deny is operationally more severe than an approval request.)
+Severity precedence in batch mode is **error > deny > approval > allow**, regardless of numeric order: a deny (`1`) outranks an approval (`2`).
 
 ### Examples
 
@@ -514,16 +514,16 @@ Query `/v1/audit` for recent decisions. All filters are optional and AND-combine
 | `--agent <id>` | *(none)* | Filter by exact `agent_id`. |
 | `--decision <D>` | *(none)* | `ALLOW`, `DENY`, or `REQUIRE_APPROVAL`. |
 | `--scope <name>` | *(none)* | `shell`, `filesystem`, `network`, `browser`, `cost`, `data`, `mcp_tool`. |
-| `--transport <name>` | *(none)* | Filter by audit `transport` tag: `sdk`, `mcp_gateway`, `llm_api_proxy`, or a coding-agent hook's `claude_code`, `cursor`, `gemini_cli`, `codex_cli`. Pre-v0.5 entries have no transport tag and count as `sdk`: `transport=sdk` matches them, any other value leaves them out. |
-| `--session <id>` | *(none)* | **(v1.4)** Filter by exact `session_id`. |
-| `--parent-session <id>` | *(none)* | **(v1.4)** Only the calls of sessions started by this session (entries whose request named it as `parent_session_id`). |
-| `--since <time>` | *(none)* | **(v1.4)** Entries at or after this time. A duration counts back from now (`2h`, `30m`, `90s`); otherwise an RFC 3339 time (`2026-10-14T09:00:00Z`). |
-| `--until <time>` | *(none)* | **(v1.4)** Entries before this time (exclusive). Same forms as `--since`. A value in neither form is a usage mistake (exit 2). |
+| `--transport <name>` | *(none)* | Filter by audit `transport` tag: `sdk`, `mcp_gateway`, `llm_api_proxy`, or a coding-agent hook's `claude_code`, `cursor`, `gemini_cli`, `codex_cli`. Entries with no transport tag count as `sdk`: `transport=sdk` matches them, any other value leaves them out. |
+| `--session <id>` | *(none)* | Filter by exact `session_id`. |
+| `--parent-session <id>` | *(none)* | Only the calls of sessions started by this session (entries whose request named it as `parent_session_id`). |
+| `--since <time>` | *(none)* | Entries at or after this time. A duration counts back from now (`2h`, `30m`, `90s`); otherwise an RFC 3339 time (`2026-10-14T09:00:00Z`). |
+| `--until <time>` | *(none)* | Entries before this time (exclusive). Same forms as `--since`. A value in neither form is a usage mistake (exit 2). |
 | `--limit <int>` | `50` | Max entries. Server clamps silently above configured ceiling (default 1000). |
-| `--order <desc\|asc>` | `desc` | **(v1.2)** `desc` shows the newest entries first; `asc`, the oldest (the order before v1.2, when `--limit` returned the first entries in the log rather than the latest). |
+| `--order <desc\|asc>` | `desc` | `desc` shows the newest entries first; `asc`, the oldest. |
 | `--api-key <key>` | `$VANZIK_API_KEY` | Bearer token. |
 
-A server older than 1.4 ignores the parameters behind `--since`, `--until` and `--parent-session` and returns every entry. So when one of those flags is set, the CLI first asks the server whether it reads them (one `/v1/audit` request with a `since` that isn't a time: 1.4 answers `400`, older servers `200`), and exits 1 if it doesn't. Asking, rather than comparing version numbers, also works with dev builds.
+A server older than 1.4 ignores the parameters behind `--since`, `--until` and `--parent-session` and returns every entry. So when one of those flags is set, the CLI first asks the server whether it reads them (one `/v1/audit` request with a `since` that isn't a time: a server that reads it answers `400`, an older one `200`), and exits 1 if it doesn't. Asking, rather than comparing version numbers, also works with dev builds.
 
 ```bash
 vanzik audit --session sess-42 --since 2h --order asc
@@ -539,7 +539,7 @@ The CLI uses `/v1/audit?limit=N` directly — pagination (`?offset=`) is support
 
 ## `vanzik audit verify`
 
-**(v1.4)** Check a sealed audit log (`server --audit-seal`) for tampering. It reads files only, so the server does not need to run, and it works on a copy. It finds the live file, follows `_meta.rotated_from` back through the rotated archives (gzip or plain), and checks oldest to newest: each entry's hash, the `seq` and `prev_hash` links between entries, and the link between each file and the one before it.
+Check a sealed audit log (`server --audit-seal`) for tampering. It reads files only, so the server does not need to run, and it works on a copy. It finds the live file, follows `_meta.rotated_from` back through the rotated archives (gzip or plain), and checks oldest to newest: each entry's hash, the `seq` and `prev_hash` links between entries, and the link between each file and the one before it.
 
 ```
 vanzik audit verify [--audit-log <path>] [--key-file <file> ...] [--anchor <seq>:<hash> ...] [--output text|json]
@@ -575,7 +575,7 @@ Exit status: `0` the chain is intact, `1` it is broken, no entry is sealed (`NOT
 
 ## `vanzik report`
 
-**(v1.4)** Write a compliance evidence report for a period: decisions by decision, scope, transport, tenant and agent; the top deny and `require_approval` rules; the approvals on record; the agents and sessions seen; whether the audit log is sealed and intact; posture checks; and a mapping to SOC 2 criteria. It is supporting evidence for an audit, not a certification. What the report holds, its JSON shape and its limits: [`COMPLIANCE.md`](COMPLIANCE.md).
+Write a compliance evidence report for a period: decisions by decision, scope, transport, tenant and agent; the top deny and `require_approval` rules; the approvals on record; the agents and sessions seen; whether the audit log is sealed and intact; posture checks; and a mapping to SOC 2 criteria. It is supporting evidence for an audit, not a certification. What the report holds, its JSON shape and its limits: [`COMPLIANCE.md`](COMPLIANCE.md).
 
 ```
 vanzik report [--since <time>] [--until <time>]
@@ -598,7 +598,7 @@ vanzik report [--since <time>] [--until <time>]
 
 Times are RFC 3339 (`2026-10-01T09:00:00Z`), a date (`2026-10-01`, midnight UTC), or a duration back in time (`90m`, `24h`, `7d`, `1d12h`; `d` is 24 hours). A duration `--until` counts back from now; a duration `--since` counts back from `--until`.
 
-Reading files (the default), the report runs the same check as `audit verify` and then reads every entry of the files it walked. With `--url` it pages `GET /v1/audit` oldest first by time (`since`, which `GET /v1/audit` takes from 1.4, moves forward page by page) and drops any entry outside the period itself, so a server that predates `since` and `until` still gives a correct report. It reads the seal head from `GET /v1/audit/head` before and after, but does not verify the chain. A server with the file backend answers from its live file only, so rotated archives are left out, and entries that rotate out while the report reads are lost; on a sealed server the report says so. Run the report on the files to include archives. `--url` must not hold a user name or password; give the key with `--api-key`.
+Reading files (the default), the report runs the same check as `audit verify` and then reads every entry of the files it walked. With `--url` it pages `GET /v1/audit` oldest first by time (`since` moves forward page by page) and drops any entry outside the period itself, so a server that predates `since` and `until` still gives a correct report. It reads the seal head from `GET /v1/audit/head` before and after, but does not verify the chain. A server with the file backend answers from its live file only, so rotated archives are left out, and entries that rotate out while the report reads are lost; on a sealed server the report says so. Run the report on the files to include archives. `--url` must not hold a user name or password; give the key with `--api-key`.
 
 Without `--policy`, a report on files names the policy `server` would load ([Policy file](#policy-file)); with `--url`, only `--policy` names one.
 
@@ -655,7 +655,7 @@ Run registered on-disk audit-schema migrations. Each migration has a `Detect()` 
 | Flag | Default | Description |
 |---|---|---|
 | `--audit-log <path>` | `audit.jsonl` | Audit log to migrate in place. |
-| `--checkpoint <path>` | `<audit-log>.replay-checkpoint` | The replay checkpoint `vanzik server` reads at boot — `audit.CheckpointSuffix` appended to the audit log path, i.e. the very file the startup seeder writes. |
+| `--checkpoint <path>` | `<audit-log>.replay-checkpoint` | The replay checkpoint `vanzik server` reads and writes at boot. |
 | `--backup-dir <path>` | `<audit-dir>` | Where rollback copies are written. |
 | `--dry-run` | off | Log intended actions without writing. |
 | `--list` | off | Print registered migrations and exit. |
@@ -684,7 +684,7 @@ vanzik migrate --from-agentguard
 
 ## `vanzik version`
 
-`vanzik --version` (or `-version`) is the same command since v1.2, matching the MCP gateway and LLM proxy flags.
+`vanzik --version` (or `-version`) is the same command, matching the MCP gateway and LLM proxy flags.
 
 ```bash
 vanzik version
@@ -719,7 +719,7 @@ The command it names depends on how this copy was installed:
 
 Both replace the binaries and keep your policy, and say whether they updated or downgraded (with a warning). See [`SETUP.md`](SETUP.md#update).
 
-`server` never performs the check (nor does `serve`, the same command): the enforcement server opens no outbound connection the operator did not configure (see [`THREAT_MODEL.md`](THREAT_MODEL.md#outbound-connections)). The check is also skipped for development builds — a version string containing `dev`, or no `-ldflags` commit (`commit=dev`) *and* no tagged release version in the Go build info, as with `go build` on an untagged or modified checkout. `go install …@vX.Y.Z` and `@latest` builds record the release tag, so they do check. It is also skipped when `VANZIK_NO_UPDATE_CHECK` is set to any value other than `0`, or when the HTTP request fails. It is not run for `vanzik help` or a mistyped command either, nor for `vanzik hook`, which runs before every coding-agent tool call and must answer in milliseconds. Never touches stdout, never affects exit codes. Only the `vanzik` binary has the check; the MCP gateway and LLM proxy never had one.
+`server` never performs the check (nor does `serve`, the same command): the enforcement server opens no outbound connection the operator did not configure (see [`THREAT_MODEL.md`](THREAT_MODEL.md#outbound-connections)). The check is also skipped for development builds — a version string containing `dev`, or no `-ldflags` commit (`commit=dev`) *and* no tagged release version in the Go build info, as with `go build` on an untagged or modified checkout. `go install …@vX.Y.Z` and `@latest` builds record the release tag, so they do check. It is also skipped when `VANZIK_NO_UPDATE_CHECK` is set to any value other than `0`, or when the HTTP request fails. It is not run for `vanzik help` or a mistyped command either, nor for `vanzik hook`, which runs before every coding-agent tool call and must answer in milliseconds. Never touches stdout, never affects exit codes. Only the `vanzik` binary has the check; the MCP gateway and LLM proxy have none.
 
 ---
 
@@ -731,8 +731,12 @@ Both replace the binaries and keep your policy, and say whether they updated or 
 | `VANZIK_URL` | `approve`, `deny`, `status`, `audit` (when `--url` unset); the MCP gateway and LLM proxy (when `--guard-url` unset); the SDKs | `http://localhost:8080` (CLI, SDKs), `http://127.0.0.1:8080` (gateway, proxy) |
 | `VANZIK_POLICY` | `server`, `validate`, `check`, `test` (when `--policy` unset) — see [Policy file](#policy-file) | unset |
 | `VANZIK_NO_UPDATE_CHECK` | Every subcommand except `server`, `help` and `hook` (which never check) — disables the GitHub Releases startup check when set to any value other than `0` | unset |
+| `VANZIK_TENANT_ID` | The SDKs only — a value other than `local` routes calls to `/v1/t/<tenant>/…` | unset |
+| `VANZIK_DISTRIBUTION` | The update notice; the container image sets it to `container` | unset |
 
 A flag always wins over its environment variable. The variables' AgentGuard 1.x names (`AGENTGUARD_*`) are never read: a command that would fall back to one that is set, with its `VANZIK_*` name unset, exits naming the new one (see [`MIGRATION.md`](MIGRATION.md#v1x-to-v20)). `vanzik hook` is the exception; it runs anyway and names the variable when it couldn't check a call. When no key is given at all, `approve`, `deny`, `status`, `audit`, `report --url`, the MCP gateway and the LLM proxy use the key [`vanzik setup`](#vanzik-setup) saved (`~/.config/vanzik/api-key`, `%APPDATA%\vanzik\api-key`). The server never picks that file up by itself — a key changes which interfaces it listens on — only through `--api-key-file`.
+
+The installers read `VANZIK_VERSION`, `VANZIK_INSTALL_DIR`, `VANZIK_DOWNLOAD_URL`, `VANZIK_NO_MODIFY_PATH`, `VANZIK_UNINSTALL` and `VANZIK_PURGE` ([`SETUP.md`](SETUP.md#1-install)); `vanzik setup`'s Update reads `VANZIK_VERSION` and `VANZIK_DOWNLOAD_URL` too.
 
 ---
 

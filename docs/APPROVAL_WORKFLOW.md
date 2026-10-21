@@ -42,7 +42,7 @@ Three policy paths lead here:
 
 - **Explicit `require_approval:` rule match** in the relevant scope.
 - **Cost alert threshold**: an `est_cost` above `alert_threshold` but not above `max_per_action` returns `require_approval:cost:alert_threshold`. Important: **no reservation** is made against `sessionCosts` at this point — the cost is only reserved when the approved action re-runs `/v1/check`.
-- **(Future)** Condition-based approvals (e.g., `require_prior` not satisfied yielding approval instead of deny) — still not implemented as of v1.0.0.
+- **(Future)** Condition-based approvals (e.g., `require_prior` not satisfied yielding approval instead of deny) — not implemented.
 
 The response body:
 
@@ -91,9 +91,9 @@ Redactor (in `pkg/notify/notify.go` — `DefaultRedactor`) scrubs:
 - `ghp_[A-Za-z0-9]{36,}` (GitHub PAT)
 - `xox[baprs]-…` (Slack)
 - `(secret|token|password|api_key)=<value>`
-- **(v1.2)** `sk-…` API keys, Google `AIza…` keys, GitHub `gho_` / `ghu_` / `ghs_` / `ghr_` / `github_pat_` tokens, JWTs, PEM private keys, and `Authorization:` / `x-api-key:` / `api-key:` header values
+- `sk-…` API keys, Google `AIza…` keys, GitHub `gho_` / `ghu_` / `ghs_` / `ghr_` / `github_pat_` tokens, JWTs, PEM private keys, and `Authorization:` / `x-api-key:` / `api-key:` header values
 
-Since v1.2.0 the same redactor also masks the audit trail, `GET /v1/audit`, the SSE stream and `/api/pending` (`serve --audit-redact`) — see [OPERATIONS § Audit redaction](OPERATIONS.md#audit-redaction).
+The same redactor also masks the audit trail, `GET /v1/audit`, the SSE stream and `/api/pending` (`serve --audit-redact`) — see [OPERATIONS § Audit redaction](OPERATIONS.md#audit-redaction).
 
 Redaction runs on `Command`, `Path`, `Domain`, `Action`, `URL`, `Reason`, and every `Meta` value.
 
@@ -160,10 +160,10 @@ This is a logical deny, not a transport error — the `approval_id` is preserved
 
 ### Restarts and in-flight approvals
 
-Since v0.6 the approval queue is **persistent by default** (`--persist`, SQLite-backed — see [`CLI.md`](CLI.md#persistence--multi-tenancy-v06)): pending entries are rehydrated on boot, and agents polling `/v1/status/{id}` across a restart pick up where they left off. Two caveats:
+The approval queue is **persistent by default** (`--persist`, SQLite-backed — see [`CLI.md`](CLI.md#persistence--multi-tenancy-v06)): pending entries are rehydrated on boot, and agents polling `/v1/status/{id}` across a restart pick up where they left off. Two caveats:
 
 1. The store flushes on a ≥1 s background tick — an approval created in the final moments before a hard crash may not have been written and is lost.
-2. With `--persist=false` (the pre-v0.6 in-memory mode), a restart loses every pending entry; agents see `404` on `/v1/status/{id}` and eventually hit their SDK timeout, receiving the fail-deny response.
+2. With `--persist=false` (in-memory only), a restart loses every pending entry; agents see `404` on `/v1/status/{id}` and eventually hit their SDK timeout, receiving the fail-deny response.
 
 **Rule of thumb** still applies: `SDK timeout = expected_human_response_time + restart_budget` — even though state survives a restart, nobody can resolve approvals while the process is down.
 
@@ -237,7 +237,7 @@ A resolved **ALLOW** is a single-use, time-boxed capability:
   approval for multiple executions.
 - Consumption survives restarts (persisted with the approval), so a
   restart cannot resurrect a spent ALLOW.
-- **Multi-node (v1.0, PostgreSQL store):** all of the above holds
+- **Multi-node (PostgreSQL store):** all of the above holds
   cluster-wide, eventually — an approval resolved on one node is visible on
   every node within one `--reconcile-interval` (default 2s), and a consumed
   ALLOW is spent everywhere once its stamp reconciles. Inside that staleness

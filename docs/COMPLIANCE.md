@@ -1,6 +1,6 @@
 # Compliance evidence report
 
-`vanzik report` (v1.4) turns the audit log into a report you can hand
+`vanzik report` turns the audit log into a report you can hand
 to an auditor: what Vanzik decided over a period, whether the log that
 recorded it was changed, and which SOC 2 criteria that evidence bears on.
 

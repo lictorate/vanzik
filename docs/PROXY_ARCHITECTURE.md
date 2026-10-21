@@ -31,9 +31,6 @@ direct callers: code paths that talk to Vanzik via `Guard.check`
 remain a first-class integration, but they are not the only way to
 get coverage.
 
-This positioning — and the wire-level honesty caveat below — ties back to
-the README's threat-model section.
-
 ### 1.1 What "wire-level" does and does not mean
 
 The two proxies are wire-level **for the configured base URL or the
@@ -44,10 +41,8 @@ gateway subprocess**. An agent can still bypass either path by:
 - launching an MCP server with no Vanzik gateway in front of it,
 - using a tool the SDK doesn't know about.
 
-The README's "Limitations & Threat Model" section already documents the
-fundamental opt-in property; this doc inherits that caveat. Vanzik
-is a **defensive guardrail for cooperating agents**, not a mandatory
-syscall interceptor.
+Vanzik is a **defensive guardrail for cooperating agents**, not a
+mandatory syscall interceptor (README, "Limitations & Threat Model").
 
 ---
 
@@ -164,18 +159,12 @@ sees the response.
 
 ### 2.6 Gate client via `pkg/internal/gateclient`
 
-The wire-level `/v1/check` contract is implemented **once** in
-`pkg/internal/gateclient` and consumed by both proxies: the HTTP call
-shape (tenant-scoped URL, schema_version stamping, bearer auth, 64 KiB
-response cap), the fail-mode translation, the shared `Decision` type
-(re-exported by each proxy via type alias), and the shared CLI flag
-set + validation (`--guard-url`, `--api-key`, `--tenant-id`,
-`--fail-mode`, `--log-level`, `--policy`, with the VANZIK_API_KEY
-and VANZIK_URL env fallbacks, and the check that rejects stray
-positional arguments). Each proxy keeps only its own scope-mapping and
-argument-projection logic. The package is internal — it is substrate,
-not public API; the per-binary synthetic Rule strings remain each
-proxy's stable contract.
+The `/v1/check` client (tenant-scoped URL, `schema_version`, bearer
+auth, 64 KiB response cap), the fail-mode translation and the shared
+flags (§ 7) are implemented **once** in `pkg/internal/gateclient` and
+used by both proxies; each keeps only its own scope mapping and argument
+projection. The package is internal, not public API; each proxy's
+synthetic rule strings remain its own stable contract.
 
 ## 3. Audit transport tag
 
@@ -208,14 +197,13 @@ coding-agent hook ([`CODING_AGENTS.md`](CODING_AGENTS.md)):
 - Bump audit `schema_version` from `2` to `3`. Rejected because the
   field is **purely additive**: existing readers ignore unknown
   top-level keys; existing writers continue to emit v2 entries with no
-  `transport` field, which the v0.5 reader treats as `"sdk"` by default.
+  `transport` field, which readers treat as `"sdk"`.
 
 ### 3.2 Reader rules
 
-- New entries (v0.5+ writers) **MUST** include `"transport"`.
-- Pre-v0.5 entries (no `"transport"` key) **default to `"sdk"`** at read
-  time — this matches the only writer path that existed before the
-  proxies shipped.
+- New entries **MUST** include `"transport"`.
+- Entries with no `"transport"` key **default to `"sdk"`** at read
+  time — the SDK path was the only writer before the proxies existed.
 - `Logger.Query` accepts `Transport string` in the filter; matches by
   exact equality. Empty filter value matches all.
 
@@ -226,8 +214,7 @@ governs `/v1/check` request and response — is **not** affected. The
 `transport` tag is an audit-side concern. The proxy that calls
 `/v1/check` knows its own transport and stamps it on the request as
 `meta.transport`; the central server reads it from there when it
-writes the entry (`transportFromRequest` in `pkg/proxy/server.go`).
-Nothing is negotiated.
+writes the entry. Nothing is negotiated.
 
 The `CheckResult` schema stays at `schema_version: "v1"`. No bump.
 
@@ -255,13 +242,9 @@ cmd/vanzik-llm-proxy/main.go
 ```
 
 Each `cmd/vanzik-*/main.go` is a **thin entry point**. Real logic
-lives in `pkg/mcpgw/` and `pkg/llmproxy/`. The gateway imports
-`pkg/mcpgw` and `pkg/policy`; the LLM proxy imports `pkg/llmproxy`,
-which uses `pkg/policy`, `pkg/notify` (redaction) and `pkg/metrics`.
-Both share `pkg/internal/gateclient`, which links `pkg/audit` and
-`pkg/notify` only for the `--fail-audit-log` file. Neither imports
-`pkg/proxy`: the server, approval queue and audit pipeline stay in the
-central binary.
+lives in `pkg/mcpgw/` and `pkg/llmproxy/`. Neither imports `pkg/proxy`:
+the server, approval queue and audit pipeline stay in the central
+binary.
 
 ### 4.2 Why not subcommands of `vanzik`?
 
@@ -288,7 +271,7 @@ binaries take the `--version` flag, not a `version` subcommand.
 ### 4.4 Same `pkg/` codebase
 
 Critical: there is **one** policy engine, **one** audit format, **one**
-approval queue type. The two new binaries import the same packages and
+approval queue type. The two proxy binaries import the same packages and
 configure them differently. Implementation drift between the proxies
 fails CI because the `pkg/` tests run for all callers.
 
@@ -331,11 +314,11 @@ server and pass it to every gateway/proxy via `--api-key`.
 
 ### 5.3 Multi-tenant (shipped in v0.6)
 
-Multi-tenancy is supported on a single central server since v0.6:
+A single central server serves many tenants:
 
 - per-tenant policies live in the durable store, managed via
   `vanzik tenant put/list/rm` (see [`CLI.md`](CLI.md#vanzik-tenant-v06)),
-- tenant URL routing (`/v1/t/{tenant}/…`) is live in `pkg/proxy/tenant.go`,
+- requests reach a tenant through `/v1/t/{tenant}/…`,
 - the approval queue, rate limiter, cost accounting, and audit query are
   all sharded by tenant ID,
 - the proxies stamp their tenant via `--tenant-id` (default `local`).
@@ -347,8 +330,8 @@ approvals, rate-limit and cost consumption — by pointing `--store-dsn` at
 one PostgreSQL and giving each replica a `--node-id`. Each node's memory
 stays authoritative for its own `/v1/check` decisions (the hot path never
 performs a synchronous database call); a background reconciler merges the
-other nodes' state in every `--reconcile-interval` (default 2s). The
-consequences of that design are documented, not hidden: distributed
+other nodes' state in every `--reconcile-interval` (default 2s). As a
+consequence, distributed
 rate/cost limiting is bounded-overshoot rather than globally strict, and
 cross-node approval visibility lags by at most one interval. See
 [`OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments) and
@@ -380,12 +363,10 @@ invalid_response` / `deny:gateway:invalid_response`) so a misbehaving
 or version-skewed central server is visible on dashboards instead of
 silently passing through.
 
-The Python SDK (fail-closed **by default**, overridable with the `fail_mode`
-constructor argument — `"deny"` or `"allow"`) and the TypeScript SDK
-(configurable `failMode`) keep their existing behaviour — the new flag just
-brings the proxies into line. Both SDKs default to denying when Vanzik is
-unreachable; `"allow"` is an explicit opt-out for callers whose threat model
-treats the firewall as best-effort.
+The SDKs offer the same choice: Python's `fail_mode` constructor argument
+and TypeScript's `failMode` (`"deny"`, the default, or `"allow"`, an
+explicit opt-out for callers whose threat model treats the firewall as
+best-effort).
 
 ### 6.2 MCP gateway: downstream subprocess crashes
 
@@ -499,7 +480,7 @@ the proxy-specific docs cover the full detail.
 
 2. **LLM proxy buffer bound on tool-call accumulation** is 1 MiB per
    content block (`--max-buffer-bytes 1048576`). Anything larger
-   triggers a synthetic refusal. See `LLM_API_PROXY.md` § 6.
+   triggers a synthetic refusal. See `LLM_API_PROXY.md` § 5.6.
 
 3. **Approval re-submission for the MCP gateway.** When a tool call
    returns `REQUIRE_APPROVAL` and the operator approves, the client

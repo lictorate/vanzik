@@ -13,8 +13,7 @@ and are re-exported as type aliases from
 
 ## Schema versioning
 
-Every response carries a `schema_version` field: v0.5+ servers emit `"v1"`
-on every response. Requests may omit it (the first-party SDKs do; see
+Every response carries `schema_version: "v1"`. Requests may omit it (the first-party SDKs do; see
 below). The server accepts any of:
 
 - `schema_version` omitted → defaulted to `"v1"`
@@ -25,8 +24,7 @@ below). The server accepts any of:
   ```
 
 The constant lives at `pkg/proxy.SchemaVersionV1` (Go) and
-`pkg/proxy/schema/v1.Version`. Closes audit finding **R1 F4** (no
-`schema_version` field on the wire).
+`pkg/proxy/schema/v1.Version`.
 
 ### Evolution policy
 
@@ -58,9 +56,6 @@ Python ↔ TypeScript) fails CI:
 | Python | `plugins/python/tests/test_wire_format.py` |
 | TypeScript | `plugins/typescript/src/__tests__/wire_format.test.ts` |
 
-This closes audit finding **R1 F7** (no contract test, silent drift
-between SDKs and the Go proxy).
-
 ## `POST /v1/check` request — `ActionRequest`
 
 Fields are JSON-encoded; only `scope` is required.
@@ -68,7 +63,7 @@ Fields are JSON-encoded; only `scope` is required.
 | Field            | Type              | Required | Description |
 |------------------|-------------------|----------|-------------|
 | `schema_version` | string (`"v1"`)   | optional | Wire-format version. Empty → defaulted to `"v1"`; any other value → 400. |
-| `scope`          | string            | **required** | Policy rule scope. Built-ins: `filesystem`, `shell`, `network`, `browser`, `cost`, `data`, `mcp_tool` (v0.5+, used by the MCP gateway's dual-check). Custom scopes are valid if defined in policy. |
+| `scope`          | string            | **required** | Policy rule scope. Built-ins: `filesystem`, `shell`, `network`, `browser`, `cost`, `data`, `mcp_tool` (used by the MCP gateway). Custom scopes are valid if defined in policy. |
 | `action`         | string            | optional | Action verb for action-style scopes (e.g. `read`, `write`, `delete` on `filesystem`). |
 | `command`        | string            | optional | Shell command string for the `shell` scope. Matched against rule `pattern`. |
 | `path`           | string            | optional | Filesystem path. The server URL-decodes `%HH` once, then rejects any `..` segment after `filepath.Clean`. |
@@ -76,7 +71,7 @@ Fields are JSON-encoded; only `scope` is required.
 | `url`            | string            | optional | Full URL for the `network` scope. |
 | `agent_id`       | string            | optional | Stable agent identifier. Used as a per-agent override key and as a rate-limit key. |
 | `session_id`     | string            | optional | Required to use `cost.max_per_session` accumulation; also keyed by audit `Query`. |
-| `parent_session_id` | string         | optional | **(v1.4)** The session that started this one (an orchestrator's session for a sub-agent). Not used by policy; recorded in the audit entry's `request` so `GET /v1/sessions` can link parent and child sessions. Omitted when empty, so requests without it are unchanged. |
+| `parent_session_id` | string         | optional | The session that started this one (an orchestrator's session for a sub-agent). Not used by policy; recorded in the audit entry's `request` so `GET /v1/sessions` can link parent and child sessions. Omitted when empty, so requests without it are unchanged. |
 | `est_cost`       | number ≥ 0        | optional | Estimated cost of this action in USD. Required for the `cost` scope. SDKs drop this field when its value is `0` to avoid spurious cost-scope evaluations. |
 | `meta`           | object<string,string> | optional | Free-form string-keyed metadata. Forwarded to notifiers and the audit log; may be redacted by `notify.DefaultRedactor`. |
 
@@ -100,7 +95,7 @@ This is the canonical fixture at
 
 | Field            | Type              | Always set | Description |
 |------------------|-------------------|------------|-------------|
-| `schema_version` | string (`"v1"`)   | yes (v0.5+) | Wire-format version emitted by the server. |
+| `schema_version` | string (`"v1"`)   | yes | Wire-format version emitted by the server. |
 | `decision`       | enum              | yes | One of `"ALLOW"`, `"DENY"`, `"REQUIRE_APPROVAL"`. |
 | `reason`         | string            | yes | Human-readable explanation. Stable enough for log aggregation but not part of the policy contract — wording may evolve. |
 | `matched_rule`   | string            | usually | Identifier of the rule that produced the decision (e.g. `"allow:shell:ls"`, `"deny:filesystem:path_traversal"`, `"deny:ratelimit:shell"`). Empty only on synthetic results that do not correspond to a single rule. |
@@ -150,7 +145,7 @@ is a subset of the v1 schema. Specifically:
 - They drop `est_cost` when its value is `0`.
 - They do **not** currently emit `schema_version`; the server defaults
   it. This is a documented optimization — adding `schema_version: "v1"`
-  to every request is a no-op for v0.5 servers and forward-compatible.
+  to every request is a no-op and forward-compatible.
 - Both fail closed by default when the proxy is unreachable (DENY
   decision with `reason: "Vanzik unreachable (deny): …"` from Python,
   `"Vanzik unreachable: …"` from TypeScript). Both accept fail-open for

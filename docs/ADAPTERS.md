@@ -32,12 +32,12 @@ The floors cover the API surface Vanzik's adapters were built and hardened again
 
 ### Pinning rationale
 
-The 0.5 line introduces upper bounds because the prior `>=0.1` floor allowed silent rot when frameworks renamed methods or added new bypass paths. Specifically:
+Upper bounds exist because a bare `>=0.1` floor allows silent rot when frameworks rename methods or add new bypass paths. Specifically:
 
 - **LangChain** moved from a single `langchain` package on 0.1 to a split `langchain-core` (Runnable protocol) + `langchain` (agents / chains) on 0.3. LangChain has since reached 1.x, which the `<2.0` ceiling already admits and CI installs today; 2.0 gets re-verified before the ceiling moves.
-- **CrewAI** moved its `BaseTool` to inherit from `langchain_core.runnables.Runnable` around 0.80, exposing the modern `invoke` / `ainvoke` / `stream` / `batch` surface. The floor is **1.0** since v1.2.0: on 0.19x a crew kickoff dispatched agent tool calls through a path the adapter does not wrap (the tool ran with no `/v1/check` call), so the adapter now refuses CrewAI below 1.0 with an `ImportError` instead of returning tools that look gated but aren't. (Before 1.2.0 the floor was 0.80, and `[all]` could resolve to crewai 0.193, where wrapping a tool failed with a `cache_function` TypeError.)
+- **CrewAI** moved its `BaseTool` to inherit from `langchain_core.runnables.Runnable` around 0.80, exposing the modern `invoke` / `ainvoke` / `stream` / `batch` surface. The floor is **1.0**: on 0.19x a crew kickoff dispatches agent tool calls through a path the adapter does not wrap (the tool runs with no `/v1/check` call), so the adapter refuses CrewAI below 1.0 with an `ImportError` instead of returning tools that look gated but aren't.
 - **browser-use** 0.4 is the first release where the `Browser` / `Page` API stabilised enough that we could write a strict allowlist against it. Earlier versions reshape the page proxy across minor releases.
-- **MCP** Python SDK (`mcp` on PyPI): the ceiling is `<3.0` since v1.2.0, after the adapter's suite and the gateway end-to-end suite passed on mcp 2.2.0 (and 2.1.1). 1.x stays supported.
+- **MCP** Python SDK (`mcp` on PyPI): the ceiling is `<3.0`; the adapter's suite and the gateway end-to-end suite pass on mcp 2.2.0 (and 2.1.1). 1.x stays supported.
 - **OpenAI Agents SDK** (`openai-agents` on PyPI, import name `agents`): the floor is **0.3.3**, the first release with tool input guardrails and `ToolContext.tool_arguments`; the adapter refuses older releases with an `ImportError`. The unit and integration suites pass on 0.3.3 and on 0.23.1 (the newest release when the adapter landed). The package is pre-1.0, so the ceiling follows the browser-use rule: `<1.0`, not the next minor. The adapter only touches `FunctionTool.on_invoke_tool` and the public guardrail API, and the weekly integration run catches a breaking 0.x minor.
 
 ### Bumping the upper bound
@@ -50,7 +50,7 @@ The 0.5 line introduces upper bounds because the prior `>=0.1` floor allowed sil
 
 ### Which integration-tests legs block CI
 
-Since v1.0.0, the LangChain and CrewAI legs are required: a red leg fails CI (and, since v1.2.0, the MCP leg; since v1.4.0, the OpenAI Agents SDK leg). The browser-use leg is advisory (`continue-on-error`) for two reasons. Its `playwright install` step downloads about 200 MB of Chromium from a CDN and is the known flake. And like every leg, it tests against live upstream releases, so a red browser-use leg usually means upstream drift, not a Vanzik regression. A red advisory leg still shows in the run, and the weekly cron run surfaces upstream breakage even when no PR is open. (Before v1.0.0 the whole job was non-blocking.)
+The LangChain, CrewAI, MCP and OpenAI Agents SDK legs are required: a red leg fails CI. The browser-use leg is advisory (`continue-on-error`) for two reasons. Its `playwright install` step downloads about 200 MB of Chromium from a CDN and is the known flake. And like every leg, it tests against live upstream releases, so a red browser-use leg usually means upstream drift, not a Vanzik regression. A red advisory leg still shows in the run, and the weekly cron run surfaces upstream breakage even when no PR is open.
 
 Authors of adapter changes are still expected to drive the integration job to green locally before merging: from `plugins/python`, run `pytest -v -m integration tests/integration/test_real_<framework>.py` (the same invocation CI uses).
 
@@ -430,7 +430,7 @@ binary:
 
 #### Empty-server mode (back-compat)
 
-Running the entry point without `--upstream` keeps the v0.4.x behaviour: a server that registers no tools. Useful for programmatic embedding via `GuardedMCPServer.add_tool(...)` in custom code; useless when wired to Claude Desktop verbatim. The adapter logs a stderr WARN at startup so an operator following the docs literally sees the misconfiguration immediately:
+Running the entry point without `--upstream` starts a server that registers no tools. Useful for programmatic embedding via `GuardedMCPServer.add_tool(...)` in custom code; useless when wired to Claude Desktop verbatim. The adapter logs a stderr WARN at startup so an operator following the docs literally sees the misconfiguration immediately:
 
 ```bash
 python -m vanzik.adapters.mcp --guard-url http://localhost:8080

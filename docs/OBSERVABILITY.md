@@ -35,7 +35,7 @@ curl -s http://127.0.0.1:8080/metrics
 | `vanzik_audit_buffered_dropped_to_overflow_total` | — | Audit entries spilled to the buffered logger's overflow file (durable, not lost). |
 | `vanzik_audit_buffered_drained_from_overflow_total` | — | Spilled audit entries re-enqueued by the recovery loop. |
 | `vanzik_audit_corrupt_lines_total` | — | Audit lines that failed JSON parse during `Query()` and were skipped. |
-| `vanzik_audit_seal_tail_mismatch_total` | — | **(v1.4)** Startups where the sealed audit log ended before the chain head the replay checkpoint recorded: entries may have been removed. Any increase deserves a look (`vanzik audit verify`). |
+| `vanzik_audit_seal_tail_mismatch_total` | — | Startups where the sealed audit log ended before the chain head the replay checkpoint recorded: entries may have been removed. Any increase deserves a look (`vanzik audit verify`). |
 | `vanzik_notify_spooled_to_disk_total` | — | Notification events spilled to the `--notify-spool` file on queue overflow (retried, not dropped). |
 | `vanzik_notify_despooled_total` | — | Spooled notification events re-enqueued for dispatch. |
 | `vanzik_deprecations_used_total` | `feature` | Times a deprecated feature was exercised. Keys match `docs/DEPRECATIONS.md`. In 2.x neither `audit.migration.v040_to_v041` nor `audit.backup.v040` calls `deprecation.Warn`, so `vanzik_deprecations_used_total` stays at 0 for them whether or not they run. |
@@ -50,7 +50,7 @@ curl -s http://127.0.0.1:8080/metrics
 | `vanzik_notify_queue_depth` | — | Length of the shared notify dispatch queue (sampled at last enqueue). |
 | `vanzik_audit_buffered_queue_depth` | — | Entries waiting in the buffered audit queue. |
 | `vanzik_audit_replay_duration_seconds` | — | Wall-clock duration of the most recent startup audit replay. |
-| `vanzik_audit_seal_seq` | — | **(v1.4)** `seq` of the newest published audit anchor: the sealed chain's head at the last anchor (every `--audit-anchor-interval`, at rotation, at startup and at shutdown). `0` when `--audit-seal` is off. It should only go up; see [OPERATIONS § Sealing and anchoring](OPERATIONS.md#sealing-and-anchoring). |
+| `vanzik_audit_seal_seq` | — | `seq` of the newest published audit anchor: the sealed chain's head at the last anchor (every `--audit-anchor-interval`, at rotation, at startup and at shutdown). `0` when `--audit-seal` is off. It should only go up; see [OPERATIONS § Sealing and anchoring](OPERATIONS.md#sealing-and-anchoring). |
 | `vanzik_audit_migration_status` | `from`, `to`, `status` | 1 = current outcome of an audit-schema migration; 0 for non-current statuses of the same `(from, to)`. Status ∈ {`ran`,`skipped`,`failed`}. |
 
 ### Histograms
@@ -74,7 +74,7 @@ Notifier histogram buckets (seconds):
 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, +Inf
 ```
 
-Bucket boundaries are treated as a stable contract. Re-bucketing invalidates historical Prometheus data — see `CHANGELOG.md` v0.4.1.
+Bucket boundaries are treated as a stable contract. Re-bucketing invalidates historical Prometheus data.
 
 ---
 
@@ -90,8 +90,8 @@ The LLM proxy additionally records these series in its own process (`pkg/metrics
 | `vanzik_llmproxy_streams_rejected_total` | counter | — | Streaming requests refused with 503 at the concurrent-stream cap. |
 | `vanzik_llmproxy_buffer_overflow_total` | counter | `provider` | Streaming tool-call buffer exceeded `--max-buffer-bytes`; converted to a synthetic refusal. |
 | `vanzik_llmproxy_non_streaming_overflow_total` | counter | `provider` | Same, for non-streaming responses. |
-| `vanzik_llmproxy_protocol_violation_total` | counter | `provider` | Streams refused fail-closed because the upstream's tool-call structure could not be bound to a gateable call: interleaved or conflicting `tool_use` blocks, tool input arriving with no block open (audit B7), or tool calls spread across several OpenAI choices (audit B18). The client-visible rule string names which — see `docs/LLM_API_PROXY.md` §5.4. |
-| `vanzik_llmproxy_undecodable_tool_call_total` | counter | `provider` | Non-streaming responses refused fail-closed because the body failed strict decode yet still carried a tool call a lenient client SDK would have executed ungated (audit B6). Non-zero usually means an OpenAI-compatible shim is emitting a wrong-typed field. |
+| `vanzik_llmproxy_protocol_violation_total` | counter | `provider` | Streams refused fail-closed because the upstream's tool-call structure could not be bound to a gateable call: interleaved or conflicting `tool_use` blocks, tool input arriving with no block open, or tool calls spread across several OpenAI choices. The client-visible rule string names which — see `docs/LLM_API_PROXY.md` §5.4. |
+| `vanzik_llmproxy_undecodable_tool_call_total` | counter | `provider` | Non-streaming responses refused fail-closed because the body failed strict decode yet still carried a tool call a lenient client SDK would have executed ungated. Non-zero usually means an OpenAI-compatible shim is emitting a wrong-typed field. |
 
 The MCP gateway emits no metrics of its own; its decisions surface in the central server's audit stream and counters.
 

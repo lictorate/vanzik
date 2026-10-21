@@ -77,7 +77,7 @@ touch configs/default.yaml
 
 **Mitigations:**
 
-- Share state across replicas (v1.0): `--store-dsn postgres://…` plus a distinct `--node-id` per replica. Note the shared mode is bounded-overshoot — brief bursts can still exceed the cap by ≈ `reconcile-interval × peak rate` per extra replica before the nodes converge.
+- Share state across replicas: `--store-dsn postgres://…` plus a distinct `--node-id` per replica. Note the shared mode is bounded-overshoot — brief bursts can still exceed the cap by ≈ `reconcile-interval × peak rate` per extra replica before the nodes converge.
 - Divide per-scope `max_requests` by the replica count when writing the policy.
 - Pin agents to a single Vanzik instance via session affinity.
 - Keep `replicas: 1` and scale vertically.
@@ -88,7 +88,7 @@ Details: [`docs/OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments).
 
 ## Approvals disappeared after a restart
 
-**Cause:** since v0.6 the queue is persistent by default, so this should only happen if (a) you run `--persist=false` (pre-v0.6 in-memory mode), (b) the process can't write its `--data-dir` (check the startup log for store errors), or (c) the entries were created inside the final ≥1 s store-sync window before a hard crash.
+**Cause:** the queue is persistent by default, so this should only happen if (a) you run `--persist=false` (in-memory only), (b) the process can't write its `--data-dir` (check the startup log for store errors), or (c) the entries were created inside the final ≥1 s store-sync window before a hard crash.
 
 **Mitigations:**
 
@@ -104,7 +104,7 @@ Details: [`docs/OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments).
 
 **Fix:**
 
-- Keep rotation enabled (it is on by default since v0.5: `--audit-max-size-mb 100`, 5 backups) so the active file stays bounded.
+- Keep rotation enabled (it is on by default: `--audit-max-size-mb 100`, 5 backups) so the active file stays bounded.
 - Ship historical audit data to an external aggregator and truncate the local file during scheduled maintenance.
 
 Details: [`docs/OPERATIONS.md`](OPERATIONS.md).
@@ -181,7 +181,7 @@ Details: [`docs/POLICY_REFERENCE.md`](POLICY_REFERENCE.md).
 
 ## Condition has `time_window` but it is being ignored
 
-**Cause:** `time_window` without `require_prior` was a v0.4.0-compat no-op that **errors out at policy load as of v0.5.0**. `LoadFromFile` returns the validation error; the server refuses to boot until the policy is fixed. Either remove the orphan `time_window` or add a `require_prior` clause. See [`DEPRECATIONS.md`](DEPRECATIONS.md).
+**Cause:** `time_window` without `require_prior` **errors out at policy load**. `LoadFromFile` returns the validation error; the server refuses to boot until the policy is fixed. Either remove the orphan `time_window` or add a `require_prior` clause. See [`DEPRECATIONS.md`](DEPRECATIONS.md).
 
 **Confirm:** policy load fails with an error like:
 

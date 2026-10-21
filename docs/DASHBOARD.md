@@ -55,9 +55,9 @@ The dashboard is a single HTML page (`dashboardHTML` in `pkg/proxy/server.go`) t
 
 1. Fetches `/api/stats` once on page load.
 2. Fetches `/api/pending` once on page load.
-3. Fetches `/v1/audit?order=desc&limit=200` once on page load — the 200 most recent entries (server clamps to `auditMaxLimit`, default 1000, so 200 passes through unclamped). Before v1.2 it fetched the oldest 200.
+3. Fetches `/v1/audit?order=desc&limit=200` once on page load — the 200 most recent entries (server clamps to `auditMaxLimit`, default 1000, so 200 passes through unclamped).
 4. Subscribes to `/api/stream` for live deltas.
-5. Fetches `/v1/sessions` and `/v1/sessions/{id}` when you open the **Sessions** tab (v1.4).
+5. Fetches `/v1/sessions` and `/v1/sessions/{id}` when you open the **Sessions** tab.
 
 Sections you'll see:
 
@@ -67,7 +67,7 @@ Sections you'll see:
 | **Pending Approvals** | `/api/pending` + SSE | Each entry shows scope, command/path/domain, agent, timestamp. Approve / Deny buttons. |
 | **Audit** | `/v1/audit?order=desc&limit=200` + SSE | Most recent decisions. SSE events are prepended to the feed live; only the historical slice is loaded once, so reload the page to re-read it. |
 | **LIVE badge** | EventSource state | Green when `EventSource.readyState === OPEN`. |
-| **Sessions** tab | `/v1/sessions`, `/v1/sessions/{id}` | **(v1.4)** Sessions and a replay of each. See [Sessions view](#sessions-view). |
+| **Sessions** tab | `/v1/sessions`, `/v1/sessions/{id}` | Sessions and a replay of each. See [Sessions view](#sessions-view). |
 
 ---
 
@@ -93,7 +93,7 @@ Dashboard always requests `limit=200`; the server clamps at `auditMaxLimit` (def
 
 ## Sessions view
 
-**(v1.4)** The **Sessions** tab in the header groups the audit log by `session_id`.
+The **Sessions** tab in the header groups the audit log by `session_id`.
 
 The left pane lists the sessions of the last hour, 24 hours or 7 days, newest first ([`GET /v1/sessions`](API.md#get-v1sessions--tenant-aware-mirror)). Each shows its id, the session that started it, its transports, its agents and its decision counts. Entries without a `session_id` are not listed. **Refresh** reloads the list; it does not update by itself.
 

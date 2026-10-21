@@ -46,7 +46,7 @@ from vanzik import (
 )
 ```
 
-**(v1.2)** `vanzik.__version__` is the SDK's version string, e.g. `"1.2.0"` — the same as the `vanzik` release it ships in.
+`vanzik.__version__` is the SDK's version string, e.g. `"1.2.0"` — the same as the `vanzik` release it ships in.
 
 The core SDK has **no runtime dependencies** — it uses only the standard library (`urllib`, `json`, `dataclasses`, `functools`, `time`). Adapters pull in their respective frameworks through PyPI extras.
 
@@ -60,7 +60,7 @@ The core SDK has **no runtime dependencies** — it uses only the standard libra
 | `VANZIK_API_KEY` | *(empty)* | `Guard(api_key="")` fallback. Sent as `Authorization: Bearer <key>` on `/v1/approve/{id}`, `/v1/deny/{id}`, and every poll of `/v1/status/{id}` inside `wait_for_approval`. |
 | `VANZIK_TENANT_ID` | *(empty)* | `Guard(tenant_id=None)` fallback. A value other than `local` routes every call to `/v1/t/<tenant>/…` (see [`API.md`](API.md#url-families-legacy-vs-tenant-aware-v05)). |
 
-Explicit arguments always win over env vars; env vars always win over package defaults.
+Explicit arguments always win over env vars; env vars always win over package defaults. Variables for the server and CLI: [`CLI.md` § Environment variables](CLI.md#environment-variables).
 
 ---
 
@@ -84,7 +84,7 @@ Guard(
 - `api_key` — empty string falls back to `VANZIK_API_KEY`. Required whenever the server is started with `--api-key`.
 - `fail_mode` — see [Fail-mode semantics](#fail-mode-semantics). Invalid values raise `ValueError` at construction so misconfiguration fails at startup rather than mid-request.
 - `tenant_id` — `None` falls back to `VANZIK_TENANT_ID`; an explicit `""` ignores the env var. Empty or `"local"` uses the legacy `/v1/…` URLs; any other value uses `/v1/t/<tenant>/…`, with the tenant URL-encoded.
-- `parent_session_id` — **(v1.4)** sent as `parent_session_id` on every `check()` unless the call passes its own. See [Linking sub-agent sessions](#linking-sub-agent-sessions).
+- `parent_session_id` — sent as `parent_session_id` on every `check()` unless the call passes its own. See [Linking sub-agent sessions](#linking-sub-agent-sessions).
 
 ### Linking sub-agent sessions
 
@@ -177,7 +177,7 @@ CheckResult(decision="ALLOW", reason="Vanzik unreachable (allow): <original erro
 
 **When to use `"allow"`:** rarely. Acceptable only if (a) your agent is already in a trusted environment, (b) Vanzik is advisory rather than authoritative, and (c) you log and alert on the `"Vanzik unreachable"` reason so the outage is visible.
 
-**When to stick with `"deny"`:** any production path where an unsupervised agent must not act. That is the safe default and the v0.4.0 behavior.
+**When to stick with `"deny"`:** any production path where an unsupervised agent must not act. That is the safe default.
 
 ---
 
@@ -193,7 +193,7 @@ CheckResult(decision="ALLOW", reason="Vanzik unreachable (allow): <original erro
 
 **Pick `timeout` higher than your human-SLA.** If approvers need 15 minutes on average, `timeout=300` will fire false negatives.
 
-**Restarts pause approvals; they no longer kill them.** Since v0.6 the server persists the approval queue by default (`--persist`), so pending IDs survive a restart and your poll loop picks up where it left off. The exceptions: a server running `--persist=false` loses every pending ID on restart, and an entry created in the final ≥1 s store-sync window before a hard crash may be gone. In either case the poll loop retries against a queue that no longer has the entry — catch the timeout and re-issue the `check` call (which creates a new approval ID).
+**Restarts pause approvals; they don't kill them.** The server persists the approval queue by default (`--persist`), so pending IDs survive a restart and your poll loop picks up where it left off. The exceptions: a server running `--persist=false` loses every pending ID on restart, and an entry created in the final ≥1 s store-sync window before a hard crash may be gone. In either case the poll loop retries against a queue that no longer has the entry — catch the timeout and re-issue the `check` call (which creates a new approval ID).
 
 ---
 

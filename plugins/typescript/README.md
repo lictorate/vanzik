@@ -91,7 +91,7 @@ try {
 }
 ```
 
-By default the first argument is forwarded to `check()` as `{ command: String(args[0]) }`. To pass a different shape, provide an extractor — either as the fourth positional arg (legacy v0.4.x shape) or via the options object:
+By default the first argument is forwarded to `check()` as `{ command: String(args[0]) }`. To pass a different shape, provide an extractor — either as the fourth positional arg or via the options object:
 
 ```ts
 // Custom extractor
@@ -197,7 +197,7 @@ Polls `GET /v1/status/{id}` with the Bearer token attached. A `401`/`403` throws
 
 **Tune `timeoutMs` to the human SLA.** If approvers routinely take 5 minutes, `300_000` (5 min) will fire false negatives.
 
-**Restarts pause approvals; they don't kill them.** Since v0.6 the server persists the approval queue by default (`--persist`), so pending IDs survive a restart and `waitForApproval` picks up where it left off. The exceptions: a server started with `--persist=false` loses every pending ID on restart, and an approval created in the last ≥1 s store-sync window before a hard crash may be gone. In both cases the status endpoint answers `404` for that ID, `waitForApproval` keeps polling until `timeoutMs`, and you get `{ decision: 'DENY', reason: 'Approval timed out' }` — re-issue `check()` to get a new approval ID.
+**Restarts pause approvals; they don't kill them.** The server persists the approval queue by default (`--persist`), so pending IDs survive a restart and `waitForApproval` picks up where it left off. The exceptions: a server started with `--persist=false` loses every pending ID on restart, and an approval created in the last ≥1 s store-sync window before a hard crash may be gone. In both cases the status endpoint answers `404` for that ID, `waitForApproval` keeps polling until `timeoutMs`, and you get `{ decision: 'DENY', reason: 'Approval timed out' }` — re-issue `check()` to get a new approval ID.
 
 ### `CheckResult`
 
