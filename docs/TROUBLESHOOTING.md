@@ -165,7 +165,7 @@ A `deny:shell:unparseable_command` verdict means the command used syntax Vanzik 
 
 ## `*.foo.com` does not match `foo.com`
 
-**Not a bug.** Vanzik uses standard glob semantics: `*.foo.com` requires at least one character before the dot. Similarly, `*` does not cross `/` boundaries unless you use `**`.
+**Not a bug.** Vanzik uses standard glob semantics: `*.foo.com` requires at least one character before the dot. Note the opposite surprise for paths: a single `*` **does** cross `/` (`api/*/users` matches `api/v1/internal/users`, and `/workspace/*` matches every file under `/workspace`), so bound path allows with `**` segments instead. See [POLICY_REFERENCE § Single-star `*` crosses `/`](POLICY_REFERENCE.md#single-star--crosses-).
 
 **Fix:** add both patterns explicitly.
 
