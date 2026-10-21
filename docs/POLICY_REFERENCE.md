@@ -204,7 +204,7 @@ Applies only when `scope: cost`. The incoming request must carry a numeric `est_
 
 ## Data scope
 
-The `data` scope gates **form inputs and browser data submissions** so operators can write rules against the value being submitted (PII, credentials, credit-card-shaped strings) and the destination URL — independently of the broader `browser` scope which only sees navigation and clicks. The browser-use adapter (`plugins/python/vanzik/adapters/browseruse.py`) routes every `GuardedPage.fill`, `GuardedPage.type`, `GuardedFrame.fill`, and `GuardedBrowser.check_form_input` call through `scope: data`; framework adapters that wrap form-completion tools should follow the same convention.
+The `data` scope gates **form inputs and browser data submissions** so operators can write rules against the value being submitted (PII markers, credentials) and the destination URL — independently of the broader `browser` scope which only sees navigation and clicks. The browser-use adapter (`plugins/python/vanzik/adapters/browseruse.py`) routes every `GuardedPage.fill`, `GuardedPage.type`, `GuardedFrame.fill`, and `GuardedBrowser.check_form_input` call through `scope: data`; framework adapters that wrap form-completion tools should follow the same convention.
 
 ### Request fields
 
@@ -218,7 +218,7 @@ The `data` scope gates **form inputs and browser data submissions** so operators
 
 ### Pattern matching
 
-Standard glob matching applies (see [pattern semantics](#pattern-matching-semantics-read-this)). Examples:
+Standard glob matching applies (see [pattern semantics](#pattern-matching-semantics-read-this)). Only `*` and `?` are wildcards, so a value's shape (a card number, an SSN) can't be described by a pattern: `[0-9]` is matched as the literal text `[0-9]`. Match explicit markers or field names instead. Examples:
 
 ```yaml
 - scope: data
@@ -226,8 +226,6 @@ Standard glob matching applies (see [pattern semantics](#pattern-matching-semant
     # Explicit PII markers in the value
     - pattern: "*ssn:*"
       message: "SSN values must not leave this agent"
-    # Credit-card-shaped (13-19 digit groups). Loose heuristic.
-    - pattern: "*[0-9][0-9][0-9][0-9] *[0-9][0-9][0-9][0-9]*"
     # Field-name based gate — the field name lands in command via the adapter
     # when the form-input action is dispatched.
   allow:
@@ -617,6 +615,8 @@ A leading variable assignment (`FOO=bar cmd`) stays part of the full command, so
 ## Pattern matching semantics (read this)
 
 Pattern matching is where most policy bugs come from.
+
+Only two wildcards exist: `*` and `?`. There are no character classes or ranges: `[0-9]`, `[a-z]` and `{a,b}` are matched as literal text, so a pattern using them only matches strings that contain those exact characters.
 
 ### Single-star `*` crosses `/`
 

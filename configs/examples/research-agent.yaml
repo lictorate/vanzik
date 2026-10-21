@@ -101,9 +101,9 @@ rules:
     deny:
       - pattern: "*ssn:*"
         message: "SSN values must not be submitted to web forms"
-      # Loose credit-card heuristic — 13-19 contiguous digits with optional separators.
-      - pattern: "*[0-9][0-9][0-9][0-9] *[0-9][0-9][0-9][0-9]*"
-        message: "Card-number-shaped value blocked"
+      # Patterns know only `*` and `?` (no `[0-9]` classes), so a value's
+      # shape, such as a card number, can't be matched. Gate by marker,
+      # as above, and by destination, as below.
       - domain: "*.bank.*"
         message: "Form submissions to banking sites are blocked"
     allow:

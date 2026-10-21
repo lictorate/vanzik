@@ -88,6 +88,12 @@ tests:
     expect: DENY
     expect_reason_contains: "SSN"
 
+  # Patterns have no character classes, so the policy can't recognise a
+  # card number by its shape: one sent to an allowed site goes through.
+  - name: a card number is not recognised by shape
+    request: {scope: data, command: "4111 1111 1111 1111", domain: export.arxiv.org, agent_id: researcher}
+    expect: ALLOW
+
   # --- Cost ---
   - name: a cheap action is allowed
     request: {scope: cost, est_cost: 0.10, session_id: s1, agent_id: researcher}
