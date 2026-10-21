@@ -317,7 +317,7 @@ The decorator/HOF internally: `check` → if REQUIRE_APPROVAL, `wait_for_approva
 
 ### Auditability
 
-Every resolution is recorded in the audit log with `decision: ALLOW` or `DENY` and `matched_rule: require_approval:*`. The follow-up re-run check is also recorded. You can reconstruct the full chain by querying `/v1/audit?agent_id=X` and following `approval_id` values.
+Every resolution is recorded in the audit log when it is made: one entry with `decision: ALLOW` or `DENY`, `matched_rule: approval:resolved:<via>` (`bearer`, `session` or `open`, how the call was authenticated), the `approval_id`, the original request, and the caller's address in `reason`. Repeating the same decision writes no second entry. The follow-up re-run check is also recorded (`allow:approved` / `deny:approved`). An approval that times out is not recorded. You can reconstruct the full chain by querying `/v1/audit?agent_id=X` and following `approval_id` values.
 
 ---
 

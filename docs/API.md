@@ -165,7 +165,7 @@ Rate-limit denials return `200` with `decision: "DENY"` and `matched_rule: "deny
 
 Tenant-aware mirrors live at `POST /v1/t/{tenant}/approve/{id}` and `POST /v1/t/{tenant}/deny/{id}`. Auth posture and request body are identical.
 
-Resolve a pending approval. Resolution is **write-once**: the first decision stands forever. Re-sending the *same* decision returns `200` (idempotent no-op, safe for retried requests); sending the *opposite* decision returns `409` with `{"error":"already resolved","id":"ap_…","status":"approved"|"denied"}` and mutates nothing. A wrong decision is corrected by re-running the action through `/v1/check` (fresh approval id) — never by editing history. Each resolution also records how it arrived (`resolved_via`: `bearer` / `session` / `open`, plus the peer host) for incident reconstruction.
+Resolve a pending approval. Resolution is **write-once**: the first decision stands forever. Re-sending the *same* decision returns `200` (idempotent no-op, safe for retried requests); sending the *opposite* decision returns `409` with `{"error":"already resolved","id":"ap_…","status":"approved"|"denied"}` and mutates nothing. A wrong decision is corrected by re-running the action through `/v1/check` (fresh approval id) — never by editing history. Each resolution also records how it arrived (`resolved_via`: `bearer` / `session` / `open`, plus the peer host) for incident reconstruction, and the first one writes an audit entry with `matched_rule: approval:resolved:<via>`.
 
 ### Request (Bearer)
 
