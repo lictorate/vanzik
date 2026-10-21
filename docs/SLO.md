@@ -1,4 +1,4 @@
-# Service Level Objectives — Vanzik v1.0
+# Service Level Objectives — Vanzik v2.0
 
 **Status:** baseline established (captured on v0.5.0; still the recorded
 floor). Targets below are operational expectations for a single-replica
@@ -29,9 +29,11 @@ The targets below assume:
 - **All rules fit in memory.** The engine evaluates against a single
   `*Policy` snapshot under a read lock; we have not modeled policies
   larger than a few hundred rules.
-- **No `require_prior` conditional rules** in the request path. They
-  trigger an audit-log scan that is explicitly out-of-scope for this
-  SLO (see "Out of scope" below).
+- **`require_prior` conditions are map lookups.** The server answers them
+  from its in-memory `PriorActionIndex`, not by scanning the audit log
+  (see [`POLICY_REFERENCE.md`](POLICY_REFERENCE.md)), so they stay inside
+  these targets. Only an embedder that wires a `HistoryQuerier` alone gets
+  the older log-scan path.
 - **Cost-scope traffic is a minority of total volume.** Cost requests
   acquire a write lock; sustained heavy contention on the cost scope is
   out-of-scope.
@@ -61,12 +63,6 @@ concurrency) remains open — see §Validation plan.
   takes a write lock so cost reservation and decision are atomic. Many
   concurrent cost checks against the same `Engine` instance will serialize.
   We do not bound p99 in this regime.
-- **`require_prior` audit-history scan.** When a rule has a `require_prior`
-  condition, the engine queries the audit log via `HistoryQuerier`. With the
-  default file backend this walks the JSONL file linearly, so p99 scales
-  with audit-log size. The v0.6 store backend's indexed `audit_entries`
-  table (`--audit-backend=store`) removes the linear scan, but no latency
-  target is published for this path yet.
 - **Startup replay.** `NewServer` re-reads the audit log to seed in-memory
   decision counters. A multi-GiB log delays the first accurate `/metrics`
   scrape; this is documented in
@@ -93,8 +89,8 @@ end-to-end RPS measurements — but they bound the per-request floor.
 
 **Reading the numbers:**
 
-- Engine `Check` for the common allow path is ≈ 286 ns / 6 allocs. With
-  a per-request audit write of ≈ 4.2 µs, the synchronous floor for
+- Engine `Check` for the common allow path is ≈ 285 ns / 6 allocs. With
+  a per-request audit write of ≈ 4.5 µs, the synchronous floor for
   `/v1/check` lands well under the **p50 < 1 ms** target with three
   orders of magnitude of headroom for HTTP framing and OS scheduling.
 - The deny-deep-match path (walk past 100 allows to a deny) is actually
@@ -102,18 +98,16 @@ end-to-end RPS measurements — but they bound the per-request floor.
   circuits before any allow allocation, and `formatRule` for the matching
   deny does fewer string ops than the allow message format. This bounds
   the worst-case `Check()` shape we ship by default.
-- `globMatch` with `**` against a 5-segment path is ≈ 155 ns regardless
+- `globMatch` with `**` against a 5-segment path is ≈ 200 ns regardless
   of match/no-match. The two-allocation cost is the segment-split slices;
   a future zero-alloc rewrite is queued in `R4 E1`.
-- `FileLogger.Log` at 4.2 µs / 2 allocs / 336 B is within an order of
+- `FileLogger.Log` at 4.5 µs / 2 allocs / 336 B is within an order of
   magnitude of the syscall floor for an `O_APPEND` write of a ≈ 200 B
   JSON line. Replacing the per-record `json.Encoder` with batched writes
   is the obvious next optimisation (deferred — `R4 F2`).
-- `Dispatcher.Send` on a fully wedged queue costs ≈ 3 µs / 30 allocs.
-  The allocations come from the redactor scrubbing the event payload
-  (`Redactor.Redact` returns a new `Event` with redacted strings); they
-  are paid even when the queue drops the event. Reducing the redactor's
-  alloc footprint is queued in `R4 E2`.
+- `Dispatcher.Send` on a fully wedged queue cost ≈ 3 µs at this capture.
+  Current builds drop the event without allocating (0 B/op, 0 allocs/op),
+  so the 483 B / 30 allocs in the table are the v0.5.0 figure only.
 
 ## Re-running the baseline
 

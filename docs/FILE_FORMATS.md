@@ -6,9 +6,9 @@ This document is the contract for those formats. If you add a new on-disk artifa
 
 ## Versioning rules
 
-1. **Every file Vanzik writes carries a `schema_version` field or header record.** There are no unversioned writes.
+1. **The audit log carries a `schema_version` header record.** A few files carry none: the replay checkpoint, the `vanzik.db` store (its schema is managed by idempotent DDL, below), the proxies' `--fail-audit-log`, the `--notify-spool` file and the `--audit-overflow-path` spill file. The last three hold plain `audit.Entry` or event JSON lines.
 2. **Readers tolerate `N-1`.** A server at schema `N` must be able to read the previous major on-disk format. If it can, the upgrade is transparent; if the older format needs to be rewritten, the server runs the registered migration from `pkg/migrate/` before starting the rest of the boot sequence.
-3. **Readers refuse `N+1` with a clear message.** If a newer server wrote the file, the older server exits with: `file <path> is schema_version <N+1>; this Vanzik build supports up to <N>. Upgrade the binary before starting.` — no silent downgrade, no best-effort parse.
+3. **Readers refuse `N+1` with a clear message.** If a newer server wrote the file, the older server exits with status 1 and: `audit file <path> has schema_version=<N+1>; this binary understands up to <N> — upgrade the binary or downgrade the file` — no silent downgrade, no best-effort parse.
 4. **Schema versions are monotonic integers.** They are not semver; `schema_version: 2` means "the second iteration of the on-disk format", independent of the release version that introduced it.
 5. **Bumping a schema version is a deliberate act.** It requires: (a) a new migration under `pkg/migrate/vNNN_to_vMMM/`, (b) an entry in `docs/DEPRECATIONS.md` for the old format with a removal target, (c) a CHANGELOG note.
 
@@ -21,14 +21,14 @@ Default path: `audit.jsonl` (CLI `--audit-log`). JSON-Lines, one record per line
 | schema_version | release | shape |
 |---|---|---|
 | 1 (headerless) | v0.3.x, v0.4.0 | First line is an `audit.Entry` record. No header. |
-| 2 | v0.4.1+ | First line is a meta-record: `{"_meta": {"schema_version": 2, "created_at": "...", "segment_id": "...", "rotated_from": "..."}}`. Remaining lines are `audit.Entry` records, one per line. |
+| 2 | v0.4.1 onward | First line is a meta-record: `{"_meta": {"schema_version": 2, "created_at": "...", "segment_id": "...", "rotated_from": "..."}}`. Remaining lines are `audit.Entry` records, one per line. |
 
 **Meta-record fields.** `created_at` is when the file was created (RFC 3339, UTC). `segment_id` (v1.4+, additive) is 32 random hex characters that identify this file; files written before v1.4 don't have it. `rotated_from` is the **base name** of the archive this file succeeded (for example `audit.jsonl.20261010T120000Z.gz`), and is omitted on a file that starts a chain.
 
-**Reader contract.** A v0.4.1+ reader peeks the first non-empty line:
+**Reader contract.** A reader from v0.4.1 onward peeks the first non-empty line:
 - If it contains `_meta.schema_version == 2`, read normally.
 - If it contains `_meta.schema_version >= 3`, refuse startup with the upgrade message above.
-- If it does not contain `_meta`, assume schema 1 and invoke the `v040_to_v041` migration (see `pkg/migrate/`). Migration rewrites the file in place with a header and preserves the original at `<path>.v040-backup` for one minor release.
+- If it does not contain `_meta` but is an `audit.Entry` (it has `timestamp` and `request`), assume schema 1 and invoke the `v040_to_v041` migration (see `pkg/migrate/`), which still ships in 2.x. Migration rewrites the file in place with a header and preserves the original at `<path>.v040-backup`, which is kept (see below).
 
 **Corrupt meta record.** If the first non-empty line parses as JSON but has neither `_meta` nor the shape of an `audit.Entry`, the server refuses startup. Corrupt lines **after** the first are silently skipped, as they are today.
 
@@ -114,7 +114,7 @@ Size-triggered rotation via the logger. Archives are named `<audit-log>.<timesta
 
 Default path: `<audit-log-path>.v040-backup`. Created by the v0.4.0 → v0.4.1 migration with mode `0600`. A byte-for-byte copy of the pre-migration headerless audit file, kept so an operator can downgrade to v0.4.0 by restoring this file over the migrated one.
 
-Lifecycle: written on migration and left untouched afterwards. The removal originally scheduled for v0.4.3 never shipped — the migration (and this backup convention) is still in the binary as of v1.0. Tracked in `docs/DEPRECATIONS.md` as `audit.backup.v040`. Operators who want to keep the backup long-term should still copy it off the server.
+Lifecycle: written on migration and left untouched afterwards. The removal originally scheduled for v0.4.3 never shipped — the migration (and this backup convention) is still in the binary in 2.x. Tracked in `docs/DEPRECATIONS.md` as `audit.backup.v040`. Operators who want to keep the backup long-term should still copy it off the server.
 
 ### `vanzik.db` (+ `-wal` / `-shm` sidecars) — durable runtime store (v0.6+)
 
@@ -136,7 +136,7 @@ The approval queue, rate-limit buckets, and session-cost accounting were on this
 
 Not everything that looks like a version tracks the release version. Listed here so nobody bumps them by accident:
 
-- **`pkg/notify/notify.go:174` — `User-Agent: Vanzik/2.0`.** This is the HTTP client protocol identifier sent by the webhook notifier. It is pinned at `2.0` (it moved from `AgentGuard/1.0` with the rename) and represents the webhook payload contract, not the server release. Otherwise it changes only when the outbound webhook payload shape changes in a way downstream consumers must distinguish — independent of Vanzik's release cadence. Do not add this to `scripts/bump-version.sh`.
-- **`plugins/python/vanzik/adapters/mcp.py:41` — `MCP_PROTOCOL_VERSION`.** Pinned at the MCP protocol version negotiated with clients (e.g. `"2024-11-05"`), not the Vanzik release version. This is the Model Context Protocol spec version, and moves only when the MCP spec does. Do not add to `scripts/bump-version.sh`.
+- **`pkg/notify/notify.go:538` — `User-Agent: Vanzik/2.0`.** This is the HTTP client protocol identifier sent by the webhook notifier. It is pinned at `2.0` (it moved from `AgentGuard/1.0` with the rename) and represents the webhook payload contract, not the server release. Otherwise it changes only when the outbound webhook payload shape changes in a way downstream consumers must distinguish — independent of Vanzik's release cadence. Do not add this to `scripts/bump-version.sh`.
+- **`plugins/python/vanzik/adapters/mcp.py:47` — `MCP_PROTOCOL_VERSION`.** Pinned at the MCP protocol version negotiated with clients (e.g. `"2024-11-05"`), not the Vanzik release version. This is the Model Context Protocol spec version, and moves only when the MCP spec does. Do not add to `scripts/bump-version.sh`.
 
 If you add another such identifier, list it here explicitly — future releases will grep for stray `X.Y.Z` strings and an undocumented one will look like a bug.

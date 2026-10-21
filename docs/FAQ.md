@@ -39,7 +39,7 @@ Layers compose — running the gateway *and* the LLM proxy *and* the SDK against
 
 ### Why is `/v1/check` unauthenticated?
 
-So agents can call it with zero per-request setup. The only authenticated endpoints are approve/deny/status/audit and the dashboard. If your threat model requires `/v1/check` to be authenticated, gate it at the reverse proxy (allowlist source IPs or require a second header) — see [`DEPLOYMENT.md`](DEPLOYMENT.md).
+So agents can call it with zero per-request setup. With `--api-key` set, the authenticated endpoints are approve, deny and status, `/v1/audit` (`GET` and `POST`) and `/v1/audit/head`, `/v1/sessions`, the dashboard's `/api/*` routes, and their `/v1/t/<tenant>/…` mirrors; `/v1/check`, `/health`, `/v1/health` and `/metrics` stay open. If your threat model requires `/v1/check` to be authenticated, gate it at the reverse proxy (allowlist source IPs or require a second header) — see [`DEPLOYMENT.md`](DEPLOYMENT.md).
 
 ### My agents can't connect remotely, but `curl localhost:8080/health` works.
 
@@ -99,11 +99,11 @@ No. Policies are YAML files; edit them on disk — the server hot-reloads on cha
 
 ### Does Vanzik support streaming responses / LLM output filtering?
 
-No — Vanzik decides on discrete actions (shell commands, HTTP calls, file writes), not on streaming LLM tokens. For content filtering at generation time, use a different layer (e.g., a prompt-filtering library or an output-scanning middleware). Vanzik is about what the agent *does*, not what it *says*.
+Streaming responses, yes: the LLM API Proxy gates the tool calls inside OpenAI and Anthropic SSE streams, holding each tool call until `/v1/check` answers (see [`LLM_API_PROXY.md`](LLM_API_PROXY.md)). Output filtering, no — Vanzik decides on discrete actions (shell commands, HTTP calls, file writes), not on the model's text tokens. For content filtering at generation time, use a different layer (e.g., a prompt-filtering library or an output-scanning middleware). Vanzik is about what the agent *does*, not what it *says*.
 
 ### How do I test my policy without a live agent?
 
-Two ways:
+Three ways:
 
 1. **CLI validate** — syntax + load-time checks: `vanzik validate --policy configs/my-policy.yaml`.
 2. **Direct curl** — semantics:
@@ -113,7 +113,7 @@ Two ways:
      -d '{"agent_id":"test","scope":"shell","command":"rm -rf /"}'
    ```
 
-Scripted coverage in CI is on the roadmap (P2 item: policy-as-code testing).
+3. **Policy tests in CI** — `vanzik test` (since 1.4) runs a policy against YAML fixture files of requests and expected decisions, with no server, and exits non-zero on a failed case. See [`CLI.md` § `vanzik test`](CLI.md#vanzik-test).
 
 ### How much does running Vanzik cost in overhead?
 
@@ -129,7 +129,7 @@ YAML is human-friendly for rule lists with comments. JSON is too noisy for neste
 
 ### I think I found a security issue. Where do I report?
 
-Email `hello@lictorate.com`. Do **not** open a public issue. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the disclosure policy.
+Email `hello@lictorate.com`. Do **not** open a public issue. See [`SECURITY.md`](../SECURITY.md) for the disclosure policy.
 
 ---
 
