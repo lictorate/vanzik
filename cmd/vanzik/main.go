@@ -1839,8 +1839,10 @@ func printTenantUsage(w io.Writer) {
 	fmt.Fprint(w, `Usage: vanzik tenant <put|list|rm> [flags]
 
 Manage per-tenant policies in the durable store (multi-tenancy). The
-server need not be running; a running server picks up changes on its
-next lookup.
+server need not be running. A running server sees a new tenant on its
+next lookup (within --tenant-policy-refresh-interval if that tenant ID
+was queried before it was registered); replacements and removals reach
+it within --tenant-policy-refresh-interval (default 30s).
 
 Subcommands:
   put <tenant-id> --policy <file.yaml>   Validate and register a tenant policy
