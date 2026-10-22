@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// --- SQLite: multi-node consumption tables (v1.0 reconciliation) ---
+// --- SQLite: multi-node consumption tables ---
 
 func TestSQLiteStore_RateConsumptionRoundTrip(t *testing.T) {
 	s := newTestStore(t)
@@ -172,7 +172,7 @@ func TestPostgresStore_CostConsumptionRoundTrip(t *testing.T) {
 	runCostConsumptionRoundTrip(t, s)
 }
 
-// truncateConsumption clears the two v1.0 consumption tables (not covered by
+// truncateConsumption clears the two consumption tables (not covered by
 // newTestPGStore's TRUNCATE) so each Postgres consumption test starts clean.
 func truncateConsumption(t *testing.T, s *PostgresStore) {
 	t.Helper()

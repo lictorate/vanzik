@@ -9,17 +9,16 @@ import (
 	"time"
 )
 
-// auditIndex is an index on audit_entries added after the table first
-// shipped. On an existing database it is built over every row already
-// there, and audit_entries has no retention, so the build can take a
-// while; it therefore runs outside the bounded boot migration (see
+// auditIndex is an index on audit_entries that an existing database may
+// lack. It is built over every row already there, and audit_entries has no
+// retention, so the build can take a while; it therefore runs outside the bounded boot migration (see
 // SQLiteStore.buildAuditIndexes and PostgresStore.buildAuditIndexes).
 type auditIndex struct {
 	name    string
 	columns string
 }
 
-// auditSessionIndexes serve the session queries (v1.4): one session's
+// auditSessionIndexes serve the session queries: one session's
 // entries, and the sessions started by a parent. Every query works without
 // them, only slower.
 var auditSessionIndexes = []auditIndex{
@@ -67,9 +66,9 @@ func (s *SQLiteStore) buildAuditIndexes(ctx context.Context) error {
 
 // startAuditIndexBuild builds the missing audit indexes in the background,
 // after the boot migration has committed. Inside the migration transaction
-// the build held ACCESS EXCLUSIVE on audit_entries for its whole length and
-// could run past the boot timeout, which rolled the migration back and
-// crash-looped the node. Close stops it.
+// the build would hold ACCESS EXCLUSIVE on audit_entries for its whole
+// length and could run past the boot timeout, rolling the migration back
+// and crash-looping the node. Close stops it.
 func (s *PostgresStore) startAuditIndexBuild() {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.stopIndexes = cancel

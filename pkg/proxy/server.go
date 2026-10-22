@@ -68,17 +68,17 @@ var ErrApprovalQueueFull = errors.New("approval queue full: no resolved entries 
 // Config holds the server configuration.
 type Config struct {
 	Port int
-	// BindHost is the host or IP to listen on (v1.2, `serve --bind`). Empty
-	// keeps the historical default: every interface when APIKey is set,
-	// 127.0.0.1 otherwise. A non-loopback BindHost without an APIKey falls
-	// back to 127.0.0.1 (the CLI refuses that combination before it gets here).
+	// BindHost is the host or IP to listen on (`serve --bind`). Empty means
+	// every interface when APIKey is set, 127.0.0.1 otherwise. A non-loopback
+	// BindHost without an APIKey falls back to 127.0.0.1 (the CLI refuses that
+	// combination before it gets here).
 	BindHost         string
 	Engine           *policy.Engine
 	Logger           audit.Logger
 	DashboardEnabled bool
 	Notifier         *notify.Dispatcher
 	// Redactor, when set, masks secrets in requests on the SSE stream and the
-	// pending-approvals list (v1.2, `serve --audit-redact`). The audit trail
+	// pending-approvals list (`serve --audit-redact`). The audit trail
 	// itself is redacted by the audit pipeline.
 	Redactor *notify.Redactor
 	// APIKey protects the approve/deny endpoints. If empty, a warning is
@@ -131,10 +131,9 @@ type Config struct {
 	// Past the window the replay falls through to fresh policy evaluation
 	// (fail-safe: the action re-enters the approval flow under a new id).
 	// Zero disables the bound (an unconsumed resolution is honorable until
-	// the entry is purged). Wired from the --approval-validity serve flag;
-	// the CLI default is 5m — matching the SDKs' wait_for_approval poll
-	// window — while the zero value here keeps directly-constructed
-	// Configs (tests, embedders) on pre-flag behavior.
+	// the entry is purged). Wired from the --approval-validity serve flag,
+	// whose 5m default matches the SDKs' wait_for_approval poll window;
+	// directly-constructed Configs (tests, embedders) get zero.
 	ApprovalValidity time.Duration
 }
 
@@ -150,9 +149,7 @@ type Server struct {
 	sweeperDone chan struct{}
 	sweeperStop sync.Once
 	// priorIndex answers require_prior conditions without touching the audit
-	// log and with the tenant in the key. Nil when the
-	// loaded policy contains no require_prior condition, which is the common
-	// case — no shipped policy uses one — so the index costs nothing to carry.
+	// log, keyed by tenant.
 	priorIndex *policy.PriorActionIndex
 	// Resolved tunables. Set once in NewServer from Config or package
 	// defaults so the hot paths (handleCheck, handleAuditQuery) do not
@@ -165,8 +162,7 @@ type Server struct {
 	// uptime_seconds field. Set once in NewServer; never mutated.
 	startedAt time.Time
 	// lastRequestAtNs is the unix-nanosecond timestamp of the most recent
-	// HTTP request observed by withLogging. Atomic so /v1/health probes
-	// (and any future health-derived gauges) read it without taking a
+	// HTTP request. Atomic so /v1/health probes read it without taking a
 	// lock. Zero means "no traffic since boot".
 	lastRequestAtNs int64
 }
@@ -205,9 +201,8 @@ type ApprovalQueue struct {
 
 // sseWatcher is one SSE subscriber plus the tenant whose events it receives.
 // A tenant-aware /v1/t/{tenant}/api/stream subscriber sees only that tenant's
-// events; the legacy /api/stream subscriber resolves to LocalTenantID, so in a
-// single-tenant deployment it behaves exactly as before. (There is no
-// all-tenants firehose yet — that is a future explicit operator opt-in.)
+// events; the /api/stream subscriber resolves to LocalTenantID. There is no
+// all-tenants firehose.
 type sseWatcher struct {
 	ch     chan AuditEvent
 	tenant string // normalized (non-empty); "" is coerced to LocalTenantID
@@ -252,8 +247,7 @@ type PendingAction struct {
 	// "bearer" (API key), "session" (dashboard cookie), or "open" (server
 	// running without --api-key) — and the peer address it came from.
 	// With single-key auth this is not identity, but it makes incident
-	// reconstruction possible and gives post-v1 multi-key auth a field to
-	// land in. Empty while pending.
+	// reconstruction possible. Empty while pending.
 	ResolvedVia  string `json:"resolved_via,omitempty"`
 	ResolvedFrom string `json:"resolved_from,omitempty"`
 }
@@ -306,19 +300,14 @@ func (a *auditHistoryAdapter) RecentActions(agentID string, scope string, since 
 }
 
 // hydratePriorIndex seeds the require_prior index from one replayed audit
-// entry at boot.
+// entry at boot. Without it the index starts empty on every restart and a
+// require_prior-gated ALLOW stops firing until the agent redoes the
+// prerequisite action (fail-closed, but hard for an operator to explain).
 //
-// Without this, an in-memory index would start empty on every restart and a
-// require_prior-gated ALLOW would silently stop firing until the agent redid
-// the prerequisite action — fail-closed, but a functional regression an
-// operator would notice and struggle to explain.
-//
-// It rides the audit replay that already runs at startup, so hydration adds no
-// I/O of its own. That replay resumes from a byte-offset checkpoint written at
-// the previous boot, which means the window recovered is "everything the last
-// run wrote" — precisely the entries a fresh process is missing. Entries from
-// further back are not recovered; with the index TTL at 24h they are almost
-// always outside any rule's time_window anyway.
+// It rides the startup audit replay, so it adds no I/O. That replay resumes
+// from the previous boot's byte-offset checkpoint, so it recovers everything
+// the last run wrote; older entries are lost, but with the 24h index TTL they
+// are almost always outside any rule's time_window anyway.
 //
 // ALLOW only, matching the live path in logAndRespond.
 func hydratePriorIndex(idx *policy.PriorActionIndex, e audit.Entry) {
@@ -345,12 +334,9 @@ func NewServer(cfg Config) *Server {
 		startedAt:           time.Now(),
 	}
 
-	// Wire up history querier for conditional rule evaluation.
-	//
-	// Both are installed: the tenant-scoped index is what actually answers
-	// require_prior, and the legacy adapter stays wired so an
-	// embedder that reaches for HistoryQuerier still finds it. Engine prefers
-	// the index whenever one is set.
+	// Both are installed: the tenant-scoped index answers require_prior, and
+	// the adapter stays wired for embedders that call HistoryQuerier. Engine
+	// prefers the index whenever one is set.
 	cfg.Engine.SetHistoryQuerier(&auditHistoryAdapter{logger: cfg.Logger})
 	s.priorIndex = policy.NewPriorActionIndex(policy.DefaultPriorActionTTL)
 	cfg.Engine.SetPriorActionQuerier(s.priorIndex)
@@ -410,7 +396,6 @@ func NewServer(cfg Config) *Server {
 
 	mux := http.NewServeMux()
 
-	// Core API
 	// /v1/check is intentionally open: it is the policy query endpoint called
 	// by many agents, and the answer is not sensitive by itself. If you need
 	// to gate it, run with --api-key and put /v1/check behind a reverse proxy.
@@ -425,20 +410,20 @@ func NewServer(cfg Config) *Server {
 	mux.HandleFunc("/v1/audit", requireAuthOrSession(cfg.APIKey, s.sessions, false, s.handleAuditQuery))
 
 	// Audit ingest (POST): append a pre-decided fail-closed refusal to the
-	// trail without running policy — the F1 audit-verdict fidelity path, used
-	// by a transport proxy that manufactures its own refusal (e.g. the LLM API
-	// Proxy's malformed-tool-call DENY). State-changing (writes an entry), so it
+	// trail without running policy, so the trail records the verdict a
+	// transport proxy manufactured itself (e.g. the LLM API Proxy's
+	// malformed-tool-call DENY). State-changing (writes an entry), so it
 	// requires Bearer OR (session + CSRF), matching approve/deny. The
 	// method-specific "POST /v1/audit" is strictly more specific than the
 	// methodless "/v1/audit" GET query above, so the mux routes POST here and
 	// GET to handleAuditQuery with no conflict.
 	mux.HandleFunc("POST /v1/audit", requireAuthOrSession(cfg.APIKey, s.sessions, true, s.handleAuditRecord))
 
-	// Head of the sealed audit chain (v1.4, --audit-seal): what an external
+	// Head of the sealed audit chain (--audit-seal): what an external
 	// poller copies off the box as an anchor. Same auth as GET /v1/audit.
 	mux.HandleFunc("GET /v1/audit/head", requireAuthOrSession(cfg.APIKey, s.sessions, false, s.handleAuditHead))
 
-	// Sessions (v1.4): the audit log grouped by session_id, with
+	// Sessions: the audit log grouped by session_id, with
 	// parent/child links from parent_session_id. Read-only views of the
 	// audit log, so the same auth as GET /v1/audit. {id...} takes the rest
 	// of the path: session ids are caller-chosen and may hold a '/'.
@@ -451,17 +436,13 @@ func NewServer(cfg Config) *Server {
 	// Layout: /v1/t/{tenant}/<suffix>. The withTenant middleware extracts
 	// {tenant}, validates it via Engine.PolicyForTenant (404 on
 	// ErrTenantNotFound), stamps it on the request context, then delegates
-	// to the same handler the legacy /v1/<suffix> route uses. The default
-	// FilePolicyProvider only recognises the "local" tenant; a future
-	// database-backed PolicyProvider can resolve arbitrary tenant IDs.
+	// to the same handler the /v1/<suffix> route uses. The default
+	// FilePolicyProvider only recognises the "local" tenant.
 	//
-	// Auth posture mirrors the legacy routes exactly: /v1/t/{tenant}/check
+	// Auth posture mirrors the unprefixed routes exactly: /v1/t/{tenant}/check
 	// is open (the policy query endpoint), every other tenant-aware route
 	// requires Bearer OR session, and the state-changing approve/deny
 	// routes additionally require CSRF when authenticated via session.
-	//
-	// Method-prefixed wildcard syntax needs Go 1.22+; go.mod requires Go
-	// 1.25, so every supported build has it.
 	mux.HandleFunc("POST /v1/t/{tenant}/check", s.withTenant(s.handleCheck))
 	mux.HandleFunc("POST /v1/t/{tenant}/approve/{id}",
 		s.withTenant(requireAuthOrSession(cfg.APIKey, s.sessions, true, s.handleApprove)))
@@ -486,13 +467,11 @@ func NewServer(cfg Config) *Server {
 
 	// Health + Metrics (unauthenticated — commonly scraped by monitoring).
 	mux.HandleFunc("/health", s.handleHealth)
-	// /v1/health is the operator-grade health endpoint (richer payload,
-	// includes last-request and last-policy-load timestamps + warnings).
-	// Anchored on the "local" tenant; the tenant-aware route below uses
-	// the same handler with {tenant} extracted by withTenant.
+	// /v1/health is the operator-grade health endpoint (last-request and
+	// last-policy-load timestamps + warnings), anchored on the "local"
+	// tenant. With the default provider the tenant-aware variant 404s for
+	// any tenant but "local".
 	mux.HandleFunc("GET /v1/health", s.handleHealthV1Local)
-	// Tenant-aware variant. Currently only "local" resolves; any other
-	// tenant returns 404 until a multi-tenant PolicyProvider is wired.
 	mux.HandleFunc("GET /v1/t/{tenant}/health", s.handleHealthV1Tenant)
 	mux.HandleFunc("/metrics", s.handleMetrics)
 
@@ -557,9 +536,7 @@ func NewServer(cfg Config) *Server {
 			}
 		}
 		s.sweeperDone = make(chan struct{})
-		// goRecover guarantees a panic inside SweepSessionCosts (or any
-		// future code reachable from the sweeper) logs and dies in
-		// isolation rather than tearing the whole process down.
+		// goRecover keeps a sweeper panic from tearing the process down.
 		goRecover("session-cost-sweeper", func() {
 			s.runSessionCostSweeper(interval, cfg.SessionCostTTL)
 		})
@@ -597,9 +574,9 @@ func (s *Server) Start() error {
 
 // Handler returns the fully wired http.Handler (recoverPanic → withCORS →
 // withTraffic → withLogging → mux). Exposed for embedders and integration
-// tests that want to drive the server through httptest.NewServer rather
-// than binding a real port. Stable contract — callers should NOT inspect
-// or wrap individual middleware.
+// tests that drive the server through httptest.NewServer rather than
+// binding a real port. Callers should not inspect or wrap individual
+// middleware.
 func (s *Server) Handler() http.Handler {
 	return s.http.Handler
 }
@@ -637,9 +614,7 @@ func (s *Server) handleCheck(w http.ResponseWriter, r *http.Request) {
 	var req policy.ActionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		// Distinguish "body too large" from other parse errors so that the
-		// enforcement of MaxRequestBodySize is observable. http.MaxBytesError
-		// is the canonical error returned by MaxBytesReader when the limit
-		// is hit (stdlib, Go 1.19+).
+		// body cap is observable (413 + metric).
 		var mbe *http.MaxBytesError
 		if errors.As(err, &mbe) {
 			metrics.IncRequestRejected(metrics.RejectedBodyTooLarge)
@@ -652,10 +627,10 @@ func (s *Server) handleCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Wire-protocol version negotiation. Empty defaults to "v1" so older
-	// clients continue to interoperate; any other value is rejected with
-	// 400 so a future "v2" client never silently misinterprets a v1 server.
-	// See pkg/proxy/schema/v1/schema.json and docs/WIRE_PROTOCOL.md.
+	// Wire-protocol version negotiation. Empty defaults to "v1" so clients
+	// that omit it interoperate; any other value is rejected with 400 so a
+	// future "v2" client never silently misinterprets a v1 server.
+	// See docs/WIRE_PROTOCOL.md.
 	if req.SchemaVersion == "" {
 		req.SchemaVersion = SchemaVersionV1
 	} else if req.SchemaVersion != SchemaVersionV1 {
@@ -670,19 +645,15 @@ func (s *Server) handleCheck(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	// Tenant the action is evaluated against. For tenant-aware
-	// /v1/t/{tenant}/check this was validated + stamped by withTenant; for
-	// legacy /v1/check it defaults to LocalTenantID. Hoisted once so the
-	// approval-id, rate-limit-deny, and final response paths all stamp the
-	// same tenant on the audit entry.
+	// Tenant the action is evaluated against: validated and stamped by
+	// withTenant on /v1/t/{tenant}/check, LocalTenantID on /v1/check. Read
+	// once so every response path stamps the same tenant on the audit entry.
 	tenantID := TenantIDFromContext(r.Context())
 
 	// Approval-id round-trip: if the caller (typically the MCP gateway
 	// retrying after a human approve/deny on the dashboard) set
-	// ApprovalID, consult the approval queue before running policy.
-	// This is what closes the "approve once, model proceeds" UX —
-	// without this, the model's retry produces a fresh REQUIRE_APPROVAL
-	// cycle even though a human already decided.
+	// ApprovalID, consult the approval queue before running policy, so the
+	// retry gets the human's decision instead of a fresh REQUIRE_APPROVAL.
 	//
 	// Resolved entries short-circuit to the human's decision (ALLOW or
 	// DENY). Still-pending entries return REQUIRE_APPROVAL referencing
@@ -699,15 +670,11 @@ func (s *Server) handleCheck(w http.ResponseWriter, r *http.Request) {
 	if req.ApprovalID != "" {
 		if pa, ok := s.approval.Lookup(req.ApprovalID, tenantID); ok {
 			// Bind the cached decision to the original request shape.
-			// Without this guard, /v1/check (intentionally unauthenticated)
-			// becomes a credential-bearer endpoint whose credential — the
-			// approval_id — is broadcast through audit logs, SSE feeds,
-			// webhook payloads, and the refusal text echoed back to the
-			// model. Anyone (or any buggy agent) who learns an approved
-			// id could submit ANY action with that id and short-circuit
-			// to ALLOW. Compare on operationally-meaningful fields only;
-			// SessionID/EstCost/Meta legitimately drift across retries
-			// (see matchesOriginalRequest for the full rationale).
+			// The approval_id is broadcast through audit logs, SSE feeds,
+			// webhooks and refusal text, and /v1/check is unauthenticated,
+			// so without this anyone who learns an approved id could
+			// short-circuit ANY action to ALLOW. See
+			// matchesOriginalRequest for which fields are compared.
 			//
 			// On mismatch, fall through to normal Engine.Check rather
 			// than returning a 4xx — the latter would let an attacker
@@ -728,13 +695,12 @@ func (s *Server) handleCheck(w http.ResponseWriter, r *http.Request) {
 				// Intentional fall-through: do NOT short-circuit, do NOT
 				// 4xx. Normal Engine.Check runs below.
 			} else {
-				// Shape matches — now spend the capability atomically.
-				// ConsumeResolved re-checks state under the write lock so
-				// concurrent replays of one approved id can never both be
-				// honored: exactly one consumes the ALLOW, the rest fall
-				// through to fresh evaluation (which re-enters the
-				// approval flow — fail-safe, and no validity/consumption
-				// oracle is exposed, matching the mismatch path above).
+				// Spend the capability atomically. ConsumeResolved re-checks
+				// state under the write lock so concurrent replays of one
+				// approved id can never both be honored: exactly one consumes
+				// the ALLOW, the rest fall through to fresh evaluation
+				// (fail-safe, and no validity/consumption oracle, like the
+				// mismatch path above).
 				cp, outcome := s.approval.ConsumeResolved(req.ApprovalID, tenantID, time.Now().UTC(), s.cfg.ApprovalValidity)
 				switch outcome {
 				case consumePending, consumeHonored:
@@ -756,7 +722,6 @@ func (s *Server) handleCheck(w http.ResponseWriter, r *http.Request) {
 		// Unknown approval_id — fall through to normal evaluation.
 	}
 
-	// Rate limiting check (before policy evaluation)
 	if rlCfg := s.cfg.Engine.RateLimitConfig(req.Scope, req.AgentID, tenantID); rlCfg != nil {
 		window, err := ratelimit.ParseWindow(rlCfg.Window)
 		if err == nil {
@@ -784,6 +749,15 @@ func (s *Server) handleCheck(w http.ResponseWriter, r *http.Request) {
 					Reason:   err.Error(),
 					Rule:     "deny:ratelimit:" + req.Scope,
 				}
+				// on_deny covers rate-limit denies too, like every other DENY.
+				if s.cfg.Notifier != nil {
+					s.cfg.Notifier.Send(notify.Event{
+						Type:      "denied",
+						Timestamp: time.Now().UTC(),
+						Request:   req,
+						Result:    result,
+					})
+				}
 				s.logAndRespond(w, req, result, start, tenantID)
 				return
 			}
@@ -791,15 +765,10 @@ func (s *Server) handleCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	evalStart := time.Now()
-	// Tenant resolution: tenantID was hoisted above from the request context
-	// (legacy /v1/check → LocalTenantID; tenant-aware route validated by
-	// withTenant). The approval queue / rate limiter are still single-tenant;
-	// that sharding is the next step — see pkg/proxy/tenant.go.
 	result := s.cfg.Engine.Check(req, tenantID)
 	evalMs := float64(time.Since(evalStart).Microseconds()) / 1000.0
 	metrics.ObservePolicyEvalDuration(evalMs)
 
-	// If approval required, queue it
 	if result.Decision == policy.RequireApproval {
 		pending, err := s.approval.Add(req, result, tenantID)
 		if err != nil {
@@ -820,7 +789,6 @@ func (s *Server) handleCheck(w http.ResponseWriter, r *http.Request) {
 		result.ApprovalID = pending.ID
 		result.ApprovalURL = fmt.Sprintf("%s/v1/approve/%s", s.cfg.BaseURL, pending.ID)
 
-		// Send notification
 		if s.cfg.Notifier != nil {
 			s.cfg.Notifier.Send(notify.Event{
 				Type:        "approval_required",
@@ -859,12 +827,8 @@ func (s *Server) logAndRespond(w http.ResponseWriter, req policy.ActionRequest, 
 		result.SchemaVersion = SchemaVersionV1
 	}
 
-	// Determine the transport for this check. The MCP Gateway and
-	// (future) LLM API Proxy stamp meta["transport"] on every
-	// /v1/check call. SDK callers (Python/TS) don't currently emit
-	// the field; they implicitly identify as "sdk". Future SDK
-	// versions may set it explicitly; the server-side default
-	// (audit.TransportSDK) ensures back-compat either way.
+	// Integration paths stamp meta["transport"]; callers that omit it
+	// (the SDKs) default to audit.TransportSDK.
 	transport := transportFromRequest(req)
 
 	entry := audit.Entry{
@@ -878,8 +842,8 @@ func (s *Server) logAndRespond(w http.ResponseWriter, req policy.ActionRequest, 
 	}
 	// Stamp the tenant the action was evaluated against. The default "local"
 	// tenant is stored as "" (omitempty) so single-tenant audit output stays
-	// byte-identical to files written before multi-tenancy; audit.Entry.EffectiveTenant() resolves
-	// "" → "local" on read. Non-local tenants are written verbatim.
+	// byte-identical; audit.Entry.EffectiveTenant() resolves "" → "local" on
+	// read. Non-local tenants are written verbatim.
 	if tenantID != "" && tenantID != policy.LocalTenantID {
 		entry.TenantID = tenantID
 	}
@@ -887,9 +851,9 @@ func (s *Server) logAndRespond(w http.ResponseWriter, req policy.ActionRequest, 
 	// Engine.Check path). It is also what the audit entry records as DurationMs.
 	policyMs := float64(duration.Microseconds()) / 1000.0
 
-	// Feed the require_prior index. This is the audit-write
-	// boundary, not the hot path: Engine.Check has already returned and e.mu is
-	// released, so the index's own lock cannot nest under the engine lock.
+	// Feed the require_prior index here, at the audit-write boundary:
+	// Engine.Check has already returned and e.mu is released, so the index's
+	// own lock cannot nest under the engine lock.
 	//
 	// ALLOW only — recording a denial would let a blocked attempt satisfy a
 	// later require_prior gate, inverting the condition's purpose. The tenant
@@ -918,13 +882,10 @@ func (s *Server) logAndRespond(w http.ResponseWriter, req policy.ActionRequest, 
 	})
 
 	// Total is measured AFTER the policy decision, the audit write, and the
-	// notify/SSE enqueue, so it is the true end-to-end server processing time —
-	// the only work left is serializing the response body below. Measuring it
-	// here (not from the pre-audit `duration`) keeps the
-	// vanzik_request_duration_ms SLO histogram and the X-Vanzik-Total-Ms
-	// header honest: a slow synchronous audit backend now shows up in Total
-	// instead of being silently dropped. Headers must be set before the first
-	// body write below.
+	// notify/SSE enqueue (not from the pre-audit `duration`), so a slow
+	// synchronous audit backend shows up in the vanzik_request_duration_ms
+	// SLO histogram and X-Vanzik-Total-Ms. Headers must be set before the
+	// first body write below.
 	totalMs := float64(time.Since(start).Microseconds()) / 1000.0
 	metrics.ObserveRequestDuration(totalMs)
 	metrics.IncDecision(string(result.Decision))
@@ -948,39 +909,28 @@ func (s *Server) logAndRespond(w http.ResponseWriter, req policy.ActionRequest, 
 // Compared fields (mismatch on any one → fall through to fresh policy
 // evaluation rather than returning the cached decision):
 //
-//	AgentID  — the human approved an action FOR this agent; another
-//	           agent re-using the id is unambiguously a different
-//	           authorisation request.
-//	Scope    — same logical reason: a shell approval is not a network
-//	           approval.
-//	Command  — covers the shell scope (and any free-form Pattern-based
-//	           rule scope) where the policy decision turns on the exact
+//	AgentID  — the human approved an action FOR this agent.
+//	Scope    — a shell approval is not a network approval.
+//	Command  — shell (and free-form pattern) rules decide on the exact
 //	           command string.
 //	Path     — filesystem scope identity.
 //	Domain   — network scope identity (host-only rules).
-//	URL      — network scope identity (full-URL rules; some operators
-//	           gate on URL rather than Domain to authorise a specific
-//	           endpoint).
-//	Action   — covers Action+Paths style filesystem rules and any
-//	           future scope that authorises by named action.
+//	URL      — network scope identity (full-URL rules).
+//	Action   — Action+Paths style filesystem rules and any scope that
+//	           authorises by named action.
 //
 // NOT compared (legitimately drift across retries):
 //
-//	SessionID — agents may reconnect/retry from a fresh session id
-//	            without invalidating an in-flight approval.
-//	EstCost   — cost-scoped retries inherently recompute cost (a token
-//	            estimate, an exchange-rate refresh, a refunded
-//	            reservation). Binding here would cause every cost
-//	            retry to fall through and ask for re-approval.
-//	Meta      — carries transport tags ("transport", "arg_*", trace
-//	            ids) that are diagnostic, not authorising. Binding on
-//	            Meta would couple the security check to telemetry
-//	            evolution. The transport tag itself is preserved on
-//	            the audit entry via logAndRespond regardless.
+//	SessionID — agents may retry from a fresh session id without
+//	            invalidating an in-flight approval.
+//	EstCost   — cost-scoped retries recompute cost; binding it would
+//	            send every cost retry back for re-approval.
+//	Meta      — transport tags and trace ids are diagnostic, not
+//	            authorising; binding them would couple the security
+//	            check to telemetry.
 //
-// SchemaVersion is also not compared: it's a wire-protocol version
-// negotiation field, validated independently before this point in
-// handleCheck. ApprovalID is the lookup key by definition.
+// SchemaVersion is validated earlier in handleCheck; ApprovalID is the
+// lookup key.
 func matchesOriginalRequest(retry policy.ActionRequest, original policy.ActionRequest) bool {
 	return retry.AgentID == original.AgentID &&
 		retry.Scope == original.Scope &&
@@ -1006,19 +956,9 @@ func matchesOriginalRequest(retry policy.ActionRequest, original policy.ActionRe
 //	resolved=true, decision=other → defensive DENY
 //	                                (rule="deny:approved:invalid_resolution").
 //
-// The defensive branch only triggers if a future code path stamps a
-// non-canonical decision string on Resolve; today Resolve only writes
-// "ALLOW" or "DENY" (see ApprovalQueue.Resolve).
-//
-// Note that the original PendingAction.Request's transport is *not*
-// re-applied here — the caller (handleCheck) hands logAndRespond the
-// retry request as-is, and the retry request's own meta["transport"]
-// is what gets stamped on the audit entry. In practice the gateway
-// re-stamps "mcp_gateway" on every retry, so the audit log shows the
-// same transport for both the original REQUIRE_APPROVAL entry and the
-// resolved-approved entry. SDK callers that propagate approval_id
-// without setting transport will land in the default "sdk" bucket on
-// both legs, which is also consistent.
+// The audit entry carries the retry request's own meta["transport"], not
+// the original's; callers re-stamp the same transport on every retry, so
+// both legs match.
 func (s *Server) resolvedApprovalToResult(req policy.ActionRequest, pa *PendingAction) policy.CheckResult {
 	if !pa.Resolved {
 		return policy.CheckResult{
@@ -1046,9 +986,8 @@ func (s *Server) resolvedApprovalToResult(req policy.ActionRequest, pa *PendingA
 			ApprovalID: pa.ID,
 		}
 	default:
-		// Should be unreachable: ApprovalQueue.Resolve only writes
-		// canonical decisions. Treat any deviation as a hard DENY so an
-		// accidental future bug can never silently allow.
+		// Unreachable: ApprovalQueue.Resolve only writes ALLOW or DENY.
+		// Any deviation is a hard DENY so a bug can never silently allow.
 		return policy.CheckResult{
 			Decision:   policy.Deny,
 			Rule:       "deny:approved:invalid_resolution",
@@ -1058,11 +997,9 @@ func (s *Server) resolvedApprovalToResult(req policy.ActionRequest, pa *PendingA
 	}
 }
 
-// transportFromRequest extracts the integration-path tag the SDK or
-// gateway stamped on meta["transport"]. Empty / unset / non-string
-// values default to audit.TransportSDK so SDK callers (which don't
-// currently emit the field) are categorised correctly without code
-// changes on their side.
+// transportFromRequest extracts the integration-path tag stamped on
+// meta["transport"]. Empty or unset defaults to audit.TransportSDK, which
+// is what SDK callers (which omit the field) are.
 func transportFromRequest(req policy.ActionRequest) string {
 	if req.Meta == nil {
 		return audit.TransportSDK
@@ -1078,12 +1015,12 @@ func transportFromRequest(req policy.ActionRequest) string {
 //	/v1/approve/{id}            (legacy)
 //	/v1/deny/{id}               (legacy)
 //	/v1/status/{id}             (legacy)
-//	/v1/t/{tenant}/approve/{id} (tenant-aware; A7)
+//	/v1/t/{tenant}/approve/{id} (tenant-aware)
 //	/v1/t/{tenant}/deny/{id}
 //	/v1/t/{tenant}/status/{id}
 //
-// On the tenant-aware family the Go 1.22+ mux populates r.PathValue("id")
-// for free; on the legacy family we strip the known prefix. Returns the
+// On the tenant-aware family the mux populates r.PathValue("id"); on the
+// legacy family we strip the known prefix. Returns the
 // empty string when the path does not contain an ID, so handlers can
 // surface a 400 / 404 uniformly.
 func approvalIDFromRequest(r *http.Request, legacyPrefix string) string {
@@ -1124,7 +1061,7 @@ func hasSessionCookie(r *http.Request) bool {
 
 // writeResolveError maps a Resolve failure onto the wire: a write-once
 // conflict is 409 with a structured body (so dashboards/scripts can show
-// the standing decision); anything else keeps the legacy 404 plain-text.
+// the standing decision); anything else is a plain-text 404.
 func writeResolveError(w http.ResponseWriter, err error) {
 	var conflict *ApprovalConflictError
 	if errors.As(err, &conflict) {
@@ -1144,6 +1081,37 @@ func writeResolveError(w http.ResponseWriter, err error) {
 	http.Error(w, err.Error(), http.StatusNotFound)
 }
 
+// logResolution writes the audit entry for a human approve/deny: the
+// original request, the decision, rule "approval:resolved:<via>", and the
+// peer address in the reason. pa is nil for an idempotent repeat, which
+// writes nothing, so each approval id gets one resolution entry.
+func (s *Server) logResolution(pa *PendingAction) {
+	if pa == nil {
+		return
+	}
+	entry := audit.Entry{
+		Timestamp: pa.ResolvedAt,
+		AgentID:   pa.Request.AgentID,
+		SessionID: pa.Request.SessionID,
+		Request:   pa.Request,
+		Result: policy.CheckResult{
+			SchemaVersion: SchemaVersionV1,
+			Decision:      policy.Decision(pa.Decision),
+			Reason:        fmt.Sprintf("approval %s resolved %s by human via %s from %s", pa.ID, pa.Decision, pa.ResolvedVia, pa.ResolvedFrom),
+			Rule:          "approval:resolved:" + pa.ResolvedVia,
+			ApprovalID:    pa.ID,
+		},
+		Transport: transportFromRequest(pa.Request),
+	}
+	// Same tenant normalization as logAndRespond: "local" is stored as "".
+	if pa.TenantID != "" && pa.TenantID != policy.LocalTenantID {
+		entry.TenantID = pa.TenantID
+	}
+	if err := s.cfg.Logger.Log(entry); err != nil {
+		log.Printf("Audit log error: %v", err)
+	}
+}
+
 // handleApprove approves a pending action.
 func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -1157,10 +1125,12 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	via, from := resolutionActor(r)
-	if err := s.approval.ResolveWithActor(id, policy.Allow, TenantIDFromContext(r.Context()), via, from); err != nil {
+	pa, err := s.approval.resolve(id, policy.Allow, TenantIDFromContext(r.Context()), via, from)
+	if err != nil {
 		writeResolveError(w, err)
 		return
 	}
+	s.logResolution(pa)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "approved", "id": id})
@@ -1179,10 +1149,12 @@ func (s *Server) handleDeny(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	via, from := resolutionActor(r)
-	if err := s.approval.ResolveWithActor(id, policy.Deny, TenantIDFromContext(r.Context()), via, from); err != nil {
+	pa, err := s.approval.resolve(id, policy.Deny, TenantIDFromContext(r.Context()), via, from)
+	if err != nil {
 		writeResolveError(w, err)
 		return
 	}
+	s.logResolution(pa)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "denied", "id": id})
@@ -1196,11 +1168,11 @@ func (s *Server) handleDeny(w http.ResponseWriter, r *http.Request) {
 //     Non-integers or values < 1 return 400.
 //   - ?offset=N — integer ≥ 0. Defaults to 0. Non-integers or negatives
 //     return 400.
-//   - ?since=, ?until= — RFC 3339 times (v1.4). since is inclusive, until
+//   - ?since=, ?until= — RFC 3339 times. since is inclusive, until
 //     exclusive, so consecutive [since, until) windows never repeat or skip
 //     an entry. Anything else, or until before since, returns 400.
 //   - ?parent_session_id= — entries whose request named this parent
-//     session (v1.4).
+//     session.
 func (s *Server) handleAuditQuery(w http.ResponseWriter, r *http.Request) {
 	limit, err := parseBoundedInt(r.URL.Query().Get("limit"), s.auditDefaultLimit, 1, s.auditMaxLimit)
 	if err != nil {
@@ -1227,12 +1199,9 @@ func (s *Server) handleAuditQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Scope the query to the request's tenant. Legacy /v1/audit has no tenant
-	// in the path → TenantIDFromContext returns LocalTenantID, so it returns
-	// only "local" entries (identical to legacy behavior in a single-tenant
-	// deployment, where every entry is "local"). The tenant-aware
-	// /v1/t/{tenant}/audit route was stamped by withTenant and is now scoped to
-	// that tenant — closing the cross-tenant audit-read leak (plan § 3.3).
+	// Scope the query to the request's tenant so no tenant reads another's
+	// entries: /v1/audit resolves to LocalTenantID, /v1/t/{tenant}/audit to
+	// the tenant withTenant stamped.
 	filter := audit.QueryFilter{
 		TenantID:  TenantIDFromContext(r.Context()),
 		AgentID:   r.URL.Query().Get("agent_id"),
@@ -1285,20 +1254,17 @@ func (s *Server) handleAuditHead(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAuditRecord appends a pre-decided fail-closed refusal to the audit
-// trail WITHOUT running the policy engine. It is the ingest side of the F1
-// audit-verdict fidelity fix (C3): a transport proxy that manufactures its own
-// refusal — e.g. the LLM API Proxy's malformed-tool-call DENY — POSTs the
-// verdict the client actually received here, so the central audit log (the
-// single source of truth) reflects that DENY rather than the ALLOW a
-// fidelity-blind /v1/check would log after evaluating the garbage-projected
-// request.
+// trail WITHOUT running the policy engine. A transport proxy that
+// manufactures its own refusal (e.g. the LLM API Proxy's malformed-tool-call
+// DENY) POSTs the verdict the client actually received, so the audit log
+// records that DENY rather than the ALLOW /v1/check would log for the
+// garbage-projected request.
 //
-// The endpoint records DENY only: Decision is hardcoded to policy.Deny, so a
-// caller can never inject an ALLOW into the trail. It reuses logAndRespond — the
-// same audit-write + SSE-broadcast chokepoint /v1/check uses — so recorded
-// entries are indistinguishable downstream (transport tag, tenant stamp, SSE
-// chip) from real gate entries. This handler is NOT on the hot path: it fires
-// only on the proxy's rare malformed-completion path, never on /v1/check.
+// Decision is hardcoded to policy.Deny, so a caller can never inject an
+// ALLOW into the trail. It reuses logAndRespond, so recorded entries are
+// indistinguishable downstream (transport tag, tenant stamp, SSE chip) from
+// gate entries. Not on the hot path: only the proxy's malformed-completion
+// path calls it.
 func (s *Server) handleAuditRecord(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1346,33 +1312,16 @@ func (s *Server) handleAuditRecord(w http.ResponseWriter, r *http.Request) {
 
 	tenantID := TenantIDFromContext(r.Context())
 
-	// DENY only. The caller-supplied decision is intentionally not trusted:
-	// this endpoint exists solely to record a fail-closed refusal, so Decision
-	// is hardcoded and can never be an ALLOW.
+	// DENY only: the caller cannot choose the decision.
 	result := policy.CheckResult{
 		Decision: policy.Deny,
 		Reason:   rec.Reason,
 		Rule:     rec.Rule,
 	}
 
-	// logAndRespond is the shared audit-write + SSE-broadcast + response
-	// chokepoint. Reusing it stamps the transport tag (from request meta), the
-	// tenant, the decision metric, and the timing headers exactly as a real
-	// gate entry would — keeping the trail uniform.
 	s.logAndRespond(w, rec.Request, result, start, tenantID)
 }
 
-// parseBoundedInt parses an optional query-string integer.
-//
-//   - An empty raw value returns defaultVal, no error.
-//   - A non-integer returns an error (handler should map to 400).
-//   - min is the inclusive lower bound. Values below min return an error.
-//   - max is the inclusive upper bound. Values above max are clamped to max
-//     (silently), not rejected. Pass max=-1 for no upper bound.
-//
-// The asymmetry — reject below, clamp above — matches how operators expect
-// these knobs to behave: a negative limit is a bug, a huge limit is usually
-// "give me all of them" and we want a safe ceiling rather than a 400.
 // resolveInt returns override when strictly positive, otherwise fallback.
 // Used to flatten policy-driven tunables into effective runtime values at
 // server construction so request-path code does not branch per call.
@@ -1390,6 +1339,16 @@ func resolveInt64(override, fallback int64) int64 {
 	return fallback
 }
 
+// parseBoundedInt parses an optional query-string integer.
+//
+//   - An empty raw value returns defaultVal, no error.
+//   - A non-integer returns an error (handler should map to 400).
+//   - min is the inclusive lower bound. Values below min return an error.
+//   - max is the inclusive upper bound. Values above max are clamped to max
+//     (silently), not rejected. Pass max=-1 for no upper bound.
+//
+// Reject below, clamp above: a negative limit is a bug, a huge limit
+// usually means "give me all of them" and deserves a safe ceiling, not a 400.
 func parseBoundedInt(raw string, defaultVal, minVal, maxVal int) (int, error) {
 	if raw == "" {
 		return defaultVal, nil
@@ -1446,10 +1405,10 @@ func (s *Server) handleHealthV1Local(w http.ResponseWriter, r *http.Request) {
 	s.handleHealthV1(w, r, policy.LocalTenantID)
 }
 
-// handleHealthV1Tenant serves /v1/t/{tenant}/health. Extracts the tenant
-// from the URL path (Go 1.22+ wildcard) and resolves it via the
-// engine's policy provider. With FilePolicyProvider only "local" is
-// configured; any other value yields 404 via policy.ErrTenantNotFound.
+// handleHealthV1Tenant serves /v1/t/{tenant}/health, resolving the path's
+// tenant via the engine's policy provider. With FilePolicyProvider only
+// "local" is configured; any other value yields 404 via
+// policy.ErrTenantNotFound.
 func (s *Server) handleHealthV1Tenant(w http.ResponseWriter, r *http.Request) {
 	tenant := r.PathValue("tenant")
 	s.handleHealthV1(w, r, tenant)
@@ -1470,9 +1429,8 @@ func (s *Server) handleHealthV1(w http.ResponseWriter, r *http.Request, tenant s
 
 	// Resolve the tenant via the engine's provider so multi-tenant
 	// providers (which the engine has not subscribed to) still surface
-	// 404s correctly. We do not use the resolved *Policy here — the
-	// engine's last-load timestamp is currently a function of the local
-	// tenant only. A per-tenant timestamp map is future work.
+	// 404s correctly. The resolved *Policy is unused: the engine's
+	// last-load timestamp tracks the local tenant only.
 	if _, err := s.cfg.Engine.PolicyForTenant(tenant); err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "tenant not found"})
@@ -1564,8 +1522,8 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 // handleDashboard serves the web dashboard.
 //
 // Authentication model:
-//   - When --api-key is empty, the dashboard is freely accessible (historical
-//     localhost-only mode).
+//   - When --api-key is empty, the dashboard is freely accessible (the
+//     server binds to localhost only).
 //   - When --api-key is set, the user must first POST their key to /auth/login
 //     which issues an HTTP-only session cookie. Without a valid session, we
 //     serve a login form; never the actual dashboard.
@@ -1687,9 +1645,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 // typo, or wrong tenant). Read-only — uses RLock.
 //
 // The returned *PendingAction is a defensive copy: callers cannot
-// mutate queue state through it. The handleCheck approval-id round-
-// trip uses this on the hot path of every retry, so the read-lock
-// keeps it cheap relative to the existing /v1/check evaluation cost.
+// mutate queue state through it. handleCheck calls this on every
+// approval-id retry, hence the read lock.
 func (q *ApprovalQueue) Lookup(id, tenantID string) (*PendingAction, bool) {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
@@ -1849,8 +1806,7 @@ func (e *ApprovalConflictError) Error() string {
 	return fmt.Sprintf("approval %s already resolved %s; decisions are write-once", e.ID, e.Existing)
 }
 
-// Resolve is ResolveWithActor without an actor stamp. Kept for callers
-// (and tests) that predate the stamp; the HTTP handlers use
+// Resolve is ResolveWithActor without an actor stamp; the HTTP handlers use
 // ResolveWithActor.
 func (q *ApprovalQueue) Resolve(id string, decision policy.Decision, tenantID string) error {
 	return q.ResolveWithActor(id, decision, tenantID, "", "")
@@ -1862,6 +1818,14 @@ func (q *ApprovalQueue) Resolve(id string, decision policy.Decision, tenantID st
 // OPPOSITE decision returns *ApprovalConflictError and mutates nothing.
 // via/from stamp how the resolution arrived (see PendingAction.ResolvedVia).
 func (q *ApprovalQueue) ResolveWithActor(id string, decision policy.Decision, tenantID, via, from string) error {
+	_, err := q.resolve(id, decision, tenantID, via, from)
+	return err
+}
+
+// resolve is ResolveWithActor that also returns a copy of the entry when
+// this call made the resolution, and nil for an idempotent repeat. The
+// HTTP handlers use it to write exactly one audit entry per resolution.
+func (q *ApprovalQueue) resolve(id string, decision policy.Decision, tenantID, via, from string) (*PendingAction, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -1869,14 +1833,14 @@ func (q *ApprovalQueue) ResolveWithActor(id string, decision policy.Decision, te
 	if !ok || !tenantsMatch(pa.TenantID, tenantID) {
 		// A mismatched tenant is reported as "not found" (not 403) so a tenant
 		// cannot probe for the existence of another tenant's approval IDs.
-		return fmt.Errorf("pending action %s not found", id)
+		return nil, fmt.Errorf("pending action %s not found", id)
 	}
 
 	if pa.Resolved {
 		if pa.Decision == string(decision) {
-			return nil // idempotent repeat; original stamp and timestamp stand
+			return nil, nil // idempotent repeat; original stamp and timestamp stand
 		}
-		return &ApprovalConflictError{ID: id, Existing: pa.Decision}
+		return nil, &ApprovalConflictError{ID: id, Existing: pa.Decision}
 	}
 
 	pa.Resolved = true
@@ -1897,12 +1861,12 @@ func (q *ApprovalQueue) ResolveWithActor(id string, decision policy.Decision, te
 		Result:    policy.CheckResult{Decision: decision, Reason: "manually " + strings.ToLower(string(decision))},
 	})
 
-	return nil
+	cp := *pa
+	return &cp, nil
 }
 
 // List returns the unresolved pending actions owned by tenantID. The legacy
-// /api/pending route resolves to LocalTenantID, so single-tenant deployments
-// behave exactly as before.
+// /api/pending route resolves to LocalTenantID.
 func (q *ApprovalQueue) List(tenantID string) []*PendingAction {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
@@ -1965,21 +1929,20 @@ func (q *ApprovalQueue) Restore(actions []*PendingAction) {
 // remoteApplyChunk bounds how many remote approval records ApplyRemote merges
 // under a single q.mu write-lock acquisition. The hot-path Lookup takes
 // q.mu.RLock; holding the write lock for a whole O(n) re-hydrate pass would
-// stall every concurrent Lookup (CLAUDE.md §1). We acquire, merge ≤K, release,
-// repeat — mirroring ratelimit.applyChunk and policy.costApplyChunk (K=128).
+// stall every concurrent Lookup. We acquire, merge ≤K, release, repeat —
+// mirroring ratelimit.applyChunk and policy.costApplyChunk (K=128).
 const remoteApplyChunk = 128
 
 // ApplyRemote merges remote approval records (loaded from the shared durable
 // store by the background reconcile goroutine) into the local queue. It is the
-// write half of multi-node approval cross-node visibility (v1.0) and runs ONLY
-// on that background goroutine — NEVER on the /v1/check hot path, so it adds no
-// request-path latency. The hot-path Lookup stays a pure in-memory RLock read
-// and is unchanged.
+// write half of multi-node approval visibility and runs ONLY on that
+// background goroutine — NEVER on the /v1/check hot path, where Lookup stays a
+// pure in-memory RLock read.
 //
 // Each element is a remote view of one entry, tenant-normalized exactly as the
 // queue stores it (the local tenant as ""), so the effective merge key is
 // (tenant, ID) and a remote row for tenant X can only ever touch entry (X, ID)
-// — no cross-tenant surfacing (CLAUDE.md §3).
+// — no cross-tenant surfacing.
 //
 // Locking: at most remoteApplyChunk (K=128) records are merged per write-lock
 // hold, so a concurrent Lookup blocks for O(K) map ops, not O(n).
@@ -2020,7 +1983,7 @@ func (q *ApprovalQueue) ApplyRemote(remote []*PendingAction) {
 				continue
 			}
 			// A local entry sharing r's raw ID but owned by a DIFFERENT tenant
-			// must never be rewritten by r (CLAUDE.md §3). The store PKs approvals
+			// must never be rewritten by r. The store PKs approvals
 			// on (tenant_id, id), so two tenants can legitimately share a raw ID;
 			// the local map is keyed by ID alone, so guard here. Mismatch => leave
 			// the local entry alone (r is dropped rather than surfaced cross-tenant).
@@ -2124,10 +2087,8 @@ func (q *ApprovalQueue) broadcastLocked(event AuditEvent) {
 		select {
 		case w.ch <- event:
 		default:
-			// Drop if consumer is slow. The metric lets ops see which
-			// deployments have backed-up SSE subscribers — a persistent
-			// non-zero rate usually means a dashboard tab left open on
-			// battery-throttled hardware.
+			// Drop if consumer is slow; the metric shows backed-up
+			// subscribers.
 			metrics.IncSSEEventDropped(metrics.SSEDroppedSlowConsumer)
 		}
 	}
@@ -2142,9 +2103,8 @@ func (q *ApprovalQueue) broadcastLocked(event AuditEvent) {
 //     deployments where a specific frontend needs to talk to Vanzik.
 //
 //  2. Permissive-localhost (allowedOrigin == ""): accept any
-//     http://localhost:* or http://127.0.0.1:* origin. This is the historical
-//     default and is retained for backward compatibility with local dev
-//     frontends that predate --allowed-origin. It is safe because:
+//     http://localhost:* or http://127.0.0.1:* origin, for local dev
+//     frontends run without --allowed-origin. It is safe because:
 //     - the API key is NEVER embedded in the dashboard HTML;
 //     - session cookies are SameSite=Strict (cross-origin requests don't
 //     carry them);
@@ -2199,11 +2159,8 @@ func withLogging(next http.Handler) http.Handler {
 }
 
 // withTraffic stamps Server.lastRequestAtNs on every request before the
-// downstream handler runs. The stamp happens before the handler so a
-// long-running /v1/check still surfaces as recent traffic at the moment
-// it arrived, and a panic in the handler is still observed as activity.
-// Method receiver (rather than free function like withLogging) so the
-// closure can read the *Server identity for the atomic.
+// downstream handler runs, so a long-running /v1/check counts as traffic
+// when it arrived and a panicking handler still counts as activity.
 func (s *Server) withTraffic(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.noteRequest()
@@ -2211,11 +2168,6 @@ func (s *Server) withTraffic(next http.Handler) http.Handler {
 	})
 }
 
-// recoverPanic is the outermost HTTP middleware. It catches any panic
-// raised by a downstream handler, logs the stack trace, and returns a
-// generic 500 to the client. Without it, a panic inside Engine.Check or a
-// notifier callback would tear down the request goroutine but leave the
-// connection in an indeterminate state.
 // committedWriter tracks whether the response status line has been sent, so
 // a late error path can tell "nothing written yet" (safe to emit an error
 // envelope) from "already committed" (must stay silent).
@@ -2251,10 +2203,14 @@ func (c *committedWriter) Flush() {
 	}
 }
 
-// Unwrap exposes the underlying writer to http.ResponseController and any
-// future middleware that needs the concrete type.
+// Unwrap exposes the underlying writer to http.ResponseController.
 func (c *committedWriter) Unwrap() http.ResponseWriter { return c.ResponseWriter }
 
+// recoverPanic is the outermost HTTP middleware. It catches any panic
+// raised by a downstream handler, logs the stack trace, and returns a
+// generic 500 to the client. Without it, a panic inside Engine.Check or a
+// notifier callback would tear down the request goroutine but leave the
+// connection in an indeterminate state.
 func recoverPanic(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cw := &committedWriter{ResponseWriter: w}
@@ -2279,9 +2235,8 @@ func recoverPanic(next http.Handler) http.Handler {
 
 // goRecover runs fn in a fresh goroutine wrapped with a recover that logs
 // the panic stack and a caller-supplied label. Used for Vanzik's own
-// background workers — the session-cost sweeper, dispatcher workers, and
-// any future periodic goroutine — so a panic in one of them does not take
-// the whole process down.
+// background workers so a panic in one of them does not take the whole
+// process down.
 func goRecover(label string, fn func()) {
 	go func() {
 		defer func() {
@@ -2398,7 +2353,7 @@ var dashboardHTML = `<!DOCTYPE html>
     <div class="stat-card"><div class="label">Total Checks</div><div class="value" id="stat-total">0</div></div>
     <div class="stat-card allowed"><div class="label">Allowed</div><div class="value" id="stat-allowed">0</div></div>
     <div class="stat-card denied"><div class="label">Denied</div><div class="value" id="stat-denied">0</div></div>
-    <div class="stat-card pending"><div class="label">Pending Approval</div><div class="value" id="stat-approvals">0</div></div>
+    <div class="stat-card pending"><div class="label">Pending Approval</div><div class="value" id="stat-pending">0</div></div>
   </div>
   <div class="content" id="live-view">
     <div class="feed">
@@ -2515,15 +2470,16 @@ var dashboardHTML = `<!DOCTYPE html>
         document.getElementById('stat-total').textContent = s.total;
         document.getElementById('stat-allowed').textContent = s.allowed;
         document.getElementById('stat-denied').textContent = s.denied;
-        document.getElementById('stat-approvals').textContent = s.approvals;
       }).catch(() => {});
     }
     refreshStats();
     setInterval(refreshStats, 5000);
 
-    // Load pending
+    // Load pending. The "Pending Approval" card counts this list, not the
+    // lifetime /api/stats approvals total.
     function refreshPending() {
       agFetch('/api/pending').then(r => r.json()).then(items => {
+        document.getElementById('stat-pending').textContent = items ? items.length : 0;
         if (!items || items.length === 0) {
           pendingEl.innerHTML = '<div class="empty">None</div>';
           return;

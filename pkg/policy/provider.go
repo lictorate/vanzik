@@ -11,11 +11,10 @@ import (
 
 // safeCallback invokes cb(pol) with a deferred recover. A panic inside a
 // Watch callback (e.g. a malformed policy update tripping a downstream
-// invariant in gate.SetPolicy) would otherwise propagate up the file-
-// watcher goroutine and silently kill the watcher — every subsequent
-// policy update would then be dropped on the floor with no operator
-// signal. This wrapper logs the panic with a full stack trace and returns
-// normally so the caller's callback loop keeps running.
+// invariant) would otherwise kill the file-watcher goroutine, and every
+// later policy update would be dropped with no operator signal. This logs
+// the panic with a full stack trace and returns normally so the caller's
+// callback loop keeps running.
 func safeCallback(cb func(*Policy), pol *Policy) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -35,16 +34,13 @@ func safeCallback(cb func(*Policy), pol *Policy) {
 const LocalTenantID = "local"
 
 // ErrTenantNotFound is returned by PolicyProvider.Get when the tenant has
-// no associated policy. The proxy surfaces this as a synthetic DENY with
-// Rule="deny:tenant:not_found" so the existing handleCheck flow does not
-// need bespoke 404 handling. Multi-tenant providers (database, etcd) map
-// a missing tenant to the same error.
+// no associated policy. Engine.Check surfaces this as a synthetic DENY
+// with Rule="deny:tenant:not_found". Multi-tenant providers map a missing
+// tenant to the same error.
 var ErrTenantNotFound = errors.New("policy: tenant not found")
 
 // PolicyProvider abstracts policy retrieval. Engine reads policies through
-// this interface instead of loading from disk directly. Alternative
-// implementations (database, etcd, S3) can satisfy the same interface
-// without engine changes.
+// this interface instead of loading from disk directly.
 type PolicyProvider interface {
 	// Get returns the current policy for tenantID. The returned *Policy is
 	// a snapshot — callers must not mutate it (the engine treats it as
@@ -71,9 +67,8 @@ type PolicyProvider interface {
 }
 
 // parsePolicyBytes parses YAML and runs the same validation as LoadFromFile,
-// minus the os.ReadFile step, returning the parsed *Policy. Factored out so
-// providers can reuse it (FilePolicyProvider for raw-bytes Validate; the
-// MultiTenantProvider for loading per-tenant policies from a store).
+// minus the os.ReadFile step, returning the parsed *Policy. Used for
+// raw-bytes Validate and by MultiTenantProvider for per-tenant policies.
 func parsePolicyBytes(data []byte) (*Policy, error) {
 	pol, warnings, err := parsePolicyBytesWithWarnings(data)
 	if err != nil {

@@ -1,14 +1,10 @@
-"""Real-LangChain adapter tests (v0.5 R5 closure).
+"""Real-LangChain adapter tests.
 
-These tests import the actual ``langchain_core`` library — they do **not**
-mock the LangChain types themselves. The Vanzik HTTP server is mocked
-via the ``mock_server`` fixture so the policy decision can be steered per
-test, but every Tool/Runnable used here is a real LangChain object.
-
-If ``langchain_core`` is not installed in the test environment, every test
-in this file is skipped via ``pytest.importorskip``. Do **not** mock
-LangChain to make these tests run; that would defeat the audit closure
-(R5 P1-P5 specifies tests must validate against the actual upstream API).
+Every Tool/Runnable here is a real ``langchain_core`` object; only the
+Vanzik HTTP server is mocked (``mock_server``) to steer decisions. Without
+``langchain_core`` the module is skipped. Do **not** mock LangChain to
+make these tests run: their point is validating against the real
+upstream API.
 """
 
 import asyncio
@@ -33,9 +29,8 @@ from langchain_core.tools import Tool  # noqa: E402  (after importorskip)
 def _make_real_tool(name: str = "echo", description: str = "echoes input"):
     """Build a real langchain_core Tool around a tracked function.
 
-    Returns ``(tool, calls)`` — ``calls`` is a list that the function
-    appends to on each invocation. Tests assert on ``calls`` to verify
-    the underlying function ran (or did not).
+    Returns ``(tool, calls)``; the function appends each input to
+    ``calls``.
     """
     calls: list = []
 
@@ -79,7 +74,6 @@ class TestInvoke:
             gt.invoke("rm -rf /")
 
         assert "denied" in str(ei.value).lower()
-        # Underlying function MUST NOT have run.
         assert calls == []
 
     def test_guardedtool_invoke_approval_raises(self, mock_server):
@@ -137,11 +131,7 @@ class TestInvoke:
 
 class TestStream:
     def test_guardedtool_stream_gates_input_once(self, mock_server):
-        """The gate fires once at stream open; ALLOW lets the stream proceed.
-
-        Counts request bodies sent to the mock server: should be 1, not 1
-        per chunk.
-        """
+        """The gate fires once at stream open, not once per chunk."""
         from vanzik.adapters.langchain import GuardedTool
 
         MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
@@ -151,7 +141,6 @@ class TestStream:
 
         chunks = list(gt.stream("hello"))
 
-        # The wrapped function ran exactly once and produced the chunks.
         assert calls == ["hello"]
         # langchain_core Tool.stream yields the function output directly.
         assert chunks == ["echo:hello"]
@@ -275,13 +264,8 @@ class TestBatch:
 
         out = gt.batch(["a", "b", "c"])
 
-        # `out` order matches input order (LangChain's batch preserves
-        # input/output alignment) but `calls` records execution order,
-        # which is non-deterministic when batch runs concurrently. The
-        # original assertion `calls == ["a","b","c"]` passed by luck on
-        # Python 3.10-3.12 schedulers but flaked on 3.13. Compare sorted
-        # so the assertion captures "all three inputs ran exactly once"
-        # without depending on the scheduler.
+        # `out` keeps input order, but `calls` records execution order,
+        # which concurrent batch makes nondeterministic: compare sorted.
         assert out == ["echo:a", "echo:b", "echo:c"]
         assert sorted(calls) == ["a", "b", "c"]
 
@@ -301,7 +285,6 @@ class TestBatch:
         msg = str(ei.value)
         assert "batch entry 0" in msg
         assert "denied" in msg.lower()
-        # Function never ran.
         assert calls == []
 
     def test_guardedtool_batch_denies_second(self, mock_server_indexed):
@@ -317,9 +300,8 @@ class TestBatch:
             gt.batch(["ok0", "bad1", "ok2"])
 
         assert "batch entry 1" in str(ei.value)
-        # The function may or may not have processed the first entry —
-        # the contract is that the *batch* didn't return; we don't promise
-        # transactional rollback of pre-deny calls.
+        # Entries before the deny may have run: the contract is that the
+        # batch doesn't return, not a rollback.
         assert "bad1" not in calls
 
     def test_guardedtool_abatch_denies_first(self, mock_server_indexed):
@@ -338,24 +320,17 @@ class TestBatch:
 
 
 # ---------------------------------------------------------------------------
-# Defense contract under the v0.5.0 hybrid pattern.
-#
-# v0.5.0 used composition + a strict ``__getattr__`` allowlist; v0.5.0
-# subclasses langchain_core.tools.BaseTool so isinstance(thing, Runnable)
-# succeeds at framework boundaries (langgraph 1.0 / langchain_core 1.x)
-# and overrides every dispatch entry to keep gating tight.
-#
-# Defense moves from "no parent attributes are exposed" to "every gated
-# dispatch path is on this class, not inherited." The canary integration
-# tests catch upstream additions of new dispatch paths that bypass our
-# overrides.
+# Defense contract: GuardedTool subclasses langchain_core's BaseTool, so
+# isinstance(thing, Runnable) holds at framework boundaries (langgraph 1.0 /
+# langchain_core 1.x), and every gated dispatch path is defined on the
+# class, not inherited. The canary integration tests catch new upstream
+# dispatch paths.
 # ---------------------------------------------------------------------------
 
 class TestDefenseContract:
     def test_subclass_passes_runnable_isinstance(self, mock_server):
-        """The hybrid pattern's load-bearing property: when langgraph /
-        langchain runtime does ``isinstance(thing, Runnable)``,
-        GuardedTool must satisfy it.
+        """The langgraph / langchain runtime checks ``isinstance(thing,
+        Runnable)``; GuardedTool must satisfy it.
         """
         try:
             from langchain_core.runnables import Runnable
@@ -378,9 +353,8 @@ class TestDefenseContract:
         )
 
     def test_run_dispatch_paths_are_overridden(self, mock_server):
-        """Every gated method must be defined on GuardedTool itself, not
-        merely inherited. Inheritance would mean the parent's (un-gated)
-        implementation runs.
+        """Every gated method must be defined on GuardedTool itself: an
+        inherited one runs the parent's un-gated code.
         """
         from vanzik.adapters.langchain import _build_guarded_tool_class
 
@@ -404,9 +378,8 @@ class TestDefenseContract:
             )
 
     def test_private_attrs_not_in_model_dump(self, mock_server):
-        """Pydantic ``PrivateAttr`` keeps internal references off the
-        public model. ``_tool`` / ``_guard`` / ``_scope`` must NOT appear
-        in ``model_dump()`` output.
+        """``_tool`` / ``_guard`` / ``_scope`` must NOT appear in
+        ``model_dump()`` output.
         """
         from vanzik.adapters.langchain import GuardedTool
 
@@ -425,13 +398,9 @@ class TestDefenseContract:
             )
 
     def test_arbitrary_internal_blocked(self, mock_server):
-        """Random framework-unknown attributes raise AttributeError.
-
-        The new defense is "every gated method is overridden" — so the
-        framework's introspection of ``name`` / ``description`` /
-        ``args_schema`` works, but a probe for an undeclared attribute
-        like ``_internal_thing`` still raises (because pydantic's model
-        validates field names).
+        """An undeclared attribute like ``_internal_thing`` raises
+        AttributeError (pydantic validates field names), while ``name`` /
+        ``description`` / ``args_schema`` introspection works.
         """
         from vanzik.adapters.langchain import GuardedTool
 
@@ -443,9 +412,7 @@ class TestDefenseContract:
             _ = gt._GuardedTool__nonexistent
 
     def test_allowed_passthrough(self, mock_server):
-        """Metadata attributes pass through cleanly — they live on the
-        wrapper itself as pydantic-validated fields.
-        """
+        """Metadata attributes are pydantic fields on the wrapper itself."""
         from vanzik.adapters.langchain import GuardedTool
 
         guard = Guard(mock_server)
@@ -468,13 +435,8 @@ class TestDefenseContract:
 
 class TestRealLangChainRuntime:
     def test_real_invoke_round_trip_through_real_langchain_runtime(self, mock_server):
-        """Build a tiny LCEL-style chain that uses ``tool.invoke`` and run
-        it end-to-end. The gate must fire and the chain output must match
-        the wrapped tool's output.
-
-        We don't need an LLM — LCEL composes any Runnables. We pipe the
-        guarded tool's invoke result into a lambda Runnable to prove the
-        composition stays intact under real LangChain.
+        """A tiny LCEL chain (no LLM needed) piping ``tool.invoke`` into a
+        lambda Runnable: the gate fires and the composition stays intact.
         """
         from vanzik.adapters.langchain import GuardedTool
 
@@ -488,7 +450,6 @@ class TestRealLangChainRuntime:
         tool, calls = _make_real_tool()
         gt = GuardedTool(tool, guard, scope="shell")
 
-        # Compose: guardedtool.invoke(input) | uppercase(result)
         chain = RunnableLambda(lambda x: gt.invoke(x)) | RunnableLambda(
             lambda r: r.upper()
         )
@@ -497,7 +458,6 @@ class TestRealLangChainRuntime:
 
         assert out == "ECHO:PING"
         assert calls == ["ping"]
-        # And the gate fired:
         body = json.loads(MockVanzikHandler.last_request_body)
         assert body["scope"] == "shell"
         assert body["command"] == "ping"
@@ -529,12 +489,12 @@ class TestRealLangChainRuntime:
 
 
 # ---------------------------------------------------------------------------
-# Legacy run/arun parity (preserve v0.4.x semantics)
+# Legacy run/arun: string on deny
 # ---------------------------------------------------------------------------
 
 class TestLegacyRunArun:
-    """The legacy run()/arun() entries continue to return string messages on
-    DENY/REQUIRE_APPROVAL (v0.4.x compat). Only the modern entries raise."""
+    """The legacy run()/arun() entries return string messages on
+    DENY/REQUIRE_APPROVAL; only the modern entries raise."""
 
     def test_run_allow(self, mock_server):
         from vanzik.adapters.langchain import GuardedTool
@@ -560,7 +520,6 @@ class TestLegacyRunArun:
         gt = GuardedTool(tool, guard, scope="shell")
 
         out = gt.run("rm -rf /")
-        # Legacy: returns a string, not raises (v0.4.x compat).
         assert isinstance(out, str)
         assert "denied" in out.lower()
         assert calls == []

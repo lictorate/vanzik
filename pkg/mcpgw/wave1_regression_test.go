@@ -1,9 +1,9 @@
 package mcpgw
 
-// Regression tests for the audit fixes applied to pkg/mcpgw that shipped
-// without one: B16 (a failed first spawn left no supervisor), B19 (an explicit
-// null JSON-RPC id was routed as a notification, so the caller got silence),
-// and B24 (a delivered notification was reported as a failure).
+// Regression tests for pkg/mcpgw: a failed first spawn must still leave a
+// supervisor, an explicit null JSON-RPC id must be answered rather than
+// routed as a notification, and a delivered notification must never be
+// reported as a failure.
 
 import (
 	"bytes"
@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-// ----- B19: an explicit `"id": null` must be answered, not silently dropped -----
+// ----- An explicit `"id": null` must be answered, not silently dropped -----
 
 // dispatchOne runs a single frame through dispatchFrame against a bridge whose
 // stdout is captured, and returns whatever was written back to the host.
@@ -33,12 +33,9 @@ func dispatchOne(t *testing.T, frame string) string {
 	return out.String()
 }
 
-// TestDispatchFrame_ExplicitNullIDGetsAnError is the B19 regression test.
-//
-// The bug: `len(probe.ID) == 0 || string(probe.ID) == "null"` treated an
-// explicit null id as a notification and routed it to handleNotification, which
-// writes no response. A caller that sent `"id": null` and waited for a reply
-// hung forever, and blamed the gateway.
+// TestDispatchFrame_ExplicitNullIDGetsAnError: an explicit null id is not a
+// notification. Routed to handleNotification, which writes no response, it
+// would leave a caller that sent `"id": null` waiting forever.
 //
 // MCP forbids a null request id, so the frame is malformed either way — but
 // answering with a protocol error is correct under every reading, and silence
@@ -66,9 +63,9 @@ func TestDispatchFrame_ExplicitNullIDGetsAnError(t *testing.T) {
 	}
 }
 
-// TestDispatchFrame_AbsentIDIsStillANotification is the other half: the fix
-// must NOT turn genuine notifications into responses. A frame with no id field
-// is fire-and-forget and must stay silent.
+// TestDispatchFrame_AbsentIDIsStillANotification is the other half: genuine
+// notifications must NOT get responses. A frame with no id field is
+// fire-and-forget and must stay silent.
 func TestDispatchFrame_AbsentIDIsStillANotification(t *testing.T) {
 	got := dispatchOne(t, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
 	if got != "" {
@@ -76,7 +73,7 @@ func TestDispatchFrame_AbsentIDIsStillANotification(t *testing.T) {
 	}
 }
 
-// ----- B24: a delivered notification must never be reported as failed -----
+// ----- A delivered notification must never be reported as failed -----
 
 // captureWriter is an io.WriteCloser that records everything written to it, so
 // a test can assert whether a frame actually reached the upstream's stdin.
@@ -133,15 +130,11 @@ func TestNotify_SucceedsWithLiveContext(t *testing.T) {
 	}
 }
 
-// TestNotify_ExpiredContextDoesNotDeliverThenFail is the B24 regression test.
-//
-// The bug: the ctx check ran AFTER writeFrame, so a context that expired around
-// the write returned ctx.Err() for a notification whose bytes were already on
-// the pipe. The caller recorded a failure for an operation that had actually
-// happened — and for a non-idempotent notification, a retry would double-send.
-//
-// The invariant is "delivered XOR error", never both. Checking ctx before the
-// write makes that deterministic, so this test asserts exactly it.
+// TestNotify_ExpiredContextDoesNotDeliverThenFail: Notify is "delivered XOR
+// error", never both. A ctx check after writeFrame would return ctx.Err() for a
+// notification whose bytes are already on the pipe, and a retry of a
+// non-idempotent notification would double-send. Checking ctx before the write
+// makes it deterministic, so this test asserts exactly it.
 func TestNotify_ExpiredContextDoesNotDeliverThenFail(t *testing.T) {
 	up, cw := upstreamWithCapturedStdin(t)
 
@@ -167,7 +160,7 @@ func TestNotify_ExpiredContextDoesNotDeliverThenFail(t *testing.T) {
 	}
 }
 
-// ----- B16: a failed first spawn must still leave a supervisor running -----
+// ----- A failed first spawn must still leave a supervisor running -----
 
 // flakySpawnFactory fails the first `failures` spawn attempts, then delegates
 // to a working factory. It models the real trigger: an `npx` cold start, a
@@ -194,12 +187,9 @@ func flakySpawnFactory(t *testing.T, failures int, then CommandFactory) (Command
 	return f, count
 }
 
-// TestStart_FirstSpawnFailureStillSupervises is the B16 regression test.
-//
-// The bug: Start returned the spawn error BEFORE `go u.supervise(ctx)`, so an
-// upstream whose very first spawn failed had no supervisor at all. Bridge
-// logged the failure and kept the upstream in its map, and nothing ever retried
-// it — every call to that namespace failed for the life of the process, even
+// TestStart_FirstSpawnFailureStillSupervises: Start must launch the supervisor
+// even when the first spawn fails. Without one nothing retries the upstream,
+// and every call to that namespace fails for the life of the process even
 // though a single retry would have worked.
 //
 // The assertion is behavioural, not structural: after a transient first

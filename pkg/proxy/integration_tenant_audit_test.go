@@ -86,8 +86,7 @@ func TestATIntegration_TenantAuditParity(t *testing.T) {
 	post("/v1/t/local/check")
 
 	// Give the audit logger a brief moment to flush — FileLogger writes
-	// synchronously, but the test must tolerate buffered loggers a future
-	// worker may add.
+	// synchronously, but the test must tolerate buffered loggers.
 	time.Sleep(50 * time.Millisecond)
 
 	// Query the audit endpoint with the bearer.

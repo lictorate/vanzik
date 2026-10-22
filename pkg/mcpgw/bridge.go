@@ -36,8 +36,7 @@ const GatewayServerName = "vanzik-mcp-gateway"
 // Bridge is the JSON-RPC orchestrator. It owns the set of upstreams,
 // reads frames from the host's stdin, dispatches them per method,
 // and writes responses to the host's stdout. Policy and audit are
-// implemented as nil-safe hooks so A18 (policy) and A19 (audit/SSE)
-// can wire real implementations without re-engineering the bridge.
+// nil-safe hooks the binary (or a test) wires.
 type Bridge struct {
 	cfg       *Config
 	upstreams map[string]Upstream // keyed by namespace
@@ -65,42 +64,37 @@ type Bridge struct {
 	// ToolsCallRequest.ConnectionID). Set once by NewBridge.
 	connID string
 
-	// Hooks for A18 and A19. All nil-safe — a nil hook means the
-	// bridge falls through with conservative defaults (ALLOW for
-	// policy, no-op for audit/SSE). Set by the binary entry point
-	// (or by tests) before Run().
+	// Hooks, all nil-safe — a nil hook means the bridge falls
+	// through with conservative defaults (ALLOW for policy, no-op
+	// for audit/SSE). Set by the binary entry point (or by tests)
+	// before Run().
 
-	// PolicyCheck is the hook A18 wires. The default (nil) ALLOWs
-	// every tool call — useful for early bring-up before the policy
-	// engine is integrated. A18 sets this to a function that:
+	// PolicyCheck gates every tools/call. The default (nil) ALLOWs
+	// every tool call (see policy_hook_contract_test.go). The gateway
+	// binary wires HTTPPolicyClient.Check, which:
 	//   1. Builds a policy.ActionRequest from the ToolsCallRequest
 	//      (scope: "mcp_tool", command: "<ns>:<tool>", agent_id from
 	//      clientInfo, etc.).
-	//   2. Optionally also dispatches a second Engine.Check against
-	//      the mapped scope per the dual-check pattern (governed by
-	//      Config.PolicyMode == "strict").
-	//   3. Returns a Decision struct.
+	//   2. In strict mode (Config.PolicyMode), also checks the
+	//      mapped scope (the dual-check pattern).
+	//   3. Returns a Decision.
 	//
 	// The bridge calls PolicyCheck with the bridge's context so a
 	// cancellation propagates into the hook.
 	PolicyCheck func(ctx context.Context, req *ToolsCallRequest) (Decision, error)
 
-	// AuditEmit is the hook A19 wires. The default (nil) is a no-op.
-	// A19 sets this to a function that writes one audit.Entry via
-	// the shared BufferedAsyncLogger with Transport: "mcp_gateway".
-	// The hook MUST NOT block the request hot path — A19 is expected
-	// to fan out to its own goroutines internally.
+	// AuditEmit receives one AuditEntry per tools/call decision. The
+	// default (nil) is a no-op, and the gateway binary leaves it nil
+	// (see audit.go). A hook MUST NOT block the request hot path.
 	AuditEmit func(entry AuditEntry)
 
-	// SSEEmit is the hook A19 wires. The default (nil) is a no-op.
-	// A19 sets this to a function that pushes one SSE event into
-	// the existing pkg/proxy ApprovalQueue's broadcast channel so
-	// the dashboard sees MCP traffic with the `mcp_gateway` chip.
+	// SSEEmit receives one SSEEvent per policy verdict. The
+	// default (nil) is a no-op, and the gateway binary leaves it nil
+	// (see audit.go).
 	SSEEmit func(event SSEEvent)
 }
 
 // ToolsCallRequest is the bridge-internal shape passed to PolicyCheck.
-// A18 reads this, calls Engine.Check, returns Decision.
 type ToolsCallRequest struct {
 	Namespace  string                 // resolved from the prefixed name
 	ToolName   string                 // un-prefixed name as the upstream sees it
@@ -109,7 +103,7 @@ type ToolsCallRequest struct {
 	Meta       map[string]interface{} // _meta with `dev.vanzik/*` keys preserved
 	TenantID   string                 // from cfg.TenantID
 	AgentID    string                 // synthesised from ClientInfo.Name
-	SessionID  string                 // session-scoped key (clientInfo + pid hint)
+	SessionID  string                 // session-scoped key, from ClientInfo.Name
 	ApprovalID string                 // populated from _meta.dev.vanzik/approval_id if present
 
 	// ConnectionID is this gateway process's random id, sent as
@@ -126,9 +120,8 @@ type ToolsCallRequest struct {
 // (per docs/MCP_GATEWAY.md § 6.1) rather than a JSON-RPC error.
 type Decision = gateclient.Decision
 
-// AuditEntry is the bridge-internal shape passed to AuditEmit. A19
-// translates this into the canonical audit.Entry with
-// Transport="mcp_gateway".
+// AuditEntry is the bridge-internal shape passed to AuditEmit; a hook
+// translates it into an audit.Entry with Transport="mcp_gateway".
 type AuditEntry struct {
 	Timestamp  time.Time
 	AgentID    string
@@ -146,8 +139,7 @@ type AuditEntry struct {
 	Meta       map[string]interface{}
 }
 
-// SSEEvent is the bridge-internal shape passed to SSEEmit. A19
-// translates this into the broadcast channel the dashboard reads.
+// SSEEvent is the bridge-internal shape passed to SSEEmit.
 type SSEEvent struct {
 	Type      string // "check" | "denied" | "approval_required"
 	Timestamp time.Time
@@ -215,8 +207,7 @@ func (b *Bridge) newUpstream(spec UpstreamSpec) (Upstream, error) {
 // dispatches per method, writes responses to `out`. Returns when:
 //   - ctx is cancelled (graceful shutdown);
 //   - `in` EOFs (host disconnected);
-//   - a fatal error occurs (subprocess startup failure with
-//     fail-mode=deny).
+//   - reading `in` fails.
 //
 // Run is goroutine-safe at the entry-point level (one goroutine per
 // host) but must not be called concurrently for the same Bridge.
@@ -226,14 +217,11 @@ func (b *Bridge) Run(ctx context.Context, in io.Reader, out io.Writer, errLog io
 		b.logger = newTransportLogger(errLog, b.cfg.LogLevel)
 	}
 
-	// Start every upstream. We do NOT call Initialize here — the
-	// host drives Initialize and we forward to upstreams in
-	// handleInitialize. Subprocess spawn failures are treated per
-	// fail-mode: in `allow` mode we log + continue with a degraded
-	// namespace; in `deny` and `fail-closed-with-audit` modes we
-	// keep going too — the namespace returns ErrUpstreamUnavail on
-	// every call so the host gets clean errors rather than a
-	// startup hang.
+	// Start every upstream. Initialize is NOT called here: the host
+	// drives it and handleInitialize forwards it. A spawn failure is
+	// logged and, in every fail-mode, leaves a degraded namespace that
+	// answers ErrUpstreamUnavail, so the host gets clean errors rather
+	// than a startup hang.
 	for _, spec := range b.cfg.Upstreams {
 		if _, exists := b.upstreams[spec.Namespace]; exists {
 			// Test injection already wired this namespace.
@@ -272,11 +260,9 @@ func (b *Bridge) Run(ctx context.Context, in io.Reader, out io.Writer, errLog io
 
 			if errors.Is(err, errFrameTooLong) {
 				// A frame past the cap is a PER-FRAME failure, not a
-				// process-wide one. Previously this ended Run, and main turns
-				// a Run error into os.Exit(1) -- so one oversized client frame
-				// took down the whole gateway and every session on it. Answer
-				// it if we can identify it, so the caller
-				// is not left waiting on a frame we refused, then carry on.
+				// process-wide one: ending Run would make main os.Exit(1)
+				// and take down every session. Answer it if its id can be
+				// read, so the caller isn't left waiting, then carry on.
 				if id := peekFrameID(prefix); id != nil {
 					b.writeResponse(NewResponseError(id, ErrCodeInvalidRequest,
 						"frame exceeds the maximum size the gateway accepts", nil))
@@ -400,22 +386,16 @@ func (b *Bridge) dispatchFrame(ctx context.Context, line []byte, wg *sync.WaitGr
 	}
 }
 
-// handleNotification routes notifications to upstreams. Currently
-// broadcasts to all upstreams (cancellation, initialized). Per-upstream
-// targeted notifications are a future enhancement.
+// handleNotification broadcasts notifications (cancellation,
+// initialized) to every upstream.
 //
-// KNOWN LIMITATION — notifications/cancelled is a best-effort no-op.
-// The cancellation's params.requestId is in the HOST id space, but
-// StdioUpstream.Send rewrites every request id to a gateway-internal id
-// that the host never sees (the upstream id space is per-connection —
-// see the Upstream.Send contract). A cancellation broadcast here can
-// therefore never match an in-flight upstream request, so the upstream
-// cannot act on it. The broadcast is harmless (the upstream ignores an
-// unknown requestId) but does nothing. Wiring real cancellation needs a
-// host<->upstream request-id map threaded through the transport so the
-// gateway can translate requestId on the way out; that is deferred
-// pending a design (do not build it as a drive-by). Documented as a
-// known limitation in docs/MCP_GATEWAY.md § 8.4.
+// KNOWN LIMITATION (docs/MCP_GATEWAY.md § 8.4): notifications/cancelled
+// is a no-op. Its params.requestId is in the HOST id space, but
+// Upstream.Send rewrites every request id to a gateway-internal one, so
+// the broadcast never matches an in-flight upstream request (the
+// upstream ignores the unknown id). Real cancellation needs a
+// host<->upstream request-id map threaded through the transport; it
+// needs a design first, not a drive-by.
 //
 // The fan-out runs off the frame loop, one goroutine per upstream: for
 // an HTTP upstream Notify is a network round trip (or a whole session
@@ -543,7 +523,6 @@ func (b *Bridge) handleToolsList(ctx context.Context, id RequestID, _ json.RawMe
 			continue
 		}
 		for _, t := range r.tools {
-			// Prefix namespace.
 			if strings.ContainsRune(t.Name, ':') {
 				// Downstream advertised a tool name with `:` — this
 				// breaks our prefix scheme. Skip and warn so the
@@ -604,7 +583,7 @@ func (b *Bridge) collectAllTools(ctx context.Context, up Upstream) ([]ToolDescri
 // handleToolsCall is the policy gate. Per docs/MCP_GATEWAY.md § 4.3:
 //  1. Split the prefixed name on the first `:`.
 //  2. Validate namespace.
-//  3. Run PolicyCheck (A18's hook). On DENY/REQUIRE_APPROVAL surface
+//  3. Run PolicyCheck. On DENY/REQUIRE_APPROVAL surface
 //     as an isError=true content block.
 //  4. On ALLOW, strip the namespace prefix from the request, strip
 //     dev.vanzik/* keys from `_meta`, and forward to upstream.
@@ -634,7 +613,6 @@ func (b *Bridge) handleToolsCall(ctx context.Context, id RequestID, raw json.Raw
 			fmt.Sprintf("tools/call: upstream %q unavailable", ns), data)
 	}
 
-	// Build the policy-hook input.
 	approvalID := ""
 	if params.Meta != nil {
 		if v, ok := params.Meta[MetaApprovalIDKey].(string); ok {
@@ -655,7 +633,6 @@ func (b *Bridge) handleToolsCall(ctx context.Context, id RequestID, raw json.Raw
 		ConnectionID: b.connID,
 	}
 
-	// Run the policy hook.
 	dec, err := b.runPolicyCheck(ctx, preq)
 	if err != nil {
 		// Hook itself failed (e.g., /v1/check unreachable). The hook
@@ -781,9 +758,9 @@ func (b *Bridge) handleLoggingSetLevel(ctx context.Context, id RequestID, raw js
 // per docs/MCP_GATEWAY.md § 6.2; this fallback is the escape hatch.
 // Deliberately deferred pending a security design pass: any heuristic
 // that matches a retry to a prior approval WITHOUT the explicit
-// approval id re-opens the replay surface the B1 shape-validator
-// closed (see audit 2026-06 / ApprovalReplayMismatch). Do not
-// implement as a drive-by.
+// approval id re-opens the approval replay surface the shape
+// validator closes (ApprovalReplayMismatch). Do not implement as a
+// drive-by.
 func (b *Bridge) runPolicyCheck(ctx context.Context, req *ToolsCallRequest) (Decision, error) {
 	if b.PolicyCheck == nil {
 		return Decision{
@@ -801,9 +778,8 @@ func (b *Bridge) emitAudit(req *ToolsCallRequest, decision, rule, reason string,
 	if b.AuditEmit == nil {
 		return
 	}
-	// Best-effort path-extract for the dual-check / dashboard chip.
-	// Inferring a path/url from arguments is A18's job; the bridge
-	// just forwards whatever raw arguments it has.
+	// Best-effort path/url from the common argument names; the
+	// policy gate does the real projection (buildMappedActionRequest).
 	var path, url, domain string
 	if req.Arguments != nil {
 		if v, ok := req.Arguments["path"].(string); ok {
@@ -938,9 +914,8 @@ func (b *Bridge) deriveAgentID() string {
 	return "mcp-gateway:" + b.clientInfo.Name
 }
 
-// deriveSessionID returns a stable per-host session id. Uses the
-// client name as the session key; future versions may add a per-
-// process pid or a uuid generated at initialize time.
+// deriveSessionID returns a stable per-host session id, keyed on the
+// client name (ConnectionID tells processes apart).
 func (b *Bridge) deriveSessionID() string {
 	if b.clientInfo.Name == "" {
 		return "mcp-gateway-default"

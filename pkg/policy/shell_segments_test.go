@@ -178,11 +178,11 @@ func TestCheck_CompoundAllowPatternMatchesSegmentBySegment(t *testing.T) {
 func FuzzParseShell(f *testing.F) {
 	for _, s := range []string{
 		"ls; rm -rf /", "echo $(a `b`) > c", `git "x" 'y'`, "a\nb", "((", "$((1))", "<<<x",
-		// Nested command strings, wrappers and $'…' (v1.4).
+		// Nested command strings, wrappers and $'…'.
 		`bash -c "sh -c 'eval $(id)'"`, "eval -- \"$(ssh-agent -s)\"", "env -S 'a b' FOO=1 nohup timeout 5 x",
 		"flock f -c 'x; y'", "bash -s -- <<< 'rm -rf /'", "fish --command=x -C y", "BASH5.2 -lc x",
 		`$'\x72é\cA\101'`, "xargs -I{} -n1 sudo -Eu root rm {}", "echo $(eval $(eval $(eval ls)))",
-		// Second-round review: NULs, launchers, pipelines, unparsed scripts.
+		// NULs, launchers, pipelines, unparsed scripts.
 		`read -d $'\0' f`, "pkexec runuser -u a -- npm exec -- uv run x", "cd x && timeout 1 curl y | sh",
 		"bash -c 'echo $((1))'", "sg g -c 'mise x -c z'", "a[0]+=1 PATH+=:x env - -S 'b c' d",
 	} {

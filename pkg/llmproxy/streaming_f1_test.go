@@ -1,20 +1,10 @@
 package llmproxy
 
-// streaming_f1_test.go pins v1.0 review finding F1: a streaming
-// completion that carries a parse error (a finalized tool_use cycle
-// whose assembled arguments are not valid JSON — e.g. a max_tokens-
-// truncated tool call, routine OR attacker-inducible) must be treated
-// as a fail-closed DENY, never silently dropped.
-//
-// Pre-fix, the streaming loop did `if ferr != nil && !isEOF { continue }`
-// which discarded the completion: the gate never ran (no refusal, no
-// audit entry) and the accumulator was left stuck so every subsequent
-// event buffered and was dropped at EOF — the firewall went dark with
-// no trail. These tests prove the completion now (a) refuses the client,
-// (b) still drives the audit path (PolicyCheck is invoked — the sole
-// audit mechanism; the proxy never emits audit directly, see server.go),
-// and (c) resets the accumulator so a LATER valid tool call in the same
-// stream is still gated (the "stuck accumulator" is fixed).
+// A completed streaming tool call whose arguments are not valid JSON
+// (max_tokens truncation, or attacker-induced) must be denied, never
+// dropped. The tests check that it (a) refuses the client, (b) still
+// drives the audit path via PolicyCheck, and (c) resets the accumulator
+// so a later valid tool call in the same stream is still gated.
 
 import (
 	"bytes"
@@ -27,12 +17,10 @@ import (
 	"testing"
 )
 
-// gateSpy is a thread-safe PolicyCheck stub that records the tool-call
-// ids it was asked to gate. A recorded id is the observable proxy for
-// "an audit entry was produced for this action" (the wired PolicyCheck
-// POSTs to /v1/check, which writes the audit entry — server.go). The
-// decision it returns is configurable so a test can prove fail-closed
-// behaviour EVEN WHEN the policy would ALLOW.
+// gateSpy is a thread-safe PolicyCheck stub recording the gated ids; a
+// recorded id stands for an audit entry (the wired hook's /v1/check
+// writes one). Its decision is configurable, to prove refusal even when
+// policy would ALLOW.
 type gateSpy struct {
 	mu       sync.Mutex
 	seenIDs  []string
@@ -102,11 +90,13 @@ func TestStreaming_OpenAI_MalformedCompletion_FailsClosedAuditsAndResets(t *test
 	if strings.Contains(got, "call_bad") {
 		t.Errorf("malformed tool_call id leaked into client output (not fail-closed): %q", got)
 	}
+	// The refusal carries its own [DONE]; upstream's must not follow it.
+	if n := strings.Count(got, "data: [DONE]"); n != 1 {
+		t.Errorf("client saw %d [DONE] lines, want exactly 1: %q", n, got)
+	}
 
-	// (b) audit + (c) reset/resume: PolicyCheck must have been invoked for
-	// the malformed call (audit gap closed) AND for the subsequent valid
-	// call (accumulator reset — gating resumed; the stuck-accumulator bug
-	// is fixed).
+	// (b) audit + (c) reset: PolicyCheck saw the malformed call and the
+	// valid one after it.
 	ids := spy.ids()
 	if len(ids) != 2 || ids[0] != "call_bad" || ids[1] != "call_good" {
 		t.Fatalf("PolicyCheck ids = %v, want [call_bad call_good] (audit for malformed + gating resumed for the later valid call)", ids)
@@ -124,13 +114,14 @@ func TestStreaming_Anthropic_MalformedCompletion_FailsClosedAuditsAndResets(t *t
 	goodStart := `event: content_block_start` + "\n" + `data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_good","name":"bash","input":{}}}` + "\n\n"
 	goodDelta := `event: content_block_delta` + "\n" + `data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{}"}}` + "\n\n"
 	goodStop := `event: content_block_stop` + "\n" + `data: {"type":"content_block_stop","index":1}` + "\n\n"
+	msgDelta := `event: message_delta` + "\n" + `data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":12}}` + "\n\n"
 	msgStop := `event: message_stop` + "\n" + `data: {"type":"message_stop"}` + "\n\n"
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		f, _ := w.(http.Flusher)
-		_, _ = io.WriteString(w, badStart+badDelta+badStop+goodStart+goodDelta+goodStop+msgStop)
+		_, _ = io.WriteString(w, badStart+badDelta+badStop+goodStart+goodDelta+goodStop+msgDelta+msgStop)
 		if f != nil {
 			f.Flush()
 		}
@@ -165,6 +156,13 @@ func TestStreaming_Anthropic_MalformedCompletion_FailsClosedAuditsAndResets(t *t
 	if strings.Contains(got, "toolu_bad") {
 		t.Errorf("malformed tool_use id leaked into client output (not fail-closed): %q", got)
 	}
+	// The refusal carries its own message_delta and message_stop;
+	// upstream's must not follow them.
+	for _, typ := range []string{"message_delta", "message_stop"} {
+		if n := strings.Count(got, `"type":"`+typ+`"`); n != 1 {
+			t.Errorf("client saw %d %s events, want exactly 1: %q", n, typ, got)
+		}
+	}
 
 	// (b) audit + (c) reset/resume.
 	ids := spy.ids()
@@ -173,11 +171,9 @@ func TestStreaming_Anthropic_MalformedCompletion_FailsClosedAuditsAndResets(t *t
 	}
 }
 
-// TestStreaming_MalformedNonCompletionDelta_NoSpuriousRefusal is the
-// regression guard for the PRESERVED behaviour: a malformed event that
-// is NOT a completion (garbage mid-stream JSON) is still dropped
-// silently — no crash, no spurious refusal, no gate call — and valid
-// events that follow pass through byte-for-byte.
+// TestStreaming_MalformedNonCompletionDelta_NoSpuriousRefusal: a
+// malformed event that is not a completion is dropped silently (no
+// refusal, no gate call) and later events pass through byte-for-byte.
 func TestStreaming_MalformedNonCompletionDelta_NoSpuriousRefusal(t *testing.T) {
 	garbage := "data: {totally not valid json}\n\n"
 	content := `data: {"choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}]}` + "\n\n"
@@ -227,11 +223,8 @@ func TestStreaming_MalformedNonCompletionDelta_NoSpuriousRefusal(t *testing.T) {
 	}
 }
 
-// TestStreaming_OpenAI_ValidToolCall_HappyPathUnchanged is the happy-path
-// regression: a well-formed tool_call still gates exactly once and, on
-// ALLOW, replays upstream bytes byte-identical. Pins that the F1 change
-// added a branch only for the malformed-completion case and left the
-// ALLOW path untouched.
+// TestStreaming_OpenAI_ValidToolCall_HappyPathUnchanged: a well-formed
+// tool_call gates exactly once and replays byte-identical on ALLOW.
 func TestStreaming_OpenAI_ValidToolCall_HappyPathUnchanged(t *testing.T) {
 	fixture := `data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_ok","type":"function","function":{"name":"bash","arguments":"{\"cmd\":\"ls\"}"}}]},"finish_reason":null}]}` + "\n\n" +
 		`data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n" +

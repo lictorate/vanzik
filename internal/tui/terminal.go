@@ -50,7 +50,17 @@ func (t *Terminal) Select(title string, opts []Option, def int) (int, error) {
 		return Back, fmt.Errorf("terminal: %w", err)
 	}
 	defer func() { _ = term.Restore(fd, state) }()
-	return Run(t.in, t.out, t.style, NewMenu(title, opts, def), "\r\n")
+	return run(t.in, t.out, t.style, NewMenu(title, opts, def), "\r\n", t.width)
+}
+
+// width is the terminal's width in columns, 0 when it can't be read.
+// Asked on every redraw, so a resized window is measured afresh.
+func (t *Terminal) width() int {
+	w, _, err := term.GetSize(int(t.out.Fd()))
+	if err != nil {
+		return 0
+	}
+	return w
 }
 
 // Style is how this terminal shows colour.

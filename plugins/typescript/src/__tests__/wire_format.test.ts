@@ -11,15 +11,8 @@
  * and assert that the JSON shape produced/consumed by each SDK matches
  * the canonical v1 schema.
  *
- * Closes audit findings R1 F4 (no schema_version field on the wire) and
- * R1 F7 (no cross-language contract test — silent drift between Go,
- * Python, and TypeScript implementations).
- *
- * Note on fixture path: this file lives under plugins/typescript/src/__tests__
- * (Jest's configured roots). The spec called for plugins/typescript/__tests__,
- * but the Jest config (jest.config.js) only scans plugins/typescript/src.
- * The fixture path is computed from __dirname so a future test relocation
- * stays correct without re-deriving relative depth.
+ * The file sits under src/__tests__ because jest.config.js only scans
+ * plugins/typescript/src.
  */
 
 import * as fs from "fs";
@@ -32,10 +25,7 @@ import type { CheckOptions } from "../index";
 // Fixture path resolution
 // ---------------------------------------------------------------------------
 
-// __dirname when ts-jest runs this file:
-//   <repo>/plugins/typescript/src/__tests__
-// Walk up four levels to land at <repo>/, then descend into the canonical
-// fixture directory under pkg/proxy/schema/v1.
+// __dirname is <repo>/plugins/typescript/src/__tests__.
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..", "..");
 const FIXTURES_DIR = path.join(REPO_ROOT, "pkg", "proxy", "schema", "v1", "testdata");
 
@@ -151,12 +141,10 @@ describe("Vanzik.check wire format", () => {
     const body = parseBody(init);
     const keys = Object.keys(body);
 
-    // Every emitted key must be in the v1 schema.
     for (const k of keys) {
       expect(WIRE_KEYS_ALLOWED.has(k)).toBe(true);
     }
 
-    // Every required key must be present.
     for (const required of WIRE_KEYS_REQUIRED) {
       expect(keys).toContain(required);
     }
@@ -181,11 +169,9 @@ describe("Vanzik.check wire format", () => {
     const [, init] = fetchMock.mock.calls[0];
     const body = parseBody(init);
 
-    // The TS SDK does not currently emit schema_version (the server
-    // defaults missing values to "v1"). Compare against the fixture
-    // with that field stripped — this pins the contract today and
-    // documents the migration path: when the SDK starts emitting
-    // schema_version, drop the strip and the test must still pass.
+    // The SDK does not emit schema_version (the server defaults it to
+    // "v1"), so it is stripped from the fixture. If the SDK starts emitting
+    // it, drop the strip.
     const fixture = loadFixture("sample_request.json") as Record<string, unknown>;
     const { schema_version: _ignored, ...expected } = fixture;
     void _ignored;
@@ -207,10 +193,8 @@ describe("Vanzik.check wire format", () => {
 
     const [, init] = fetchMock.mock.calls[0];
     const body = parseBody(init);
-    // The SDK's CheckOptions uses camelCase TS fields; the wire format
-    // must convert to snake_case. A regression that leaked camelCase to
-    // the wire would silently bypass the Go server's session_id /
-    // est_cost handling.
+    // camelCase leaking to the wire would silently bypass the server's
+    // session_id / est_cost handling.
     const forbidden = ["sessionId", "estCost", "agentId"];
     for (const k of forbidden) {
       expect(Object.keys(body)).not.toContain(k);

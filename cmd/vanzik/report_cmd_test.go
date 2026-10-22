@@ -160,8 +160,8 @@ func TestCLI_ReportFromFiles(t *testing.T) {
 	vanzik(t, dir, nil, "report", "--audit-log", path, "--key-file", keyFile, "--policy", "nope.yaml").expect(t, 3, "", "--policy")
 }
 
-// The review's repros: logs whose seal is only claimed, or broken by an
-// unsealed line, must not pass the seal checks.
+// Logs whose seal is only claimed, or broken by an unsealed line, must not
+// pass the seal checks.
 func TestCLI_ReportSealClaims(t *testing.T) {
 	key := []byte("report-seal-key")
 	unsealedLine, _ := json.Marshal(audit.Entry{Timestamp: reportDay.Add(time.Hour), AgentID: "x", Request: policy.ActionRequest{Scope: "shell", Command: "forged"}})
@@ -424,8 +424,8 @@ func TestCLI_ReportFromServer(t *testing.T) {
 			extra: []string{"--tenant-id", "acme"}, wantStatus: report.IntegrityNotSealed, wantAuth: "no", wantPathStart: "/v1/t/acme/audit?",
 		},
 		{
-			// A 302 to a login page that answers 200 used to count as an
-			// open audit API.
+			// A 302 to a login page that answers 200 is not an open
+			// audit API.
 			name:  "a probe redirected to a login page proves nothing",
 			srv:   &fakeAuditServer{filterTime: true, key: "k", head: sealedHead, redirectNoAuth: true},
 			extra: []string{"--api-key", "k"}, wantStatus: report.IntegrityNotVerified, wantAuth: "unknown", wantPathStart: "/v1/audit?",
@@ -482,8 +482,8 @@ func TestCLI_ReportFromServer(t *testing.T) {
 	vanzik(t, t.TempDir(), nil, "report", "--url", "http://127.0.0.1:1").expect(t, 3, "", "Cannot connect to Vanzik at http://127.0.0.1:1")
 }
 
-// A server that answers every page with the same thing used to be paged
-// forever (105k requests in 3 seconds). It now stops at the second page.
+// A server that answers every page with the same thing must not be paged
+// forever: the walk stops at the second page.
 func TestCLI_ReportServerThatRepeatsItself(t *testing.T) {
 	srv := newFakeAuditServer(t, &fakeAuditServer{garbage: true, head: noHeadRoute})
 	args := append([]string{"report", "--url", srv.URL}, reportPeriodArgs...)
@@ -493,9 +493,9 @@ func TestCLI_ReportServerThatRepeatsItself(t *testing.T) {
 	}
 }
 
-// The live file rotates after two pages. Offset paging then read past the
-// end of the new, short file and stopped, losing the entries written after
-// the rotation, with no warning. Paging by time picks them up, and the
+// The live file rotates after two pages. Offset paging would read past the
+// end of the new, short file and stop, losing the entries written after
+// the rotation without a warning. Paging by time picks them up, and the
 // changed seal head segment puts a warning in the report.
 func TestCLI_ReportServerRotatesWhileReading(t *testing.T) {
 	var after []audit.Entry

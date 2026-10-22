@@ -445,7 +445,7 @@ func TestSessionCost_EnforcesLimit(t *testing.T) {
 
 	engine := NewEngineFromPolicy(pol)
 
-	// Check now atomically reserves the cost on Allow — no manual RecordCost
+	// Check atomically reserves the cost on Allow — no manual RecordCost
 	// follow-up is needed (that would double-count).
 	r1 := engine.Check(ActionRequest{Scope: "cost", EstCost: 4.00, SessionID: "sess-1"}, "local")
 	if r1.Decision != Allow {

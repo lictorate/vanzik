@@ -1,6 +1,6 @@
 package persist
 
-// Multi-node rate-limit + cost reconciliation (v1.0). These tests wire N in-proc
+// Multi-node rate-limit + cost reconciliation. These tests wire N in-proc
 // nodes — each its own Limiter/Engine + Syncer + SQLiteStore handle onto ONE
 // shared database file (the multi-node / shared-Postgres analog) — and drive the
 // unexported reconcile() pass directly for determinism. They prove:

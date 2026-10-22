@@ -83,11 +83,10 @@ func TestSessionStore_Expires(t *testing.T) {
 	}
 }
 
-// TestSessionStore_RejectsNewWhenFull verifies the v0.4.1 behavior: when
-// every slot holds a live session, Create returns ErrSessionStoreFull and
-// the caller (handleLogin) is expected to surface 503. Earlier versions
-// silently evicted the oldest live session here, which kicked a real
-// operator out of an active session.
+// TestSessionStore_RejectsNewWhenFull: when every slot holds a live
+// session, Create returns ErrSessionStoreFull and the caller (handleLogin)
+// is expected to surface 503. Silently evicting the oldest live session
+// instead would kick a real operator out of an active session.
 func TestSessionStore_RejectsNewWhenFull(t *testing.T) {
 	s := NewSessionStore()
 
@@ -212,8 +211,8 @@ func TestSessionStore_ConcurrentCreate(t *testing.T) {
 	if full.Load() == 0 {
 		// Not an error per se, but the test is designed to exercise the
 		// rejection path — if nothing was rejected, either MaxSessions was
-		// raised or the workload was shrunk. Flag it so future edits do not
-		// silently stop exercising the new behavior.
+		// raised or the workload was shrunk. Flag it so edits do not
+		// silently stop exercising the rejection path.
 		t.Errorf("expected at least one ErrSessionStoreFull rejection across %d creates", workers*per)
 	}
 }
@@ -304,8 +303,8 @@ func TestHandleLogin_TLSTerminatedUpstreamSetsSecure(t *testing.T) {
 }
 
 func TestHandleLogin_DefaultNoTLSNoSecure(t *testing.T) {
-	// Default (TLSTerminatedUpstream=false) preserves v0.4.0 behavior: cookies
-	// are emitted without Secure when the request arrives over plaintext.
+	// Default (TLSTerminatedUpstream=false): cookies are emitted without
+	// Secure when the request arrives over plaintext.
 	srv := newTestServer(t) // default: TLSTerminatedUpstream=false
 
 	body := `{"api_key":"test-secret"}`
@@ -568,8 +567,8 @@ func TestFullLoginFlow(t *testing.T) {
 	}
 }
 
-// TestDashboardDoesNotLeakAPIKey: critical regression. The previously
-// acknowledged leak (meta tag with server API key) must be gone.
+// TestDashboardDoesNotLeakAPIKey: critical regression. The dashboard HTML
+// must never carry the server API key (e.g. in a meta tag).
 func TestDashboardDoesNotLeakAPIKey(t *testing.T) {
 	for _, apiKey := range []string{"", "test-secret", "another-very-secret-key-xyz"} {
 		srv := newTestServer(t, func(c *Config) { c.APIKey = apiKey })

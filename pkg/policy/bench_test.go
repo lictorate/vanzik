@@ -19,7 +19,7 @@ func BenchmarkEngineCheck_Local(b *testing.B) {
 	}
 }
 
-// BenchmarkEngineCheck_Tenant is the v0.6 per-tenant path: evaluate against a
+// BenchmarkEngineCheck_Tenant is the per-tenant path: evaluate against a
 // non-local tenant's policy resolved through the MultiTenantProvider cache.
 // Must stay comparable to the local path (provider Get is an in-memory lookup).
 func BenchmarkEngineCheck_Tenant(b *testing.B) {
@@ -46,14 +46,9 @@ func BenchmarkMultiTenantProvider_Get(b *testing.B) {
 	}
 }
 
-// BenchmarkEngineCheck_RequirePrior measures the condition path that audit
-// B1/B27 rewrote. The previous implementation opened the audit file and
-// JSON-parsed every line here, while holding e.mu — so there was no meaningful
-// "before" number to compare against; it scaled with the log, not the input.
-//
-// What these pin is that the replacement stays on the hot path's terms:
-// allocation-free lookups that do not push Engine.Check past its 6 allocs/op
-// budget (CLAUDE.md §1).
+// BenchmarkEngineCheck_RequirePrior measures the require_prior condition path
+// through PriorActionIndex. It pins allocation-free lookups that do not push
+// Engine.Check past its 6 allocs/op hot-path budget.
 func BenchmarkEngineCheck_RequirePrior(b *testing.B) {
 	eng := NewEngineFromPolicy(&Policy{
 		Version: "1", Name: "bench",

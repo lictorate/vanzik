@@ -1,10 +1,7 @@
 package llmproxy
 
-// at_sse_realism_test.go hardens the SYNTHESIZED streaming fixtures'
-// realism (see the v1.0 AT brief, item 2a). Real captured traces need
-// live provider API traffic we can't generate here, so instead of
-// weakening the coverage we synthesize fixtures that reproduce the
-// real-world SSE quirks the original spec-derived fixtures under-cover:
+// Synthesized fixtures reproducing real-world SSE quirks (captured
+// traces need live provider traffic):
 //
 //   - SSE framing: `event:` lines, bare `:` comment/ping keep-alives,
 //     blank-line event boundaries, multi-line `data:` values, and the
@@ -23,15 +20,10 @@ package llmproxy
 //     awkward points (mid-key, mid-string, mid-token) with interleaved
 //     whitespace.
 //
-// These tests are TEST-ONLY: they never touch production parsers or
-// streaming code, only add fixtures + assertions. They replay each
-// fixture through the real accumulators exactly as the streaming
-// orchestrator does -- including calling Reset() on every Completed to
-// mirror the ALLOW-path flush -- and assert the fully-assembled tool
-// name(s), RawArguments/Arguments, and Completed signalling.
-//
-// The testdata/captured/ auto-detect seam (at_captured_fixtures_test.go)
-// is intentionally left intact so real captures can drop in later.
+// Each fixture is replayed through the real accumulators as the
+// orchestrator does (Reset on every Completed, as on ALLOW). Real
+// captures can be dropped into testdata/captured/
+// (at_captured_fixtures_test.go).
 
 import (
 	"reflect"
@@ -56,11 +48,9 @@ type replayResult struct {
 	completions  int // number of events that returned Completed=true
 }
 
-// replayOpenAIFixture feeds every event of the named fixture through a
-// fresh OpenAIToolCallAccumulator, mirroring the orchestrator: on each
-// Completed it collects the calls and Reset()s (as gateAndFlushOpenAI
-// does on ALLOW). Comment/ping and provenance events are fed as-is (NOT
-// stripped) so their pass-through / buffering behavior is exercised.
+// replayOpenAIFixture feeds every event of a fixture, including comment
+// and provenance events, through a fresh accumulator, collecting calls
+// and calling Reset on each Completed.
 func replayOpenAIFixture(t *testing.T, name string) replayResult {
 	t.Helper()
 	events := readFixtureEvents(t, name)
@@ -90,10 +80,8 @@ func replayOpenAIFixture(t *testing.T, name string) replayResult {
 	return rr
 }
 
-// replayAnthropicFixture is the Anthropic analogue. Anthropic gates ONE
-// tool_use per content_block_stop and the orchestrator Reset()s between
-// gates, so a multi-tool_use stream only surfaces both calls if we
-// Reset() on each Completed -- exactly what gateAndFlushAnthropic does.
+// replayAnthropicFixture is the Anthropic analogue; one tool_use is
+// gated per content_block_stop.
 func replayAnthropicFixture(t *testing.T, name string) replayResult {
 	t.Helper()
 	events := readFixtureEvents(t, name)
@@ -123,7 +111,6 @@ func replayAnthropicFixture(t *testing.T, name string) replayResult {
 	return rr
 }
 
-// assertToolMatches checks one assembled ToolCallCheck against want.
 func assertToolMatches(t *testing.T, ctx string, got ToolCallCheck, want wantTool) {
 	t.Helper()
 	if got.Provider != want.provider {

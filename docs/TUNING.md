@@ -4,9 +4,9 @@ Every setting that changes Vanzik's runtime behavior, grouped by how you change 
 
 ---
 
-## Policy YAML (reload without restart when `--watch` is set)
+## Policy YAML
 
-These live in the policy file (`configs/*.yaml`) under the `proxy:` and `notifications:` top-level blocks, or per-scope rule blocks.
+These live in the policy file (`configs/*.yaml`) under the `proxy:` and `notifications:` top-level blocks, or per-scope rule blocks. The server reloads the file on every change (`--watch` only adds a log line), but only the rules take effect live: the `proxy:` values and the notifier timeouts are read at startup, so changing them needs a restart (see [`CONFIG.md` § Interaction with hot reload](CONFIG.md#interaction-with-hot-reload)).
 
 ### `proxy.session`
 
@@ -30,7 +30,7 @@ proxy:
 
 | Key | Default | Bounds |
 |---|---|---|
-| `max_body_bytes` | `1048576` (1 MB) | `>0`. Values over a few MB defeat the DoS guard — keep tight. |
+| `max_body_bytes` | `1048576` (1 MB) | `0` means the default; negative fails at load. Values over a few MB defeat the DoS guard — keep tight. |
 
 ### `proxy.audit`
 
@@ -50,10 +50,10 @@ proxy:
 
 ```yaml
 notifications:
-  dispatch_timeout: "10s"   # per-target enqueue deadline
+  dispatch_timeout: "10s"   # HTTP client timeout for webhook and Slack targets
 ```
 
-Default `10s`. Set short if you have a flaky notifier that stalls workers.
+Default `10s`. It is the `http.Client` timeout of each webhook and Slack notifier (enqueueing never blocks). Set it short if you have a flaky notifier that stalls workers.
 
 ### Per-scope `rate_limit`
 
@@ -75,12 +75,12 @@ rules:
     limits:
       max_per_action: "$0.25"
       max_per_session: "$15.00"
-      alert_threshold: "$10.00"
+      alert_threshold: "$0.15"
 ```
 
 - `max_per_action`: hard DENY above this.
-- `max_per_session`: hard DENY when `sessionCosts[session_id] + est_cost` would exceed.
-- `alert_threshold`: REQUIRE_APPROVAL (no reservation) when a single action exceeds.
+- `max_per_session`: hard DENY when the session's running cost (keyed by tenant and `session_id`) plus `est_cost` would exceed.
+- `alert_threshold`: REQUIRE_APPROVAL (no reservation) when a single action exceeds. `max_per_action` is checked first, so the threshold must be below it: here a cost between $0.15 and $0.25 gets REQUIRE_APPROVAL, and above $0.25 a DENY.
 
 ---
 
@@ -103,9 +103,9 @@ vanzik server \
   --dashboard
 ```
 
-The v0.6 persistence knobs (`--persist`, `--store-dsn`, `--data-dir`, `--audit-backend`) are covered in [`CLI.md`](CLI.md#persistence--multi-tenancy-v06).
+The persistence knobs (`--persist`, `--store-dsn`, `--data-dir`, `--audit-backend`) are covered in [`CLI.md`](CLI.md#persistence--multi-tenancy-v06).
 
-**Multi-node (v1.0, PostgreSQL only):** `--reconcile-interval` (default `2s`) is the one knob that trades convergence for store traffic — it bounds both the distributed rate-limit overshoot (≈ `interval × peak rate` per extra replica) and the cross-node approval staleness (a resolution or one-shot consumption on another node lands within one interval). Halving it halves both windows and doubles reconcile queries; the `/v1/check` hot path is untouched either way. `--node-id` is identity, not tuning — just keep it distinct per replica.
+**Multi-node (PostgreSQL only):** `--reconcile-interval` (default `2s`) is the one knob that trades convergence for store traffic — it bounds both the distributed rate-limit overshoot (≈ `interval × peak rate` per extra replica) and the cross-node approval staleness (a resolution or one-shot consumption on another node lands within one interval). Halving it halves both windows and doubles reconcile queries; the `/v1/check` hot path is untouched either way. `--node-id` is identity, not tuning — just keep it distinct per replica.
 
 See [`CLI.md`](CLI.md) for the full list.
 
@@ -117,16 +117,16 @@ These are **not configurable** yet. Listed so you know what ceiling you're runni
 
 | Constant | Value | Source | Notes |
 |---|---|---|---|
-| `MaxPendingApprovals` | `10000` | `pkg/proxy/server.go` | Evicts resolved entries on pressure; at capacity `/v1/check` gets `503`. |
+| `MaxPendingApprovals` | `10000` | `pkg/proxy/server.go` | When full, a new approval evicts the one oldest resolved entry; with none resolved, `/v1/check` gets `503` with `Retry-After: 30`. |
 | `SSEChannelBufferSize` | `64` | `pkg/proxy/server.go` | Slow SSE consumer drops events. |
-| `MaxSessions` | `1024` | `pkg/proxy/auth.go` | Oldest-by-expiry evicted; at cap `/auth/login` returns `503`. |
+| `MaxSessions` | `1024` | `pkg/proxy/auth.go` | Expired sessions are swept at login; live sessions are never evicted, so at the cap `/auth/login` returns `503` with `Retry-After: 5`. |
 | `MaxBuckets` (rate limiter) | `10000` | `pkg/ratelimit/ratelimit.go` | Stale buckets evicted on insert pressure. |
 | `DefaultWorkers` (notifier) | `8` | `pkg/notify/notify.go` | Goroutine pool for dispatch. |
 | `DefaultQueueSize` (notifier) | `256` | `pkg/notify/notify.go` | Shared queue depth across notifiers. |
 | Policy watch fallback poll interval | `2s` | `pkg/policy/watcher.go` | Reloads are fsnotify-driven (immediate); the 2 s `os.Stat().ModTime()` poll is the fallback when fsnotify is unavailable. |
 | Histogram buckets (ms) | `0.25..10000` | `pkg/metrics/metrics.go` | Contract — re-bucketing invalidates historical Prometheus data. |
 | Notifier histogram buckets (s) | `0.005..10` | `pkg/metrics/metrics.go` | Same contract note. |
-| Audit scanner buffer | `1 MB` per line | `pkg/audit/logger.go` | Raised from stdlib default to tolerate long rows. |
+| Audit scanner buffer | `4 MiB` per line | `pkg/audit/logger.go` | Raised from stdlib default to tolerate long rows. |
 | `absoluteMaxBufferBytes` (LLM proxy) | `64 MiB` | `pkg/llmproxy/streaming.go` | Hard safety ceiling on the streaming buffers. A `MaxBufferBytes` of `0` disables the operator cap (`--max-buffer-bytes` itself rejects `0`; only reachable by embedding the package) but this ceiling still applies — the stream is refused fail-closed past it. |
 
 If you need any of these configurable in YAML, open an issue with the use case.
@@ -135,12 +135,7 @@ If you need any of these configurable in YAML, open an issue with the use case.
 
 ## Environment variables
 
-| Var | Consumed by | Default |
-|---|---|---|
-| `VANZIK_API_KEY` | CLI client subcommands | empty |
-| `VANZIK_URL` | Python + TypeScript SDKs | `http://localhost:8080` |
-
-The server process does **not** read these. CLI-server flags are the source of truth on the server side.
+None of the knobs on this page has an environment variable. `VANZIK_API_KEY`, `VANZIK_URL` and `VANZIK_POLICY` stand in for flags; a flag always wins. The full list: [`CLI.md` § Environment variables](CLI.md#environment-variables).
 
 ---
 

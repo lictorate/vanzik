@@ -30,10 +30,10 @@ const (
 	SessionTTL        = 1 * time.Hour
 	// MaxSessions caps the in-memory session table. New logins at capacity
 	// are rejected with 503 (see ErrSessionStoreFull) rather than silently
-	// evicting the oldest live session — silent eviction used to log out a
-	// real operator mid-approval if a thundering herd of dashboard tabs
-	// racked up sessions. Expired entries are swept before rejecting, so a
-	// store full of stale sessions does not block new logins.
+	// evicting the oldest live session, which would log out a real operator
+	// mid-approval when a herd of dashboard tabs racks up sessions. Expired
+	// entries are swept before rejecting, so a store full of stale sessions
+	// does not block new logins.
 	MaxSessions = 1024
 	// SessionStoreFullRetryAfterSeconds is the Retry-After value returned on
 	// 503 when MaxSessions is exhausted. 5s is short enough for a human to
@@ -43,8 +43,7 @@ const (
 
 // ErrSessionStoreFull is returned by SessionStore.Create when every slot is
 // held by a live (non-expired) session. handleLogin maps this to 503 +
-// Retry-After so the dashboard shows a visible failure instead of the old
-// silent evict-the-oldest behavior.
+// Retry-After so the dashboard shows a visible failure.
 var ErrSessionStoreFull = errors.New("session store full: too many active sessions")
 
 // Session represents an authenticated dashboard session. The token value is
@@ -283,8 +282,7 @@ func bearerToken(r *http.Request) string {
 //     requests), they must ALSO present a matching X-CSRF-Token header whose
 //     value equals the session cookie value (double-submit cookie).
 //
-// When apiKey is empty the endpoint is unauthenticated (matching the
-// historical behavior of --api-key unset).
+// When apiKey is empty (--api-key unset) the endpoint is unauthenticated.
 func requireAuthOrSession(apiKey string, store *SessionStore, requireCSRF bool, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if apiKey == "" {

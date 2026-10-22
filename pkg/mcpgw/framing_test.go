@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// The property that bufio.Scanner could not provide: an oversized frame is a
+// The property that bufio.Scanner cannot provide: an oversized frame is a
 // per-frame failure, and the reader keeps working afterwards.
 func TestReadFrame_ResyncsAfterOversizedFrame(t *testing.T) {
 	const max = 1024

@@ -1,7 +1,8 @@
 # Support
 
-Vanzik offers two support tiers: best-effort community support for the
-open-source project, and commercial support via Vanzik Cloud.
+Vanzik offers best-effort community support for the open-source project.
+Commercial support via Vanzik Cloud is planned; Vanzik Cloud is in design,
+with a waitlist.
 
 ## Open-source support
 
@@ -19,12 +20,13 @@ maintainers and the wider community.
 
 ## Vanzik Cloud support
 
-Vanzik Cloud is a managed offering with commercial support. Pricing,
-SLAs, and regional availability are still being finalized.
+Vanzik Cloud, the planned hosted offering, is in design and not yet
+available. It will come with commercial support; pricing, SLAs, and
+regional availability are still being finalized.
 
 - **Waitlist / early access:** <https://vanzik.lictorate.com>
 - **Sales / procurement enquiries:** hello@lictorate.com
-- **SLA, pricing:** TBA. Cloud customers receive a dedicated response
+- **SLA, pricing:** TBA. Cloud customers will get a dedicated response
   channel and an incident-response SLA defined in their order form.
 
 If you are evaluating Vanzik for a regulated or large-scale deployment

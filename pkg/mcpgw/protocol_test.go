@@ -322,9 +322,8 @@ func TestParseConfig(t *testing.T) {
 		{
 			name: "single upstream labeled",
 			// Use --policy-mode fast so the strict-mode --policy
-			// requirement (added by A18) doesn't fire — this case
-			// exercises namespace + default propagation, not the
-			// strict-mode requirement.
+			// requirement doesn't fire — this case exercises namespace
+			// + default propagation.
 			args: []string{"--upstream", "fs:npx -y server-fs /tmp", "--policy-mode", "fast"},
 			check: func(t *testing.T, c *Config) {
 				if len(c.Upstreams) != 1 {
@@ -365,8 +364,8 @@ func TestParseConfig(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			// An unquoted --upstream command: "/tmp" used to be dropped
-			// without a word, launching the server without its argument.
+			// An unquoted --upstream command: a stray "/tmp" is an error,
+			// not dropped (which would launch the server without it).
 			name:    "stray positional argument -> error",
 			args:    []string{"--upstream", "fs:npx", "/tmp", "--policy-mode", "fast"},
 			wantErr: true,
@@ -408,7 +407,7 @@ func TestParseConfig(t *testing.T) {
 			},
 		},
 		{
-			// A18 added --policy-mode strict + missing --policy as a
+			// --policy-mode strict with no --policy is a
 			// hard error so the dual-check pattern can never silently
 			// degrade to single-check (the gateway needs the
 			// tool_scope_map to know which secondary scope to fire).

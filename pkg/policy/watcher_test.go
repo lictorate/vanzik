@@ -95,8 +95,9 @@ func TestWatchFile_ReloadsOnWrite(t *testing.T) {
 }
 
 // TestWatchFile_AtomicReplace: editors and `mv tmp target` replace a file
-// by swapping inodes. The watcher must notice this — historically, an
-// fsnotify.Watcher.Add(path) would silently orphan after such a rename.
+// by swapping inodes. The watcher must notice this: an
+// fsnotify.Watcher.Add(path) on the file itself silently orphans after
+// such a rename.
 func TestWatchFile_AtomicReplace(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "policy.yaml")

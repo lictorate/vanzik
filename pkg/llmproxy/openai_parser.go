@@ -1,26 +1,10 @@
 package llmproxy
 
-// openai_parser.go owns the OpenAI Chat Completions streaming-delta
-// parser and tool_call accumulator. The parser is fed one SSE event
-// at a time by the streaming orchestrator (streaming.go) and decides:
-//
-//   1. Pass-through: this event is a normal content delta and can be
-//      forwarded to the client byte-identical to upstream right now.
-//   2. Accumulating: this event participates in an in-flight tool_call;
-//      buffer it (the orchestrator holds the raw bytes for ALLOW-path
-//      replay) and do not flush.
-//   3. Completed: tool_calls finished assembling (signalled by
-//      finish_reason: "tool_calls"). The orchestrator gates each
-//      completed call through PolicyCheck.
-//   4. OverflowBufferBytes: cumulative buffered bytes exceeded the
-//      configured cap (--max-buffer-bytes). The orchestrator emits a
-//      synthetic refusal and stops reading upstream.
-//
-// Per docs/LLM_API_PROXY.md § 5.0 the wire format is `data: <json>\n\n`
-// SSE events with a `data: [DONE]` sentinel. Tool_calls arrive across
-// multiple deltas keyed by `tool_calls[i].index` (NOT by id; ids may
-// be omitted on later fragments). `arguments` is a string of partial
-// JSON that we concatenate verbatim and parse only at gating time.
+// OpenAI Chat Completions streaming parser and tool_call accumulator
+// (wire format: docs/LLM_API_PROXY.md § 5.1). Fragments are keyed by
+// tool_calls[i].index, not id (later fragments may omit it);
+// `arguments` is partial JSON, concatenated verbatim and parsed only at
+// gating time.
 
 import (
 	"bytes"
@@ -29,10 +13,8 @@ import (
 	"strings"
 )
 
-// openAIDeltaEnvelope is the minimal shape of an OpenAI streaming
-// chunk's `data:` JSON payload. Only fields we need are typed; unknown
-// fields round-trip via the raw event bytes (which the orchestrator
-// holds for byte-identical ALLOW-path replay).
+// openAIDeltaEnvelope types only the fields the parser reads; the raw
+// event bytes are what gets replayed.
 type openAIDeltaEnvelope struct {
 	Choices []openAIDeltaChoice `json:"choices"`
 }
@@ -61,134 +43,99 @@ type openAIToolCallFuncDelta struct {
 	Arguments string `json:"arguments,omitempty"`
 }
 
-// openAIToolCallState aggregates fragments for one tool_call (keyed by
-// its `tool_calls[i].index`). The Arguments builder accumulates the
-// partial-JSON string fragments verbatim.
+// openAIToolCallState aggregates the fragments of one tool_call.
 type openAIToolCallState struct {
 	Index       int
 	ID          string
 	Name        string
 	Arguments   strings.Builder
-	HasFunction bool // we observed at least one function delta
+	HasFunction bool
 }
 
-// FeedResult is what FeedEvent returns to the streaming orchestrator.
-// Exactly one of {PassThrough, Accumulating, Completed,
-// OverflowBufferBytes} should be true; the orchestrator branches on it.
+// FeedResult tells the streaming orchestrator what to do with one event.
+// At most one of the flags is set.
 type FeedResult struct {
-	// PassThrough: forward the raw event bytes to the client now,
-	// byte-identical. (No tool_call in flight; or this is a [DONE]
-	// terminator after the whole stream completes without tool_calls.)
+	// PassThrough: forward the event now, byte-identical (no tool call
+	// in flight).
 	PassThrough bool
 
-	// Accumulating: buffer the raw event bytes; do NOT flush to client
-	// yet. A tool_call is in flight.
+	// Accumulating: a tool call is in flight; hold the event.
 	Accumulating bool
 
-	// Completed: a tool_call finish boundary was observed. The
-	// orchestrator should now gate each tool call in CompletedToolCalls
-	// through PolicyCheck. On ALLOW it flushes the buffered events
-	// (BufferedEvents()); on DENY it discards them and emits a
-	// synthetic refusal.
+	// Completed: a tool-call cycle ended. Gate CompletedToolCalls; on
+	// ALLOW flush BufferedEvents, on DENY discard them and refuse.
 	Completed bool
 
-	// CompletedToolCalls is the list of fully-assembled tool calls,
-	// in tool_calls[i].index order. Populated only when Completed=true.
+	// CompletedToolCalls are the assembled calls in index order; set
+	// only with Completed.
 	CompletedToolCalls []ToolCallCheck
 
-	// OverflowBufferBytes signals that the cumulative buffered byte
-	// count exceeded the cap. The orchestrator emits the canonical
-	// "tool call arguments exceed gating buffer" refusal.
+	// OverflowBufferBytes: buffered bytes exceeded the cap; refuse.
 	OverflowBufferBytes bool
 
-	// ProtocolViolation signals the parser detected a structurally unsafe
-	// stream that cannot be gated without risking a bypass. The
-	// orchestrator MUST emit a synthetic refusal and stop reading
-	// upstream — fail-closed: refuse the ambiguous stream rather than
-	// deliver an ungated tool call. See protocolViolationKind for the
-	// specific triggers.
+	// ProtocolViolation: the stream cannot be gated without risking a
+	// bypass. The orchestrator must refuse and stop reading upstream.
 	ProtocolViolation bool
 
-	// violation names WHICH structural defect set ProtocolViolation, so
-	// the orchestrator renders an accurate refusal instead of one generic
-	// message. Unexported on purpose: the orchestrator lives in this
-	// package, so this carries nothing onto the frozen v1.0 surface.
+	// violation names the defect behind ProtocolViolation. Unexported
+	// to keep it off the public API.
 	violation protocolViolationKind
 }
 
-// protocolViolationKind enumerates the structural defects that make a
-// stream ungateable. The zero value is the original interleaved-tool_use
-// trigger, so every already-shipped refusal stays byte-identical.
+// protocolViolationKind enumerates the defects that make a stream
+// ungateable. The zero value is interleaved tool_use, whose refusal
+// text is a wire contract (see protocolViolationDecision).
 type protocolViolationKind uint8
 
 const (
-	// violationInterleavedToolUse (Anthropic): a second
-	// tool_use content block opened before the first closed, or a block's
-	// start-seeded input conflicts with streamed input_json_deltas.
-	// Anthropic emits content blocks serially; an interleaved second
-	// tool_use would pass through ungated once the first block's gate
-	// cycle resets the accumulator.
+	// violationInterleavedToolUse (Anthropic): a second tool_use opened
+	// before the first closed, or start-seeded input conflicts with
+	// input_json_deltas. Anthropic emits blocks serially; an interleaved
+	// second tool_use would pass ungated once the first cycle resets.
 	violationInterleavedToolUse protocolViolationKind = iota
 
-	// violationOrphanedToolInput (Anthropic): an
-	// input_json_delta arrived while no tool_use block was open. The
-	// fragments belong to a call the firewall never saw start, so there
-	// is no cycle that could gate them.
+	// violationOrphanedToolInput (Anthropic): input_json_delta with no
+	// tool_use block open, so no cycle could gate it.
 	violationOrphanedToolInput
 
-	// violationMultiChoiceToolCalls (OpenAI): tool_call deltas
-	// arrived on more than one choice. tool_calls[i].index is unique only
-	// WITHIN a choice, so two choices' fragments would merge into one
-	// argument string the firewall gates and no client executes.
+	// violationMultiChoiceToolCalls (OpenAI): tool_call deltas on more
+	// than one choice. tool_calls[i].index is unique only within a
+	// choice, so fragments would merge into an argument string the
+	// firewall gates and no client executes.
 	violationMultiChoiceToolCalls
 )
 
-// OpenAIToolCallAccumulator stitches streaming tool_call fragments
-// back into complete ToolCallCheck records and holds the raw SSE
-// event bytes for byte-identical ALLOW-path replay.
-//
-// One accumulator per stream — never share between requests. The
-// streaming orchestrator constructs a fresh one in each request
-// goroutine (per-request goroutine isolation).
+// OpenAIToolCallAccumulator assembles streaming tool_call fragments
+// into ToolCallCheck records and holds the raw events for replay on
+// ALLOW. One per stream; not safe to share.
 type OpenAIToolCallAccumulator struct {
 	maxBufferBytes int
 
-	// byIndex tracks pending tool_call state keyed by
-	// tool_calls[i].index. We use a map (not a slice) because indices
-	// are not guaranteed to be densely 0..N — though in practice they
-	// are; the map handles the spec-allowed case cleanly.
+	// byIndex is keyed by tool_calls[i].index; a map because indices
+	// need not be dense.
 	byIndex map[int]*openAIToolCallState
 
-	// bufferedEvents holds raw SSE event bytes (each entry is one
-	// complete event including the trailing blank line) collected
-	// since the FIRST tool_call delta arrived. On ALLOW the
-	// orchestrator flushes them in order; on DENY it discards them.
+	// bufferedEvents holds whole raw events since the first tool_call
+	// delta.
 	bufferedEvents [][]byte
 	bufferedBytes  int
 
-	// active is true once we've started accumulating a tool_call and
-	// haven't yet flushed/refused.
+	// active: a tool_call cycle is open.
 	active bool
 
-	// completed latches once this cycle has signalled Completed, so the
-	// two end-of-stream closers (`[DONE]` and
-	// CloseAtEOF) cannot re-signal a cycle finish_reason already closed.
-	// Reset clears it, so a stream carrying several tool_call cycles
-	// still completes once per cycle.
+	// completed latches once the cycle has signalled Completed, so
+	// `[DONE]` and CloseAtEOF cannot complete it again. Reset clears
+	// it, so each cycle in a stream completes once.
 	completed bool
 
-	// toolCallChoice is the `choices[].index` that carried the tool_call
-	// deltas of the in-flight cycle, or -1 when none has been seen yet
-	// It scopes two decisions to the choice that actually
-	// owns the call: a SECOND choice carrying tool_calls is a protocol
-	// violation, and only THIS choice's finish_reason closes the cycle.
+	// toolCallChoice is the choice carrying the cycle's tool_call
+	// deltas, or -1. A second choice with tool_calls is a protocol
+	// violation, and only this choice's finish_reason closes the cycle.
 	toolCallChoice int
 }
 
-// NewOpenAIToolCallAccumulator constructs a fresh accumulator with
-// the given per-stream buffer cap. maxBufferBytes <= 0 means "no cap"
-// (used in unit tests; production wires --max-buffer-bytes from
-// Config).
+// NewOpenAIToolCallAccumulator returns an accumulator with the given
+// per-stream buffer cap; <= 0 means no cap (tests only).
 func NewOpenAIToolCallAccumulator(maxBufferBytes int) *OpenAIToolCallAccumulator {
 	return &OpenAIToolCallAccumulator{
 		maxBufferBytes: maxBufferBytes,
@@ -197,16 +144,13 @@ func NewOpenAIToolCallAccumulator(maxBufferBytes int) *OpenAIToolCallAccumulator
 	}
 }
 
-// BufferedEvents returns the raw SSE event byte slices held back
-// since the first tool_call delta. Caller MUST treat the returned
-// slices as read-only; the accumulator retains them until Reset().
+// BufferedEvents returns the held raw events. Read-only; retained
+// until Reset.
 func (a *OpenAIToolCallAccumulator) BufferedEvents() [][]byte {
 	return a.bufferedEvents
 }
 
-// Reset clears accumulator state for a new gating cycle. Called by
-// the orchestrator after a successful flush so subsequent tool_calls
-// in the same stream get a fresh accumulator.
+// Reset clears state for the next gating cycle in the same stream.
 func (a *OpenAIToolCallAccumulator) Reset() {
 	a.byIndex = map[int]*openAIToolCallState{}
 	a.bufferedEvents = nil
@@ -216,10 +160,8 @@ func (a *OpenAIToolCallAccumulator) Reset() {
 	a.toolCallChoice = -1
 }
 
-// complete closes the in-flight gating cycle exactly once: it assembles
-// the accumulated tool calls and latches `completed` so a later `[DONE]`
-// or EOF cannot signal the same cycle a second time. Every Completed
-// result the accumulator produces goes through here.
+// complete assembles the calls and latches `completed`. Every
+// Completed result goes through here.
 func (a *OpenAIToolCallAccumulator) complete() (FeedResult, error) {
 	a.completed = true
 	calls, parseErr := a.assembleCompletedCalls()
@@ -229,23 +171,13 @@ func (a *OpenAIToolCallAccumulator) complete() (FeedResult, error) {
 	}, parseErr
 }
 
-// CloseAtEOF finalizes an in-flight gating cycle when the upstream
-// stream ends without a terminal finish_reason: a dropped connection,
-// a provider that closes after `[DONE]` without one, or a truncated
-// response.
-//
-// The orchestrator MUST call it once at EOF and route a Completed
-// result through the same gate-or-refuse path a finish_reason takes.
-// The buffered events are the UNGATED tool call, so neither of the two
-// obvious shortcuts is safe: flushing them is a fail-open, and
-// discarding them leaves the client with an empty response and the
-// firewall with no audit trail. Truncated arguments do not parse, so
-// the returned error routes the cycle to the malformed refusal, which
-// denies and audits.
-//
-// Returns the zero FeedResult when nothing is in flight, the common case
-// for a stream that closed cleanly and already Reset. Runs once per
-// stream at EOF, never per event.
+// CloseAtEOF completes a cycle still open when upstream ended without
+// a terminal finish_reason. The orchestrator must call it once at EOF
+// and gate-or-refuse a Completed result like any other: flushing the
+// buffered (ungated) events is a fail-open, discarding them loses the
+// audit trail. Truncated arguments return an error, which routes to
+// the malformed refusal. Returns the zero FeedResult when nothing is
+// open.
 func (a *OpenAIToolCallAccumulator) CloseAtEOF() (FeedResult, error) {
 	if !a.active || a.completed {
 		return FeedResult{}, nil
@@ -253,13 +185,9 @@ func (a *OpenAIToolCallAccumulator) CloseAtEOF() (FeedResult, error) {
 	return a.complete()
 }
 
-// pendingIdentity returns the best-effort identity of the call in flight:
-// the lowest-indexed tool_call that has a name, with its id. Used only when a
-// stream is refused for a structural reason, where there is no assembled call
-// to name but an audit entry carrying whatever we DID see beats one carrying
-// nothing.
-//
-// Returns empty strings when nothing identifiable has arrived.
+// pendingIdentity returns the name and id of the lowest-indexed named
+// tool_call in flight, or empty strings. Used to label the audit entry
+// of a structural refusal, where no call assembled.
 func (a *OpenAIToolCallAccumulator) pendingIdentity() (name, id string) {
 	best := -1
 	for idx, st := range a.byIndex {
@@ -277,43 +205,24 @@ func (a *OpenAIToolCallAccumulator) pendingIdentity() (name, id string) {
 	return st.Name, st.ID
 }
 
-// FeedEvent ingests one complete SSE event (raw bytes including the
-// final blank-line terminator). Returns a FeedResult describing what
-// the orchestrator should do with the event.
-//
-// Errors are returned for malformed JSON in the data line; the
-// orchestrator's policy is to log + drop (do NOT inject our own bytes
-// into the byte-identity stream) and continue.
+// FeedEvent ingests one complete raw SSE event. An error means
+// malformed JSON: with Completed set the orchestrator refuses the
+// cycle, otherwise it drops the event.
 func (a *OpenAIToolCallAccumulator) FeedEvent(rawEvent []byte) (FeedResult, error) {
 	dataLine, isDone, hasData := extractOpenAIDataLine(rawEvent)
 	if !hasData {
-		// Comment, retry, event-name, or empty line — treat as
-		// metadata. If we're in the middle of buffering a tool_call
-		// we keep buffering (no client-visible effect); else
-		// pass-through verbatim.
+		// Comment, retry or event-name only: buffer while a cycle is
+		// open, else pass through.
 		if a.active {
 			return a.appendBuffered(rawEvent)
 		}
 		return FeedResult{PassThrough: true}, nil
 	}
 
-	// `data: [DONE]` terminator. Always pass through directly: even
-	// if we were buffering a tool_call (which would normally close
-	// via finish_reason: "tool_calls" first), [DONE] forces the
-	// stream to end and we have to surface it.
 	if isDone {
-		// `[DONE]` while a tool_call cycle is still open: the upstream
-		// ended the stream without a terminal finish_reason.
-		// Degenerate — most providers emit finish_reason first — but
-		// `[DONE]` IS the end of stream, so close the cycle here rather
-		// than wait for the transport EOF.
-		//
-		// The buffered bytes must NOT be flushed as-is: they are the
-		// ungated tool_call, and flushing them is the bypass. Buffer
-		// `[DONE]` itself so it replays in order on ALLOW, then return
-		// Completed so the orchestrator gates the cycle like any other
-		// completion — truncated arguments fail to parse and route to
-		// the fail-closed malformed refusal.
+		// `[DONE]` with a cycle open and no finish_reason: complete it
+		// here. Buffer `[DONE]` so it replays in order on ALLOW;
+		// flushing the ungated buffer instead would be the bypass.
 		if a.active && !a.completed {
 			res, err := a.appendBuffered(rawEvent)
 			if err != nil || res.OverflowBufferBytes {
@@ -322,9 +231,7 @@ func (a *OpenAIToolCallAccumulator) FeedEvent(rawEvent []byte) (FeedResult, erro
 			return a.complete()
 		}
 		if a.active {
-			// finish_reason already closed this cycle and the
-			// orchestrator has not Reset yet. Keep buffering rather
-			// than signal the same completion twice.
+			// Already completed, not yet Reset: keep buffering.
 			return a.appendBuffered(rawEvent)
 		}
 		return FeedResult{PassThrough: true}, nil
@@ -335,11 +242,7 @@ func (a *OpenAIToolCallAccumulator) FeedEvent(rawEvent []byte) (FeedResult, erro
 		return FeedResult{}, fmt.Errorf("openai parser: malformed delta JSON: %w", err)
 	}
 
-	// Look across all choices: tool_call deltas can land on any choice
-	// index. In practice OpenAI sends one choice at a time for a
-	// streaming response, but we don't rely on it. The finish_reason
-	// question is asked later, via finishObserved, because the answer
-	// depends on which choice owns the in-flight call.
+	// tool_call deltas can land on any choice.
 	hasToolCallDelta := false
 	for _, ch := range env.Choices {
 		if len(ch.Delta.ToolCalls) > 0 {
@@ -348,41 +251,24 @@ func (a *OpenAIToolCallAccumulator) FeedEvent(rawEvent []byte) (FeedResult, erro
 		}
 	}
 
-	// State machine:
-	//   1. Tool_call delta arrives → become active, accumulate, buffer.
-	//   2. While active, every event is buffered.
-	//   3. finish_reason: "tool_calls" closes the active cycle →
-	//      Completed result with assembled tool calls.
-	//   4. Pure content delta with no active cycle → pass through.
-	//
-	// CRITICAL ORDERING: when an event carries BOTH a
-	// tool_call delta AND finish_reason in the same envelope, we must
-	// apply the delta to the accumulator BEFORE we decide on completion.
-	// Real OpenAI streams sometimes pack the closing arg fragment and
-	// finish_reason: "tool_calls" together; if we early-returned on the
-	// tool_call branch (Accumulating) we would lose the finish signal,
-	// the gate would never fire, and buffered events would be silently
-	// dropped at EOF.
+	// Ordering: an event can carry both the closing argument fragment
+	// and finish_reason. Apply the delta first, then check for
+	// completion; returning Accumulating early would lose the finish
+	// signal and the gate would never fire.
 
 	if hasToolCallDelta {
 		a.active = true
-		// Accumulate fragments before deciding to buffer (cheaper to
-		// abort on overflow without storing the event).
+		// Accumulate before buffering so overflow aborts without
+		// storing the event.
 		for _, ch := range env.Choices {
 			if len(ch.Delta.ToolCalls) == 0 {
 				continue
 			}
-			// SECURITY: tool_call state is keyed by
-			// tool_calls[i].index, which is unique only WITHIN one
-			// choice. With n>1 both choices number their calls from 0,
-			// so their argument fragments would concatenate into a
-			// single state: the gate would evaluate a splice of two
-			// calls that no client executes, while the two real calls
-			// reach the client unexamined. We cannot separate them
-			// after the fact, so the first choice to carry tool_calls
-			// claims the cycle and a second one fails the stream
-			// closed. n=1 — every mainstream agent framework — never
-			// reaches this branch.
+			// SECURITY: with n>1 each choice numbers its calls from
+			// 0, so fragments would splice into a call no client
+			// executes while the real ones pass unexamined. The first
+			// choice with tool_calls claims the cycle; a second fails
+			// the stream closed. n=1 never reaches this.
 			if a.toolCallChoice >= 0 && ch.Index != a.toolCallChoice {
 				return FeedResult{ProtocolViolation: true, violation: violationMultiChoiceToolCalls}, nil
 			}
@@ -398,23 +284,15 @@ func (a *OpenAIToolCallAccumulator) FeedEvent(rawEvent []byte) (FeedResult, erro
 				}
 				if tc.Function != nil {
 					st.HasFunction = true
-					// SECURITY: take the FIRST non-empty function
-					// name, not the last. OpenAI emits the name once in the
-					// first fragment for a given tool_calls[i].index; a
-					// non-conformant upstream that sends a second, different
-					// name would otherwise make the gate evaluate the LAST
-					// name while a spec-conformant (first-wins) client SDK
-					// executes the FIRST — a parser-differential. First-wins
-					// here matches the client and removes the ambiguity.
+					// SECURITY: first non-empty name wins, matching
+					// client SDKs. Last-wins would let a second, different
+					// name be gated while the client executes the first.
 					if tc.Function.Name != "" && st.Name == "" {
 						st.Name = tc.Function.Name
 					}
 					if tc.Function.Arguments != "" {
-						// Length-cap check uses the cumulative
-						// arguments string size — that's the input
-						// to PolicyCheck and the spec's overflow
-						// semantic ("tool call arguments exceed
-						// gating buffer").
+						// The cap applies to cumulative argument bytes,
+						// the PolicyCheck input.
 						projected := totalArgsLen(a.byIndex) + len(tc.Function.Arguments)
 						if a.maxBufferBytes > 0 && projected > a.maxBufferBytes {
 							return FeedResult{OverflowBufferBytes: true}, nil
@@ -424,14 +302,11 @@ func (a *OpenAIToolCallAccumulator) FeedEvent(rawEvent []byte) (FeedResult, erro
 				}
 			}
 		}
-		// Buffer the raw event so it is replayed on ALLOW.
 		appendRes, err := a.appendBuffered(rawEvent)
 		if err != nil {
 			return appendRes, err
 		}
-		// If THIS same event also carries finish_reason (tool_calls or
-		// any other terminal reason while we were active), close the
-		// cycle now — the closing arg fragment is already applied above.
+		// Same event may also carry the finish_reason.
 		if a.finishObserved(env) {
 			return a.complete()
 		}
@@ -439,43 +314,29 @@ func (a *OpenAIToolCallAccumulator) FeedEvent(rawEvent []byte) (FeedResult, erro
 	}
 
 	if a.active {
-		// Continue buffering until finish_reason terminates the cycle.
-		// finish_reason: "tool_calls" is the close signal; other
-		// finish_reasons (e.g. "stop") that arrive while a tool_call
-		// is in-flight also force closure — we cannot leave a half-
-		// assembled accumulator dangling.
 		appendRes, err := a.appendBuffered(rawEvent)
 		if err != nil {
 			return appendRes, err
 		}
 
 		if a.finishObserved(env) {
-			// complete()'s error surfaces invalid-JSON-arguments cases
-			// to the caller. The orchestrator still proceeds with
-			// gating using RawArguments — the policy hook decides how
-			// to handle malformed args.
+			// An error here (invalid argument JSON) makes the
+			// orchestrator refuse the cycle.
 			return a.complete()
 		}
 
 		return appendRes, nil
 	}
 
-	// Idle (no active tool_call) and not a tool_call event: forward
-	// byte-identical to client.
 	return FeedResult{PassThrough: true}, nil
 }
 
-// appendBuffered records rawEvent in bufferedEvents while enforcing
-// the byte cap. Returns Accumulating=true on the success path.
+// appendBuffered holds rawEvent, enforcing the byte cap.
 func (a *OpenAIToolCallAccumulator) appendBuffered(rawEvent []byte) (FeedResult, error) {
 	if a.maxBufferBytes > 0 && a.bufferedBytes+len(rawEvent) > a.maxBufferBytes {
-		// The sum of arguments bytes plus envelope bytes blew the cap.
-		// Same overflow semantic as the args-only check.
 		return FeedResult{OverflowBufferBytes: true}, nil
 	}
-	// Copy: rawEvent is a Bytes() slice from a bufio.Reader-like
-	// source whose backing array is reused on the next read. Without
-	// a copy our buffered events would silently mutate.
+	// Copy: rawEvent's backing array is reused by the next read.
 	copied := make([]byte, len(rawEvent))
 	copy(copied, rawEvent)
 	a.bufferedEvents = append(a.bufferedEvents, copied)
@@ -483,23 +344,19 @@ func (a *OpenAIToolCallAccumulator) appendBuffered(rawEvent []byte) (FeedResult,
 	return FeedResult{Accumulating: true}, nil
 }
 
-// assembleCompletedCalls converts the accumulated by-index map into
-// a sorted slice of ToolCallCheck records. Returns a non-nil error
-// if any tool call's Arguments could not be JSON-parsed; the slice
-// is still populated (with Arguments=nil, RawArguments preserved) so
-// the orchestrator can surface raw bytes to PolicyCheck even on
-// malformed input.
+// assembleCompletedCalls returns the calls in index order. If any
+// arguments fail to parse it returns an error, but still the full
+// slice (Arguments nil, RawArguments kept) so the calls can be
+// audited.
 func (a *OpenAIToolCallAccumulator) assembleCompletedCalls() ([]ToolCallCheck, error) {
 	if len(a.byIndex) == 0 {
 		return nil, nil
 	}
-	// Stable order by tool_calls[i].index so audit entries are
-	// deterministic.
+	// Index order keeps audit entries deterministic.
 	indices := make([]int, 0, len(a.byIndex))
 	for i := range a.byIndex {
 		indices = append(indices, i)
 	}
-	// Insertion sort is fine — N is at most a handful in practice.
 	for i := 1; i < len(indices); i++ {
 		for j := i; j > 0 && indices[j-1] > indices[j]; j-- {
 			indices[j-1], indices[j] = indices[j], indices[j-1]
@@ -532,21 +389,12 @@ func (a *OpenAIToolCallAccumulator) assembleCompletedCalls() ([]ToolCallCheck, e
 	return out, firstErr
 }
 
-// finishObserved reports whether env carries a terminal finish_reason
-// that should close the in-flight gating cycle. Any non-empty value
-// counts, not just "tool_calls": a cycle that ends on "stop" or "length"
-// must still close, or the accumulator dangles and the stream hangs.
-//
-// Scope: once a choice owns the in-flight tool_call, only
-// THAT choice's finish_reason closes the cycle. With n>1 a sibling
-// choice routinely finishes while the tool-call choice is still
-// streaming arguments; closing on the sibling would gate a truncated
-// argument string and refuse a stream that was never malformed. Before
-// any tool_call is seen (toolCallChoice < 0) the original any-choice
-// behaviour applies, which is what n=1 always gets.
-//
-// An upstream that never sends the owning choice's finish_reason is
-// caught by CloseAtEOF rather than hanging.
+// finishObserved reports whether env closes the open cycle. Any
+// non-empty finish_reason counts ("stop" and "length" too), or the
+// accumulator would dangle. Once a choice owns the cycle, only its
+// finish_reason counts: with n>1 a sibling often finishes while the
+// owner still streams arguments, and closing then would refuse a
+// valid stream. A missing finish_reason is handled by CloseAtEOF.
 func (a *OpenAIToolCallAccumulator) finishObserved(env openAIDeltaEnvelope) bool {
 	for _, ch := range env.Choices {
 		if a.toolCallChoice >= 0 && ch.Index != a.toolCallChoice {
@@ -559,8 +407,7 @@ func (a *OpenAIToolCallAccumulator) finishObserved(env openAIDeltaEnvelope) bool
 	return false
 }
 
-// totalArgsLen returns the cumulative bytes already accumulated across
-// all tool_call states. Used for the overflow check before allocating.
+// totalArgsLen sums argument bytes across all tool_call states.
 func totalArgsLen(byIndex map[int]*openAIToolCallState) int {
 	n := 0
 	for _, st := range byIndex {
@@ -569,15 +416,9 @@ func totalArgsLen(byIndex map[int]*openAIToolCallState) int {
 	return n
 }
 
-// extractOpenAIDataLine inspects a raw SSE event (lines separated by
-// '\n', terminated by a blank line) and returns:
-//
-//   - dataLine: the JSON payload after `data: ` (multiple `data:` lines
-//     are concatenated with '\n' per the SSE spec, but OpenAI Chat
-//     Completions emits exactly one).
-//   - isDone: true if the data line is the literal `[DONE]` sentinel.
-//   - hasData: false for events with no `data:` line at all (e.g.
-//     comments starting with ':', event-name only, blank).
+// extractOpenAIDataLine returns the event's data payload (several
+// `data:` lines joined with '\n' per the SSE spec), whether it is the
+// `[DONE]` sentinel, and whether any `data:` line exists.
 func extractOpenAIDataLine(rawEvent []byte) (dataLine []byte, isDone bool, hasData bool) {
 	const dataPrefix = "data: "
 	const dataPrefixShort = "data:" // some servers omit the space

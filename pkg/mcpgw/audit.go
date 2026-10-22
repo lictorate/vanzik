@@ -1,31 +1,15 @@
-// Package mcpgw — gateway-level audit + SSE wiring stubs.
+// Gateway-level audit and SSE are deliberately left unwired: the
+// bridge's AuditEmit and SSEEmit hooks are nil by default.
 //
-// This file is the documented-but-deferred home of gateway-level audit
-// and SSE wiring. The bridge's `AuditEmit` and `SSEEmit` hooks (see
-// bridge.go) are nil by default.
-//
-// Why: every `tools/call` already produces a tool-call-level audit
-// entry + SSE event via the central server's `/v1/check` flow (the
-// gate stamps `meta["transport"] = "mcp_gateway"` and the transport-
-// tag plumbing in pkg/audit lands it on disk and on the SSE bus). That
-// covers the operator-visible behaviour the dashboard needs.
-//
-// The remaining gap — gateway-level events that AREN'T tool calls
-// (upstream subprocess crashed, malformed JSON-RPC frame from host,
-// gateway startup failure) — is a separate operator-monitoring concern
-// that needs a new central-server endpoint (see options below). Defining
-// types here would imply a stable API the future endpoint must conform
-// to; better to design endpoint + wiring together when the desired
-// operator UX is clearer.
-//
-// What an operator sees today for gateway-level health:
-//   - The central server's /v1/health returns warnings populated by
-//     traffic / policy-load probes.
-//   - The gateway's stderr log carries upstream-crash / fail-mode
-//     decisions; operators with a log aggregator can alert on those.
-//   - /v1/audit + the dashboard show every tool-call-level event,
-//     including synthetic deny:gateway:fail_closed entries when the
-//     gate falls back due to /v1/check unreachable.
+// Every tools/call already produces an audit entry and SSE event through
+// the central server's /v1/check (the gate stamps
+// meta["transport"] = "mcp_gateway"). Events that AREN'T tool calls
+// (upstream crash, malformed host frame, startup failure) need a new
+// central-server endpoint; defining types here would fix an API before
+// that endpoint is designed. Until then: /v1/health warnings, the
+// gateway's stderr log (upstream crashes, fail-mode decisions), and
+// /v1/audit, which includes the synthetic deny:gateway:fail_closed
+// entries.
 //
 // TODO(#mcp-gateway-events): operator-grade gateway-level audit
 // endpoint. Current best guess is a small `/v1/operator/event` endpoint
@@ -35,4 +19,5 @@
 // endpoint, auth, retention) before implementation; in the meantime
 // --fail-audit-log records fail-mode denials locally and stderr carries
 // upstream-crash events.
+
 package mcpgw

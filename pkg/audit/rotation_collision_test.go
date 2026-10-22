@@ -3,13 +3,10 @@ package audit
 // rotation_collision_test.go pins that a burst of rotations inside a single
 // second keeps every archive.
 //
-// ArchiveTimestampFormat has one-second resolution and rotateLocked renames
-// the live file onto that name, so two rotations in the same second used to
-// compute the same target and os.Rename replaced the first archive silently.
-// That is real audit data destroyed with no error anywhere, and it also broke
-// the _meta.rotated_from chain that startup replay walks — so a checkpoint
-// pointing into a pruned-away segment degraded a boot-time counter seed for
-// reasons no operator could have diagnosed.
+// ArchiveTimestampFormat has one-second resolution, so two rotations in the
+// same second compute the same name; renaming onto it would silently replace
+// the first archive and break the _meta.rotated_from chain startup replay
+// walks (see nextFreeArchivePath).
 
 import (
 	"encoding/json"
@@ -68,8 +65,8 @@ func TestRotation_BurstInOneSecond_KeepsEveryArchive(t *testing.T) {
 	if len(names) < 2 {
 		t.Fatalf("only %d archive(s) after %d writes — the test did not rotate enough to be meaningful", len(names), writes)
 	}
-	// The point of the test: distinct names. Pre-fix this collapsed to one or
-	// two archives because same-second rotations renamed over each other.
+	// The point of the test: distinct names, not same-second rotations
+	// renaming over each other.
 	seen := map[string]bool{}
 	for _, n := range names {
 		if seen[n] {
@@ -98,8 +95,8 @@ func TestRotation_BurstInOneSecond_KeepsEveryArchive(t *testing.T) {
 // TestRotation_BurstPreservesRotatedFromChain pins the consequence that
 // matters to startup replay: each live file names the archive it came from,
 // and following those links must reach every archive exactly once. A
-// same-second overwrite used to leave a link pointing at a file whose contents
-// belonged to a later segment.
+// same-second overwrite would leave a link pointing at a file whose contents
+// belong to a later segment.
 func TestRotation_BurstPreservesRotatedFromChain(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "audit.jsonl")

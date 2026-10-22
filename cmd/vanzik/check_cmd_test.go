@@ -50,10 +50,8 @@ func writePolicy(t *testing.T) string {
 	return p
 }
 
-// runCheckCmd is the thin test harness around executeCheck. Tests pass
-// flag values + stdin and read back the captured stdout/stderr. Returning
-// the exit code makes the assertion legend match `vanzik check`'s
-// documented contract directly.
+// runCheckCmd runs executeCheck with flag values and stdin, and returns
+// the exit code and the captured stdout/stderr.
 func runCheckCmd(t *testing.T, f *checkCmdFlags, stdin string) (code int, stdout, stderr string) {
 	t.Helper()
 	var sout, serr bytes.Buffer

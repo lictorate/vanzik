@@ -118,8 +118,7 @@ type Registry struct {
 	rateLimitBuckets             int64
 	pendingApprovals             int64
 
-	// Labeled counters/gauges. Per-series mutexes keep the contention
-	// profile of the old package-global layout.
+	// Labeled counters/gauges, one mutex per series.
 	requestRejectedMu    sync.Mutex
 	requestRejectedCount map[string]uint64
 
@@ -297,28 +296,21 @@ func (r *Registry) AddDecision(decision string, n uint64) {
 func (r *Registry) IncRateLimited() { atomic.AddUint64(&r.rateLimitedTotal, 1) }
 
 // IncApprovalReplayMismatch increments
-// vanzik_approval_replay_mismatch_total. Called from
-// pkg/proxy.handleCheck when the approval-id round-trip lookup hits an
-// entry but the retry request's shape differs from the original.
-//
-// The counter tracks /v1/check requests that carried an approval_id whose
-// corresponding PendingAction.Request did not match the retry's
+// vanzik_approval_replay_mismatch_total. Called from pkg/proxy.handleCheck
+// when an approval_id's PendingAction.Request does not match the retry's
 // operationally-meaningful fields (agent_id / scope / command / path /
 // domain / url / action). Mismatches are NOT short-circuited to the cached
-// decision — the request falls through to normal Engine.Check evaluation.
-// This metric is the security signal: legitimate retries match shape and
-// never increment it; a non-zero rate means either a buggy gateway is
-// reusing ids across distinct actions or an attacker who learned an
-// approved id is replaying it against unrelated commands.
+// decision; the request falls through to normal Engine.Check evaluation.
 //
-// The shape validator this counter reports on is what stops an approved
-// id from authorising an unrelated action.
+// Security signal: legitimate retries match shape and never increment it;
+// a non-zero rate means either a buggy gateway is reusing ids across
+// distinct actions or an attacker who learned an approved id is replaying
+// it against unrelated commands.
 func (r *Registry) IncApprovalReplayMismatch() {
 	atomic.AddUint64(&r.approvalReplayMismatchTotal, 1)
 }
 
-// Read accessors for the decision counters. These replaced the exported
-// raw uint64 vars.
+// Read accessors for the decision counters.
 func (r *Registry) ChecksTotal() uint64   { return atomic.LoadUint64(&r.checksTotal) }
 func (r *Registry) AllowedTotal() uint64  { return atomic.LoadUint64(&r.allowedTotal) }
 func (r *Registry) DeniedTotal() uint64   { return atomic.LoadUint64(&r.deniedTotal) }
@@ -504,7 +496,6 @@ func (r *Registry) LLMProxyBufferOverflowFor(provider string) uint64 {
 // out the two failure modes (the streaming counter measures runaway
 // tool_call argument accumulation; this one measures upstream response
 // bodies that are simply too large to safely inspect for tool_calls).
-// F9 (B2) wires the non-streaming forwarders.
 func (r *Registry) IncLLMProxyNonStreamingOverflow(provider string) {
 	if provider == "" {
 		provider = "unknown"
@@ -522,8 +513,8 @@ func (r *Registry) LLMProxyNonStreamingOverflowFor(provider string) uint64 {
 }
 
 // IncLLMProxyProtocolViolation increments
-// vanzik_llmproxy_protocol_violation_total{provider=...}. Security
-// audit finding H1: a structurally unsafe stream (e.g. a second
+// vanzik_llmproxy_protocol_violation_total{provider=...}. A
+// structurally unsafe stream (e.g. a second
 // Anthropic tool_use content block opened before the first closed) is
 // refused fail-closed rather than partially gated. A non-zero rate here
 // means the proxy refused a stream whose block ordering could otherwise
@@ -546,14 +537,13 @@ func (r *Registry) LLMProxyProtocolViolationFor(provider string) uint64 {
 }
 
 // IncLLMProxyUndecodableToolCall increments
-// vanzik_llmproxy_undecodable_tool_call_total{provider=...}. Audit
-// finding B6: a non-streaming upstream body that fails strict decode
-// into the typed response struct was forwarded verbatim and UNGATED,
-// because "Vanzik cannot decode it" was treated as "the client
-// cannot use it". Go rejects a type-mismatched field a lenient client
-// SDK ignores — including the tool_calls sitting next to it. When such a
-// body is found to carry a tool call after all, the proxy now refuses it
-// fail-closed instead of passing it through.
+// vanzik_llmproxy_undecodable_tool_call_total{provider=...}. A
+// non-streaming upstream body that fails strict decode into the typed
+// response struct is not safe to forward ungated: Go rejects a
+// type-mismatched field a lenient client SDK ignores, along with the
+// tool_calls next to it, so "Vanzik cannot decode it" does not mean "the
+// client cannot use it". When such a body carries a tool call, the proxy
+// refuses it fail-closed.
 //
 // A non-zero rate here means an upstream is emitting responses whose
 // field TYPES do not match the provider schema (a null or an extra field
@@ -578,14 +568,11 @@ func (r *Registry) LLMProxyUndecodableToolCallFor(provider string) uint64 {
 	return r.llmProxyUndecodableToolCallCount[provider]
 }
 
-// SetLLMProxyStreamsActive updates the active-streams gauge. Called
-// from the llmproxy server on every stream entry/exit (which atomically
-// also updates the underlying server-side counter — this metric
-// mirrors that counter). 0 is a valid value (no streams in flight).
-// The gauge is sampled by the llmproxy server, not the central server,
-// so it lives in its own process — but it ships through the same
-// metrics surface so a single Prometheus scrape config covers both
-// binaries when the llmproxy mounts /metrics. Closes R-Sec H3.
+// SetLLMProxyStreamsActive updates the active-streams gauge, mirroring the
+// llmproxy server's own counter on every stream entry/exit. It is set in
+// the llmproxy process but ships through the same metrics surface, so one
+// Prometheus scrape config covers both binaries when the llmproxy mounts
+// /metrics.
 func (r *Registry) SetLLMProxyStreamsActive(n int64) {
 	atomic.StoreInt64(&r.llmProxyStreamsActive, n)
 }
@@ -1108,9 +1095,6 @@ func (r *Registry) writeNotifyDispatchDuration(w io.Writer) {
 	}
 }
 
-// writeNotifyDropped emits vanzik_notify_events_dropped_total with the
-// two-dimensional (notifier, reason) label. Always emits HELP/TYPE so a
-// Prometheus scraper sees the metric even when no drops have happened.
 // writeApprovalReplayRefused emits vanzik_approval_replay_refused_total
 // with its closed two-value reason label. Both series are always emitted
 // (even at zero) so alert rules on either reason never see a missing metric.
@@ -1122,6 +1106,9 @@ func (r *Registry) writeApprovalReplayRefused(w io.Writer) {
 	fmt.Fprintf(w, "%s{reason=\"expired\"} %d\n", name, atomic.LoadUint64(&r.approvalReplayExpiredTotal))
 }
 
+// writeNotifyDropped emits vanzik_notify_events_dropped_total with the
+// two-dimensional (notifier, reason) label. Always emits HELP/TYPE so a
+// Prometheus scraper sees the metric even when no drops have happened.
 func (r *Registry) writeNotifyDropped(w io.Writer) {
 	const name = "vanzik_notify_events_dropped_total"
 	const help = "Notifier events dropped before delivery, by notifier type and reason (e.g. queue_full)."

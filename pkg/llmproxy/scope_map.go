@@ -1,72 +1,29 @@
 package llmproxy
 
-// scope_map.go provides the tool-name → existing-policy-scope mapping
-// the LLM API Proxy uses to gate tool calls emitted by upstream models.
-//
-// The proxy maps to existing scopes only — `shell`, `filesystem`,
-// `network`, `browser`, `data`, `cost`. No new policy primitives.
-// (See docs/PROXY_ARCHITECTURE.md § 4 and docs/LLM_API_PROXY.md §
-// "Tool call → scope mapping".)
-//
-// Source-of-truth: this module reuses `policy.Policy.ToolScopeMap`
-// rather than introducing a separate `LLMToolScopeMap`. Namespaced MCP
-// tool names (`<ns>:<tool>`) and bare LLM tool names (`bash`,
-// `read_file`) occupy disjoint regions of the pattern space, so
-// collisions are impossible without an operator deliberately writing
-// one. A single `tool_scope_map:` section in policy YAML therefore
-// safely covers both transports — operators write one mapping table,
-// Vanzik dispatches it correctly per request transport.
-//
-// The merged map layers:
-//   1. Operator entries (from Policy.ToolScopeMap) — first-match-wins,
-//      so explicit operator overrides beat the bundled defaults.
-//   2. Default entries (DefaultLLMToolScopeMap below) — the baked-in
-//      mapping for common tool names that ship with most agent
-//      frameworks.
-//
-// `MapLLMToolScope` (closing over the merged list) is wired into
-// Server.ScopeMap. Tools not in either layer return the sentinel scope
-// "unmapped"; the policy engine fails closed on this scope unless an
-// operator writes an explicit `scope: unmapped` rule. See
-// docs/POLICY_REFERENCE.md § "LLM API Proxy tool scope mapping".
+// Tool name to existing policy scope mapping (docs/LLM_API_PROXY.md
+// § 4, docs/POLICY_REFERENCE.md § "LLM API Proxy tool scope mapping").
+// It reuses policy.Policy.ToolScopeMap rather than a separate table:
+// namespaced MCP names (`<ns>:<tool>`) and bare LLM names never
+// collide, so one `tool_scope_map:` section serves both transports.
 
 import (
 	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
-// UnmappedScope is the sentinel scope returned when a tool name does
-// not match any default or operator-supplied entry. The policy engine
-// has no built-in handling for this scope — by design — so the gate
-// fails closed (default DENY) unless the operator opts into a
-// `scope: unmapped` rule. Stable string contract: documented in
-// docs/POLICY_REFERENCE.md and referenced from gate code.
+// UnmappedScope is the scope for tool names matching no entry. The
+// engine has no built-in rules for it, so it is denied unless a
+// `scope: unmapped` rule exists. Stable string (documented in
+// docs/POLICY_REFERENCE.md).
 const UnmappedScope = "unmapped"
 
-// DefaultLLMToolScopeMap is the baked-in mapping from common tool
-// names to existing Vanzik policy scopes. The LLM API Proxy maps
-// to existing scopes only — no new policy primitives.
-//
-// Patterns are glob-matched (same matcher as policy rule patterns:
-// `*` matches any chars including `/`, `?` matches a single char,
-// `**` matches zero or more `/`-separated segments). First-match-wins.
-//
-// Operators override or extend via the `tool_scope_map:` section of
-// policy YAML (see docs/POLICY_REFERENCE.md § "LLM API Proxy tool
-// scope mapping" for examples).
-//
-// Categories per docs/LLM_API_PROXY.md § "Tool call → scope mapping":
-//   - shell:      bash, run_command, execute_command, sh, cmd, ...
-//   - filesystem: read_file, write_file, list_directory, ls, cat, ...
-//   - network:    web_search, fetch_url, http_request, ...
-//   - browser:    playwright_*, browser_*, chrome_*, firefox_*, ...
-//   - data:       (no defaults — operators map fill_form / submit_form
-//     here for PII gating against `data` scope rules)
-//   - cost:       (no defaults — model-cost gating is its own scope
-//     with different field semantics; operators wire it
-//     via SDK est_cost rather than via tool-name mapping)
+// DefaultLLMToolScopeMap is the bundled mapping for common tool names.
+// Patterns use the policy glob matcher, first match wins; the policy's
+// `tool_scope_map:` entries take precedence. `data` and `cost` have no
+// defaults: operators map form tools to `data` themselves, and cost is
+// gated via SDK est_cost, not tool names.
 var DefaultLLMToolScopeMap = []policy.ToolScopeMapping{
-	// --- Claude Code's built-in tools, by their exact names (tool names
-	// are matched case-sensitively, so "Bash" needs its own entry) ---
+	// --- Claude Code's built-in tools (matching is case-sensitive, so
+	// "Bash" needs its own entry) ---
 	{Pattern: "Bash", Scope: "shell"},
 	{Pattern: "PowerShell", Scope: "shell"},
 	{Pattern: "Read", Scope: "filesystem"},
@@ -124,16 +81,10 @@ var DefaultLLMToolScopeMap = []policy.ToolScopeMapping{
 	{Pattern: "screenshot", Scope: "browser"},
 }
 
-// NewLLMToolScopeMap merges operator policy entries with the bundled
-// defaults. Operator entries appear FIRST in the returned slice so
-// first-match-wins iteration honours operator overrides.
-//
-// pol may be nil (no policy loaded) — returns DefaultLLMToolScopeMap
-// directly (without copying — callers must not mutate the slice).
-//
-// The returned slice is freshly allocated when pol is non-nil, so
-// callers may pass it across goroutines or stash it in atomic.Pointer
-// without aliasing concerns vs the operator's live policy snapshot.
+// NewLLMToolScopeMap returns the policy's entries followed by the
+// defaults, so operator entries win. With no policy entries it returns
+// DefaultLLMToolScopeMap itself, which callers must not mutate;
+// otherwise the slice is freshly allocated.
 func NewLLMToolScopeMap(pol *policy.Policy) []policy.ToolScopeMapping {
 	if pol == nil || len(pol.ToolScopeMap) == 0 {
 		return DefaultLLMToolScopeMap
@@ -145,24 +96,12 @@ func NewLLMToolScopeMap(pol *policy.Policy) []policy.ToolScopeMapping {
 	return merged
 }
 
-// MapLLMToolScope is wired into Server.ScopeMap (via a closure
-// capturing the merged mapping list). Returns the scope of the first
-// matching entry, or UnmappedScope if nothing matches.
+// MapLLMToolScope returns the scope of the first matching entry, or
+// UnmappedScope. To let unknown tools through, operators write a
+// `scope: unmapped` rule, typically require_approval on "*".
 //
-// "Unmapped" tools are routed to scope "unmapped" at gate time. The
-// policy engine has no built-in rules for this scope, so the default
-// behaviour is fail-closed (DENY: "No matching allow rule (default
-// deny)"). Operators who want unknown LLM tools to pass through must
-// write an explicit `scope: unmapped` rule — typically
-// `require_approval: [{pattern: "*"}]` so a human sees the tool name
-// before it runs.
-//
-// Implementation note: dispatches through a synthetic *policy.Policy
-// so the canonical glob matcher (`pkg/policy/engine.go:globMatch`,
-// unexported) is used without re-implementing it. The synthetic
-// policy is allocated on every call — cheap (one struct + one slice
-// header) and avoids the alternative of exporting globMatch from
-// pkg/policy.
+// It goes through a throwaway policy.Policy to reuse pkg/policy's
+// unexported glob matcher rather than export or duplicate it.
 func MapLLMToolScope(toolName string, mappings []policy.ToolScopeMapping) string {
 	if toolName == "" {
 		return UnmappedScope
@@ -170,9 +109,6 @@ func MapLLMToolScope(toolName string, mappings []policy.ToolScopeMapping) string
 	if len(mappings) == 0 {
 		return UnmappedScope
 	}
-	// Synthetic policy whose ToolScopeMap is the supplied merged list.
-	// MapToolScope is the canonical first-match-wins resolver — see
-	// pkg/policy/engine.go.
 	synthetic := &policy.Policy{ToolScopeMap: mappings}
 	if scope, ok := synthetic.MapToolScope(toolName); ok {
 		return scope

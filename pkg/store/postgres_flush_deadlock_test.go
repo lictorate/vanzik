@@ -3,13 +3,11 @@ package store
 // postgres_flush_deadlock_test.go pins that concurrent write-behind flushes
 // survive each other.
 //
-// Under three-node load every flush tick raced: each node builds its batch by
-// ranging over a Go map, whose iteration order is randomized per call, and
+// Each node builds its batch by ranging over a Go map (randomized order), and
 // Postgres holds a row lock on each upserted row until commit. Two nodes
-// writing the same keys in opposite orders is an AB/BA inversion, and the
-// server breaks it the only way it can, by killing one transaction. A soak run
-// produced 393 of them, 386 on approvals, and each one silently dropped that
-// node's whole tick of writes.
+// writing the same keys in opposite orders is an AB/BA inversion; the server
+// kills one transaction, silently dropping that node's whole tick of writes.
+// Unsorted, a three-node soak run hit 393 of them, 386 on approvals.
 
 import (
 	"context"

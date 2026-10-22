@@ -21,10 +21,10 @@ What happens from the moment a policy returns `REQUIRE_APPROVAL` to the moment t
   │                   │                           │
   │ 3. poll /v1/status/{id}  (every 2 s)          │
   │  ──────────────▶  │                           │
-  │  ◀─ resolved:false│                           │ 4. POST /v1/approve/{id}
+  │ ◀─ status:pending │                           │ 4. POST /v1/approve/{id}
   │  ──────────────▶  │ ◀─────────────────────────│  (Bearer or session+CSRF)
-  │  ◀─ resolved:true │ Resolve(ALLOW)            │
-  │       decision=ALLOW   broadcast "resolved"   │
+  │ ◀─ status:resolved│ Resolve(ALLOW)            │
+  │      decision:ALLOW    broadcast "resolved"   │
   │                   │                           │
   │ 5. re-run /v1/check (same params)             │
   │  ──────────────▶  │ → ALLOW (cost reserves,   │
@@ -42,7 +42,7 @@ Three policy paths lead here:
 
 - **Explicit `require_approval:` rule match** in the relevant scope.
 - **Cost alert threshold**: an `est_cost` above `alert_threshold` but not above `max_per_action` returns `require_approval:cost:alert_threshold`. Important: **no reservation** is made against `sessionCosts` at this point — the cost is only reserved when the approved action re-runs `/v1/check`.
-- **(Future)** Condition-based approvals (e.g., `require_prior` not satisfied yielding approval instead of deny) — still not implemented as of v1.0.0.
+- **(Future)** Condition-based approvals (e.g., `require_prior` not satisfied yielding approval instead of deny) — not implemented.
 
 The response body:
 
@@ -70,8 +70,8 @@ The `approval_url` is built from `--base-url` (or `http://localhost:<port>` if u
 {
   "type": "approval_required",
   "timestamp": "2026-04-19T12:03:44Z",
-  "agent_id": "researcher-01",
   "request": {
+    "agent_id": "researcher-01",
     "scope": "shell",
     "command": "sudo apt upgrade"
   },
@@ -91,9 +91,9 @@ Redactor (in `pkg/notify/notify.go` — `DefaultRedactor`) scrubs:
 - `ghp_[A-Za-z0-9]{36,}` (GitHub PAT)
 - `xox[baprs]-…` (Slack)
 - `(secret|token|password|api_key)=<value>`
-- **(v1.2)** `sk-…` API keys, Google `AIza…` keys, GitHub `gho_` / `ghu_` / `ghs_` / `ghr_` / `github_pat_` tokens, JWTs, PEM private keys, and `Authorization:` / `x-api-key:` / `api-key:` header values
+- `sk-…` API keys, Google `AIza…` keys, GitHub `gho_` / `ghu_` / `ghs_` / `ghr_` / `github_pat_` tokens, JWTs, PEM private keys, and `Authorization:` / `x-api-key:` / `api-key:` header values
 
-Since v1.2.0 the same redactor also masks the audit trail, `GET /v1/audit`, the SSE stream and `/api/pending` (`serve --audit-redact`) — see [OPERATIONS § Audit redaction](OPERATIONS.md#audit-redaction).
+The same redactor also masks the audit trail, `GET /v1/audit`, the SSE stream and `/api/pending` (`serve --audit-redact`) — see [OPERATIONS § Audit redaction](OPERATIONS.md#audit-redaction).
 
 Redaction runs on `Command`, `Path`, `Domain`, `Action`, `URL`, `Reason`, and every `Meta` value.
 
@@ -160,10 +160,10 @@ This is a logical deny, not a transport error — the `approval_id` is preserved
 
 ### Restarts and in-flight approvals
 
-Since v0.6 the approval queue is **persistent by default** (`--persist`, SQLite-backed — see [`CLI.md`](CLI.md#persistence--multi-tenancy-v06)): pending entries are rehydrated on boot, and agents polling `/v1/status/{id}` across a restart pick up where they left off. Two caveats:
+The approval queue is **persistent by default** (`--persist`, SQLite-backed — see [`CLI.md`](CLI.md#persistence--multi-tenancy-v06)): pending entries are rehydrated on boot, and agents polling `/v1/status/{id}` across a restart pick up where they left off. Two caveats:
 
 1. The store flushes on a ≥1 s background tick — an approval created in the final moments before a hard crash may not have been written and is lost.
-2. With `--persist=false` (the pre-v0.6 in-memory mode), a restart loses every pending entry; agents see `404` on `/v1/status/{id}` and eventually hit their SDK timeout, receiving the fail-deny response.
+2. With `--persist=false` (in-memory only), a restart loses every pending entry; agents see `404` on `/v1/status/{id}` and eventually hit their SDK timeout, receiving the fail-deny response.
 
 **Rule of thumb** still applies: `SDK timeout = expected_human_response_time + restart_budget` — even though state survives a restart, nobody can resolve approvals while the process is down.
 
@@ -193,7 +193,7 @@ Useful for scripted approvals (e.g., a runbook step) or when the dashboard is un
 ```bash
 curl -X POST -H "Authorization: Bearer $KEY" \
   https://guardrails.example/v1/approve/ap_1a2b…
-# {"status":"approved"}
+# {"id":"ap_1a2b…","status":"approved"}
 ```
 
 See [`API.md`](API.md#post-v1approveid--post-v1denyid--tenant-aware-mirrors).
@@ -237,7 +237,7 @@ A resolved **ALLOW** is a single-use, time-boxed capability:
   approval for multiple executions.
 - Consumption survives restarts (persisted with the approval), so a
   restart cannot resurrect a spent ALLOW.
-- **Multi-node (v1.0, PostgreSQL store):** all of the above holds
+- **Multi-node (PostgreSQL store):** all of the above holds
   cluster-wide, eventually — an approval resolved on one node is visible on
   every node within one `--reconcile-interval` (default 2s), and a consumed
   ALLOW is spent everywhere once its stamp reconciles. Inside that staleness
@@ -317,7 +317,7 @@ The decorator/HOF internally: `check` → if REQUIRE_APPROVAL, `wait_for_approva
 
 ### Auditability
 
-Every resolution is recorded in the audit log with `decision: ALLOW` or `DENY` and `matched_rule: require_approval:*`. The follow-up re-run check is also recorded. You can reconstruct the full chain by querying `/v1/audit?agent_id=X` and following `approval_id` values.
+Every resolution is recorded in the audit log when it is made: one entry with `decision: ALLOW` or `DENY`, `matched_rule: approval:resolved:<via>` (`bearer`, `session` or `open`, how the call was authenticated), the `approval_id`, the original request, and the caller's address in `reason`. Repeating the same decision writes no second entry. The follow-up re-run check is also recorded (`allow:approved` / `deny:approved`). An approval that times out is not recorded. You can reconstruct the full chain by querying `/v1/audit?agent_id=X` and following `approval_id` values.
 
 ---
 

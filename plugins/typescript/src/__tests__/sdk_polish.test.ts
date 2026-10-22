@@ -1,13 +1,11 @@
 /**
- * SDK polish tests added in v0.5 (worker A15).
- *
- * Closes:
- *  - R5 E8  / S13 — content-type / status-shape validation in check().
- *  - R5 E10 / E11  — invalid failMode rejected at construction.
- *  - R5 E14 — jitter on waitForApproval polling.
- *  - R5 E15 — unknown options rejected on Vanzik ctor and guarded().
- *  - R5 P9  — distinguish HTTP 401/403 (VanzikAuthError) from
- *             approval-poll timeout.
+ * Focused regression tests for SDK hardening:
+ *  - content-type / status-shape validation in check().
+ *  - invalid failMode rejected at construction.
+ *  - jitter on waitForApproval polling.
+ *  - unknown options rejected on Vanzik ctor and guarded().
+ *  - HTTP 401/403 (VanzikAuthError) distinguished from approval-poll
+ *    timeout.
  */
 
 import {
@@ -50,7 +48,7 @@ afterAll(() => {
 });
 
 // ===========================================================================
-// failMode validation (R5 E10 / E11)
+// failMode validation
 // ===========================================================================
 
 describe("failMode validation", () => {
@@ -89,15 +87,13 @@ describe("failMode validation", () => {
 });
 
 // ===========================================================================
-// Unknown-options rejection (R5 E15)
+// Unknown-options rejection
 // ===========================================================================
 
 describe("unknown options rejection", () => {
   test("Vanzik ctor rejects unknown keys", () => {
-    // Build the bad options as a Record<string,unknown> first, then double-cast
-    // through unknown to the ctor parameter type. This sidesteps TS's
-    // "no excess property" check (which would forbid `agnetId` literal) and
-    // exercises the runtime guard instead.
+    // Double-cast through unknown to sidestep TS's excess-property check and
+    // exercise the runtime guard.
     const bad = {
       baseUrl: "http://localhost:8080",
       agnetId: "x",
@@ -148,7 +144,7 @@ describe("unknown options rejection", () => {
 });
 
 // ===========================================================================
-// Content-type / status-shape validation in check() (R5 E8 / S13)
+// Content-type / status-shape validation in check()
 // ===========================================================================
 
 describe("check() response shape validation", () => {
@@ -235,7 +231,7 @@ describe("check() response shape validation", () => {
 });
 
 // ===========================================================================
-// Auth error on 401/403 from waitForApproval (R5 P9)
+// Auth error on 401/403 from waitForApproval
 // ===========================================================================
 
 describe("waitForApproval auth-error", () => {
@@ -296,7 +292,7 @@ describe("waitForApproval auth-error", () => {
 });
 
 // ===========================================================================
-// waitForApproval jitter (R5 E14)
+// waitForApproval jitter
 // ===========================================================================
 
 describe("waitForApproval jitter", () => {
@@ -309,10 +305,9 @@ describe("waitForApproval jitter", () => {
       })
     );
 
-    // Spy on setTimeout to capture every delay the SDK requests. Each
-    // request also arms an abort timer with the client `timeout`; the guard
-    // below uses a distinctive value so those samples can be dropped and
-    // only jitter sleeps are asserted on.
+    // Capture every setTimeout delay. Requests also arm an abort timer with
+    // the client `timeout`; its distinctive value lets those samples be
+    // dropped.
     const REQUEST_TIMEOUT = 4321;
     const origSetTimeout = global.setTimeout;
     const sleeps: number[] = [];
@@ -366,8 +361,7 @@ describe("waitForApproval jitter", () => {
 
     if (sleeps.length >= 2) {
       const unique = new Set(sleeps);
-      // Astronomically unlikely to collide on a real RNG; if the jitter
-      // dropped to a constant we'd see size === 1.
+      // A constant jitter would give size === 1.
       expect(unique.size).toBeGreaterThan(1);
     }
   });

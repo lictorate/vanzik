@@ -1,7 +1,7 @@
 package policy
 
 // fuzz_glob_test.go adds a Go native fuzz target for the policy glob
-// matcher (v1.0 item 2, sub-task 2b). It complements the testing/quick
+// matcher. It complements the testing/quick
 // property tests in engine_glob_property_test.go, which assert semantic
 // invariants, by pounding globMatch with arbitrary (pattern, value)
 // pairs to prove the robustness invariant that matters on the hot path:

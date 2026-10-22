@@ -1,16 +1,16 @@
 /**
- * Approval replay and request-timeout coverage (review findings R1, R5).
+ * Approval replay and request-timeout coverage.
  *
- * R1 contract: after `waitForApproval` resolves ALLOW, `guarded(...,
+ * Replay contract: after `waitForApproval` resolves ALLOW, `guarded(...,
  * { waitForApproval: true })` must replay the approval through `/v1/check`
  * with `approval_id` set — the only call that spends the one-shot
  * capability, applies `--approval-validity`, reserves cost and audits the
  * execution — and must run the wrapped function only if that replay allows.
  * Every test asserts the exact sequence of fetch calls, so a wrapper that
- * runs straight off the read-only status poll (the pre-fix behaviour) fails.
+ * runs straight off the read-only status poll fails.
  *
- * R5 contract: every request the SDK makes is bounded by `timeout`, and the
- * bound covers the body read, not just the headers.
+ * Timeout contract: every request the SDK makes is bounded by `timeout`,
+ * and the bound covers the body read, not just the headers.
  */
 
 import {
@@ -196,8 +196,7 @@ describe("guarded() replays the approval", () => {
         approval_url: "http://localhost:8080/v1/approve/ap_second",
       })
     );
-    // If the wrapper waited a second time this would let it through — the
-    // assertions below prove it does not.
+    // Waiting again would let it through; the assertions prove it doesn't.
     m.mockResolvedValue(
       jsonResponse({ id: "ap_second", status: "resolved", decision: "ALLOW" })
     );
@@ -258,7 +257,7 @@ describe("guarded() replays the approval", () => {
 });
 
 // =========================================================================
-// R5 — every request is bounded by `timeout`, body read included
+// Every request is bounded by `timeout`, body read included
 // =========================================================================
 
 /**
@@ -306,9 +305,8 @@ describe("request timeouts", () => {
   });
 
   test("check() timeout covers the BODY read, not just the headers", async () => {
-    // Headers arrive immediately; the body never does. Before the fix the
-    // abort timer was cleared the moment the response resolved, so this
-    // hung forever.
+    // Headers arrive immediately; the body never does. Clearing the abort
+    // timer when the response resolves would hang here forever.
     const m = installFetchMock();
     m.mockImplementation(async (_url, init) => {
       const signal = init?.signal;

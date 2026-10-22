@@ -23,8 +23,8 @@ type SessionSink interface {
 
 // Timestamps are stored as RFC3339Nano text, which drops trailing zeros
 // from the fraction: "…:05Z" and "…:05.5Z". Compared as text these sort
-// wrong ('.' < 'Z'), so an entry at 10:00:05.5 sorted before one at
-// 10:00:05 and a since/until bound inside a second could keep or drop the
+// wrong ('.' < 'Z'): an entry at 10:00:05.5 would sort before one at
+// 10:00:05, and a since/until bound inside a second could keep or drop the
 // wrong entries. tsNormSQL rewrites the stored value to a fixed-width form
 // (always nine fraction digits, no zone: every row is written in UTC) that
 // sorts as time does; bounds are formatted with tsNormLayout to match.

@@ -1,12 +1,12 @@
 package policy
 
-// AT-added property-based tests for the glob matcher.
+// Property-based tests for the glob matcher.
 //
 // These complement the table-driven tests in engine_bypass_test.go by
 // exercising globMatch over randomly generated inputs. The goal is to
 // catch panics, invariant violations, and the "**/secret/** must never
-// match a sibling like /notsecret/x" security property documented in
-// CLAUDE.md.
+// match a sibling like /notsecret/x" security property documented at
+// globMatch.
 //
 // Uses stdlib testing/quick — no external dependencies, in line with the
 // "one external Go dep" rule.
@@ -39,7 +39,7 @@ func TestGlobMatch_LiteralReflexive(t *testing.T) {
 }
 
 // TestGlobMatch_DoubleStarSecretSafety asserts the security invariant
-// documented in CLAUDE.md: `**/secret/**` must never match a path whose
+// documented at globMatch: `**/secret/**` must never match a path whose
 // only "secret" appearance is as a substring of a different segment
 // (e.g. `/notsecret/x`). The matcher splits on `/`, so the "secret" segment
 // must be present as a whole component for the pattern to match.

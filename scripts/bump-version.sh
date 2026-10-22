@@ -33,8 +33,8 @@ set -eo pipefail
 
 # Pin a UTF-8 locale so perl reads these files (which contain non-ASCII
 # characters) the same way on every platform. check_canonical uses perl, not
-# `grep -P`: BSD grep on macOS has no -P, and the old check read that error
-# as "no leftover" — a silent false-OK on the final verification.
+# `grep -P`: BSD grep on macOS has no -P, and reading that error as "no
+# leftover" would make the final verification a silent false-OK.
 export LC_ALL=C.UTF-8
 
 if [ $# -ne 1 ]; then
@@ -181,11 +181,10 @@ check_canonical 'plugins/python/vanzik/adapters/mcp.py' "^SDK_VERSION\s*=\s*\"$O
 check_canonical 'plugins/typescript/package.json'           "^\s*\"version\"\s*:\s*\"$OLD\""
 # package-lock.json: only the top-level (line 3) and the root-package entry
 # under packages.""; npm emits "version" on the line IMMEDIATELY after the
-# matching "name", so the guard is armed for exactly one line. It used to
-# stay armed until the next "name" key — but most lockfile entries are keyed
-# by path and carry no "name" at all, so any transitive dependency pinned at
-# $OLD (fs.realpath@1.0.0, wordwrap@1.0.0) tripped it. That made 1.0.0 the
-# first version this check could not be bumped away from.
+# matching "name", so the guard is armed for exactly one line. Don't keep it
+# armed until the next "name" key: most lockfile entries are keyed by path
+# and carry no "name", so any transitive dependency pinned at $OLD
+# (fs.realpath@1.0.0, wordwrap@1.0.0) would trip it.
 if [ -f 'plugins/typescript/package-lock.json' ]; then
   if perl -ne '
     if ($g && /"version"\s*:\s*"'"$OLD"'"/) { print; exit 1; }

@@ -1,3 +1,6 @@
+// Package audit is Vanzik's JSON-lines audit log: the FileLogger with its
+// rotation, optional hash-chain sealing and verification, replay
+// checkpoints and session summaries, and the BufferedAsyncLogger wrapper.
 package audit
 
 import (
@@ -19,8 +22,8 @@ import (
 )
 
 // CurrentSchemaVersion is the schema version produced by this binary.
-// Readers accept N-1 (headerless v1 files written by v0.4.0) transparently
-// and refuse N+1 with a clear error.
+// Readers accept N-1 (headerless schema-v1 files) transparently and refuse
+// N+1 with a clear error.
 const CurrentSchemaVersion = 2
 
 // metaLinePrefix identifies the schema-header line on disk. Any JSON line
@@ -32,14 +35,14 @@ var metaLinePrefix = []byte(`{"_meta"`)
 // Optional RotatedFrom is set when the file is the successor in a rotation
 // chain — the replay walker follows it to stitch history back together.
 //
-// SegmentID (since v1.4) is a random identifier for this file, used as the
-// checkpoint's FileID. CreatedAt alone is not unique: on a coarse clock two
-// files created in quick succession (a rotation right after startup, or two
-// rotations in a row) can share a timestamp, and replay then resumed in the
-// wrong file. Files written before v1.4 have no SegmentID; fileIDOf falls
-// back to CreatedAt for them, so existing checkpoints keep matching.
+// SegmentID is a random identifier for this file, used as the checkpoint's
+// FileID. CreatedAt alone is not unique: on a coarse clock two files created
+// in quick succession (a rotation right after startup, or two rotations in a
+// row) can share a timestamp, and replay would resume in the wrong file. For
+// a header without a SegmentID, fileIDOf falls back to CreatedAt, so
+// checkpoints of those files keep matching.
 //
-// The seal fields (since v1.4) are set only when the server runs with
+// The seal fields are set only when the server runs with
 // --audit-seal (see seal.go). Seal says how the entries after this line are
 // sealed; ChainPrev and ChainSeq are the hash and seq of the last sealed
 // entry before this line (in the previous file, for a header written at
@@ -89,19 +92,17 @@ type metaEnvelope struct {
 // Transport identifies the integration path that produced this entry.
 // One of "sdk" (default; SDK call), "mcp_gateway" (MCP Gateway tool
 // call), "llm_api_proxy" (LLM API Proxy), or another gateway-defined
-// value. Empty on unmarshal of older entries; readers MUST default to
-// EffectiveTransport() when consuming the field. The field is additive
+// value. Empty in entries written without the field; readers MUST use
+// EffectiveTransport() when consuming it. The field is additive
 // and does NOT bump the audit schema_version (still 2). See
 // docs/PROXY_ARCHITECTURE.md § "Audit transport tag".
 type Entry struct {
 	Timestamp time.Time `json:"timestamp"`
 	// TenantID is the tenant the action was evaluated against. Empty on the
-	// wire for the default "local" tenant (and for entries written by binaries
-	// predating multi-tenancy) — readers MUST resolve it via EffectiveTenant().
-	// The `omitempty` tag keeps single-tenant ("local") output byte-identical
-	// to files written before multi-tenancy, so byte-identity fixtures stay
-	// green; the field is additive and does NOT bump the audit
-	// schema_version (still 2), exactly like Transport.
+	// wire for the default "local" tenant (and in entries written without the
+	// field) — readers MUST resolve it via EffectiveTenant(). `omitempty`
+	// keeps single-tenant output byte-identical to files without tenant_id;
+	// like Transport, the field is additive and does NOT bump schema_version.
 	TenantID   string               `json:"tenant_id,omitempty"`
 	SessionID  string               `json:"session_id"`
 	AgentID    string               `json:"agent_id"`
@@ -109,8 +110,8 @@ type Entry struct {
 	Result     policy.CheckResult   `json:"result"`
 	DurationMs int64                `json:"duration_ms"`
 	Transport  string               `json:"transport,omitempty"`
-	// Seq, PrevHash and Hash are the tamper-evident seal (v1.4, written only
-	// with --audit-seal; see seal.go). The FileLogger sets them; whatever a
+	// Seq, PrevHash and Hash are the tamper-evident seal (written only with
+	// --audit-seal; see seal.go). The FileLogger sets them; whatever a
 	// caller puts here is overwritten, or cleared when sealing is off. Hash
 	// must stay the last field: it is computed over the line without it.
 	// Additive and omitted when empty; schema_version stays 2.
@@ -120,8 +121,8 @@ type Entry struct {
 }
 
 // TransportSDK is the canonical transport string for SDK callers
-// (Python / TypeScript) that do not stamp meta["transport"]. Older
-// audit entries also default to this value via EffectiveTransport.
+// (Python / TypeScript) that do not stamp meta["transport"]. Entries
+// without a transport field also default to it via EffectiveTransport.
 const TransportSDK = "sdk"
 
 // TransportMCPGateway is the canonical transport string for entries
@@ -146,8 +147,8 @@ const (
 )
 
 // EffectiveTransport returns e.Transport if set, otherwise the SDK
-// default. Use when reading audit entries that may have been written
-// by an older binary (no Transport field on disk).
+// default. Use when reading audit entries, which may have no Transport
+// field on disk.
 func (e Entry) EffectiveTransport() string {
 	if e.Transport == "" {
 		return TransportSDK
@@ -156,9 +157,8 @@ func (e Entry) EffectiveTransport() string {
 }
 
 // EffectiveTenant returns e.TenantID if set, otherwise the default
-// "local" tenant. Use when reading audit entries that may have been
-// written by a single-tenant binary (no tenant_id on disk) or for the
-// default tenant (which is stored as "" to preserve byte-identity).
+// "local" tenant. Use when reading audit entries: the default tenant is
+// stored as "" (byte-identity), and some entries have no tenant_id at all.
 func (e Entry) EffectiveTenant() string {
 	if e.TenantID == "" {
 		return policy.LocalTenantID
@@ -180,16 +180,15 @@ type Logger interface {
 // collected. A Limit of 0 means "no cap".
 type QueryFilter struct {
 	// TenantID scopes the query to one tenant. Compared against
-	// Entry.EffectiveTenant so entries stored with an empty tenant_id (the
-	// default "local" tenant, and entries predating multi-tenancy) match the value "local".
-	// Empty disables the filter (returns all tenants — operator/global view).
+	// Entry.EffectiveTenant, so entries with an empty or missing tenant_id
+	// match "local". Empty disables the filter (all tenants: operator view).
 	TenantID  string `json:"tenant_id,omitempty"`
 	AgentID   string `json:"agent_id,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 	Decision  string `json:"decision,omitempty"`
 	Scope     string `json:"scope,omitempty"`
 	// Since keeps entries at or after this time (inclusive); Until keeps
-	// entries before it (exclusive, v1.4). Together they page a time range
+	// entries before it (exclusive). Together they page a time range
 	// without overlap: [since, until) followed by [until, next) sees every
 	// entry once.
 	Since  *time.Time `json:"since,omitempty"`
@@ -197,16 +196,15 @@ type QueryFilter struct {
 	Limit  int        `json:"limit,omitempty"`
 	Offset int        `json:"offset,omitempty"`
 	// ParentSessionID keeps entries whose request named this parent
-	// session (v1.4): the calls of the sessions started by it.
+	// session: the calls of the sessions started by it.
 	ParentSessionID string `json:"parent_session_id,omitempty"`
 	// Transport filters by the integration path that produced the
 	// entry ("sdk", "mcp_gateway", "llm_api_proxy"). Compared against
-	// Entry.EffectiveTransport so older entries (no Transport on
-	// disk) match the "sdk" value. Empty disables the filter.
+	// Entry.EffectiveTransport, so entries with no Transport on disk
+	// match "sdk". Empty disables the filter.
 	Transport string `json:"transport,omitempty"`
-	// Desc returns the newest matches first (v1.2). Offset then counts from
-	// the newest entry. The default (false) keeps the original oldest-first
-	// order.
+	// Desc returns the newest matches first; Offset then counts from the
+	// newest entry. The default is oldest-first.
 	Desc bool `json:"desc,omitempty"`
 }
 
@@ -229,7 +227,7 @@ type FileLogger struct {
 
 	// Replay checkpoint maintenance, on once EnableCheckpoints is called:
 	// the lifetime decision tally of everything written and the live file's
-	// identity (its _meta.created_at).
+	// identity (fileIDOf its header).
 	cpEnabled bool
 	cpCounts  DecisionCounts
 	cpFileID  string
@@ -267,8 +265,6 @@ func NewFileLogger(path string) (*FileLogger, error) {
 // it ends before the seq the replay checkpoint recorded, and appends a
 // `_meta` line saying how the entries after it are sealed.
 func NewFileLoggerWithOptions(path string, opts FileLoggerOptions) (*FileLogger, error) {
-	// Determine if the file pre-exists and has content BEFORE opening in
-	// append mode. os.Stat returns ENOENT for missing files, which is fine.
 	needsHeader := false
 	if info, err := os.Stat(path); os.IsNotExist(err) {
 		needsHeader = true
@@ -297,8 +293,6 @@ func NewFileLoggerWithOptions(path string, opts FileLoggerOptions) (*FileLogger,
 		if l.seal != nil {
 			l.seal.meta(&env.Meta)
 		}
-		// Write the meta line directly (not through l.enc) so a failure here
-		// surfaces immediately rather than being buffered.
 		if err := l.enc.Encode(env); err != nil {
 			_ = f.Close()
 			return nil, fmt.Errorf("write schema header: %w", err)
@@ -360,7 +354,7 @@ func (l *FileLogger) Log(entry Entry) error {
 		l.seal.advance(seq, sum, l.segID)
 	} else {
 		// The seal fields belong to the logger; with sealing off they stay
-		// off the line, so the output is what it was before sealing existed.
+		// off the line, so unsealed output is byte-identical to an unsealed log.
 		entry.Seq, entry.PrevHash, entry.Hash = 0, "", ""
 		if err := l.enc.Encode(entry); err != nil {
 			return err
@@ -382,10 +376,9 @@ func (l *FileLogger) Log(entry Entry) error {
 
 // Query reads the log file and filters entries.
 //
-// Lock scope: we hold l.mu only long enough to capture the current file path
-// (effectively immutable, but we still snapshot it under the lock for safety)
-// and open a read handle. The actual scan runs WITHOUT the lock so concurrent
-// Log() writes are not blocked by long queries.
+// Lock scope: l.mu is held only to snapshot the live file's path (rotation
+// swaps l.file). The scan runs WITHOUT the lock so concurrent Log() writes are
+// not blocked by long queries.
 //
 // This is safe because:
 //   - FileLogger.file is opened in O_APPEND mode, so writes go to EOF
@@ -394,9 +387,8 @@ func (l *FileLogger) Log(entry Entry) error {
 //     after we open are simply not seen by this query.
 //   - Scanner discards partial lines implicitly (each line terminated by \n).
 //
-// Performance note: Query scans the full file linearly — acceptable for
-// the file backend's deployment profile. Workloads with large audit logs
-// should run the indexed store backend instead (`--persist
+// Query scans the full file linearly. Large audit logs should use the
+// indexed store backend instead (`--persist
 // --audit-backend=store`, SQL-side filtering on audit_entries); the two
 // backends' QueryFilter semantics are pinned by
 // pkg/store/audit_query_parity_test.go.
@@ -470,9 +462,8 @@ func scanEntries(path string, fn func(Entry) bool) error {
 	defer readFile.Close()
 
 	scanner := bufio.NewScanner(readFile)
-	// Default Scanner buffer is 64KB; bump to 4 MiB max so unusually large
-	// entries (base64 payloads, deeply nested meta blobs) don't silently
-	// truncate the scan. Audit entries normally sit well under 4KB.
+	// Allow lines up to 4 MiB (default 64KB) so large entries (base64
+	// payloads, deeply nested meta) don't cut the scan short.
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 
 	// Log at most one corrupt-line warning per scan so a single bad byte in
@@ -485,18 +476,16 @@ func scanEntries(path string, fn func(Entry) bool) error {
 		if len(line) == 0 {
 			continue
 		}
-		// Skip schema-v2 meta header lines — they are not audit entries.
-		// Cheap prefix check avoids paying the JSON-parse cost on every line.
+		// Skip `_meta` lines; the prefix check avoids a JSON parse per line.
 		if bytes.HasPrefix(bytes.TrimLeft(line, " \t"), metaLinePrefix) {
 			continue
 		}
 
 		var entry Entry
 		if err := json.Unmarshal(line, &entry); err != nil {
-			// Silent skip is dangerous: a gradually corrupted audit file
-			// would return fewer entries than expected with no signal.
-			// Count every corrupt line and log the first occurrence per
-			// scan so the operator sees the degradation.
+			// Never skip silently: a gradually corrupted file would return
+			// fewer entries with no signal. Count every corrupt line and log
+			// the first per scan.
 			metrics.IncAuditCorruptLine()
 			if !corruptLogged {
 				log.Printf("WARN audit: skipping corrupt line in %s (%v)", path, err)
@@ -558,11 +547,9 @@ func (l *FileLogger) Close() error {
 }
 
 // ReadMeta returns the schema-v2 meta record from the first line of path.
-// Returns (nil, nil) if the file is headerless (v0.4.0 legacy format) or
-// empty, so callers can distinguish "no header" from "read error".
+// Returns (nil, nil) if the file is headerless (schema v1) or empty, so callers can distinguish "no header" from "read error".
 //
-// Refuses files whose schema_version is newer than CurrentSchemaVersion —
-// running an old binary against a newer file is an obvious operator error.
+// Refuses files whose schema_version is newer than CurrentSchemaVersion.
 func ReadMeta(path string) (*MetaRecord, error) {
 	f, err := os.Open(path)
 	if err != nil {

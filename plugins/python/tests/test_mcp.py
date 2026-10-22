@@ -114,8 +114,8 @@ class TestInitialize:
 
     def test_mismatched_protocol_version_warns_but_pins(self, capsys):
         """Client requesting a newer (or different) version triggers a stderr
-        warning but the server still pins to MCP_PROTOCOL_VERSION. Locks the
-        Phase-5.2 contract: actual negotiation is deferred to v0.5.0."""
+        warning but the server still pins to MCP_PROTOCOL_VERSION (no
+        negotiation)."""
         s = GuardedMCPServer(guard_url=DEFAULT_BASE_URL)
         resp = s._handle_request({
             "jsonrpc": "2.0",
@@ -164,7 +164,6 @@ class TestToolsList:
         names = [t["name"] for t in tools]
         assert sorted(names) == ["a", "b", "c"]
 
-        # Schema preserved verbatim.
         b = next(t for t in tools if t["name"] == "b")
         assert b["description"] == "beta"
         assert b["inputSchema"]["required"] == ["x"]

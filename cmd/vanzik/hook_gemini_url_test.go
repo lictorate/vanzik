@@ -6,8 +6,8 @@ import (
 )
 
 // TestWebFetchTargets_ReadsHostsLikeGemini: the host the hook checks must
-// be the host Gemini CLI's web_fetch connects to. A pattern of our own read
-// "HTTPS://169.254.169.254/" as no URL at all (so the call went unchecked)
+// be the host Gemini CLI's web_fetch connects to. A pattern of our own reads
+// "HTTPS://169.254.169.254/" as no URL at all (so the call goes unchecked)
 // and "https://x(@169.254.169.254/" as host x, both of which reach the
 // cloud metadata address past a network deny rule.
 func TestWebFetchTargets_ReadsHostsLikeGemini(t *testing.T) {

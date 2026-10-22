@@ -1,13 +1,9 @@
-"""Tests for the v0.5+ tenant_id constructor parameter.
+"""Tests for the ``tenant_id`` constructor kwarg: legacy ``/v1/...`` URLs
+versus the tenant-aware ``/v1/t/{tenant}/...`` family.
 
-The Python SDK accepts an optional ``tenant_id`` constructor kwarg that
-controls whether HTTP calls go to the legacy ``/v1/...`` URL family or the
-tenant-aware ``/v1/t/{tenant}/...`` family added in v0.5 (worker A7).
-
-These tests do NOT spin up the real Go server — they exercise the URL
-builder via :meth:`Guard._url` directly and via a small in-process mock
-that records the request path. The Go-side routing is covered by the
-``pkg/proxy/tenant_routing_test.go`` integration tests.
+Exercises :meth:`Guard._url` directly and through an in-process mock that
+records request paths; Go-side routing is covered by
+``pkg/proxy/tenant_routing_test.go``.
 """
 
 import json
@@ -81,10 +77,8 @@ def test_explicit_tenant_overrides_env(monkeypatch):
 def test_explicit_empty_string_disables_env(monkeypatch):
     """tenant_id="" honors the caller's intent to disable an env var.
 
-    Passing the literal empty string is distinct from passing None: it
-    suppresses the env-var lookup so a scoped test can revert to the
-    legacy URL family even when the developer machine has
-    VANZIK_TENANT_ID exported.
+    Unlike None, "" suppresses the env-var lookup, so a scoped test gets
+    the legacy URLs even with VANZIK_TENANT_ID exported.
     """
     monkeypatch.setenv("VANZIK_TENANT_ID", "fromenv")
     g = Guard(base_url="http://example.test:8080", tenant_id="")
@@ -97,7 +91,6 @@ def test_local_alias_after_env(monkeypatch):
     env var would otherwise route through the tenant-aware family."""
     monkeypatch.setenv("VANZIK_TENANT_ID", "acme")
     g = Guard(base_url="http://example.test:8080", tenant_id="local")
-    # Caller explicitly chose "local"; the URL is the legacy form.
     assert g._url("/check") == "http://example.test:8080/v1/check"
 
 
@@ -198,10 +191,9 @@ def test_wait_for_approval_routes_through_tenant_path(path_capture_server):
         tenant_id="acme",
         api_key="k",
     )
-    # Mock returns "pending"; wait once and bail out via the timeout.
+    # The mock says "pending"; the poll count before the deadline varies,
+    # so check every recorded path.
     g.wait_for_approval("ap_xyz", timeout=1, poll_interval=0)
-    # We can't assume exactly one poll fired before the deadline; assert
-    # every recorded path matches the tenant-aware shape.
     assert _PathCaptureHandler.paths
     for p in _PathCaptureHandler.paths:
         assert p == "/v1/t/acme/status/ap_xyz", (

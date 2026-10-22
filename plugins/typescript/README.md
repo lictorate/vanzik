@@ -63,10 +63,10 @@ if (result.allowed) {
 
 ```ts
 // Default: fail closed. On any fetch/abort/JSON error → CheckResult(decision: "DENY", reason: "Vanzik unreachable: …")
-const guard = new Vanzik('http://localhost:8080');
+const strictGuard = new Vanzik('http://localhost:8080');
 
 // Opt-in: fail open. Use only when Vanzik is advisory.
-const guard = new Vanzik({ baseUrl: '…', failMode: 'allow' });
+const advisoryGuard = new Vanzik({ baseUrl: '…', failMode: 'allow' });
 ```
 
 Any thrown/rejected error from `fetch` (connection refused, DNS failure, TLS handshake, body-read failure, `AbortController` timeout) collapses into the fail-mode response, and so does a response that isn't a valid decision: a non-2xx status, a `Content-Type` other than `application/json`, a body that isn't JSON, or one without `decision`. This matches the Python SDK's semantics.
@@ -83,7 +83,7 @@ const safeExec = guarded(guard, 'shell',
 
 await safeExec('ls -la');      // allowed → runs
 try {
-  await safeExec('rm -rf /');  // throws VanzikDeniedError
+  await safeExec('dd if=/dev/zero of=/dev/sda');  // throws VanzikDeniedError
 } catch (e) {
   if (e instanceof VanzikDeniedError) {
     console.log(e.result?.matchedRule);
@@ -91,7 +91,7 @@ try {
 }
 ```
 
-By default the first argument is forwarded to `check()` as `{ command: String(args[0]) }`. To pass a different shape, provide an extractor — either as the fourth positional arg (legacy v0.4.x shape) or via the options object:
+By default the first argument is forwarded to `check()` as `{ command: String(args[0]) }`. To pass a different shape, provide an extractor — either as the fourth positional arg or via the options object:
 
 ```ts
 // Custom extractor
@@ -197,7 +197,7 @@ Polls `GET /v1/status/{id}` with the Bearer token attached. A `401`/`403` throws
 
 **Tune `timeoutMs` to the human SLA.** If approvers routinely take 5 minutes, `300_000` (5 min) will fire false negatives.
 
-**Restarts pause approvals; they don't kill them.** Since v0.6 the server persists the approval queue by default (`--persist`), so pending IDs survive a restart and `waitForApproval` picks up where it left off. The exceptions: a server started with `--persist=false` loses every pending ID on restart, and an approval created in the last ≥1 s store-sync window before a hard crash may be gone. In both cases the status endpoint answers `404` for that ID, `waitForApproval` keeps polling until `timeoutMs`, and you get `{ decision: 'DENY', reason: 'Approval timed out' }` — re-issue `check()` to get a new approval ID.
+**Restarts pause approvals; they don't kill them.** The server persists the approval queue by default (`--persist`), so pending IDs survive a restart and `waitForApproval` picks up where it left off. The exceptions: a server started with `--persist=false` loses every pending ID on restart, and an approval created in the last ≥1 s store-sync window before a hard crash may be gone. In both cases the status endpoint answers `404` for that ID, `waitForApproval` keeps polling until `timeoutMs`, and you get `{ decision: 'DENY', reason: 'Approval timed out' }` — re-issue `check()` to get a new approval ID.
 
 ### `CheckResult`
 

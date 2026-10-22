@@ -14,7 +14,7 @@ package mcpgw_test
 //   1. A real central Vanzik server (pkg/proxy.NewServer) backed
 //      by an on-disk audit log and a real Engine.
 //   2. A real MCP gateway (pkg/mcpgw.Bridge) wired against the central
-//      server via mcpgw.HTTPPolicyClient (A18's gate).
+//      server via mcpgw.HTTPPolicyClient.
 //   3. A stub upstream pretending to be a filesystem MCP server.
 //
 // The policy denies reads under /etc/** and allows reads under /tmp/**.
@@ -71,7 +71,7 @@ func startCentralServer(t *testing.T, pol *policy.Policy) (baseURL string, logge
 	return ts.URL, fl, ts
 }
 
-// TestAT_FilesystemE2E_AllowAndDeny is the headline v0.5 E2E.
+// TestAT_FilesystemE2E_AllowAndDeny is the headline gateway E2E.
 func TestAT_FilesystemE2E_AllowAndDeny(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skip in short mode (boots central server + spawns subprocess)")
@@ -131,7 +131,7 @@ func TestAT_FilesystemE2E_AllowAndDeny(t *testing.T) {
 	}
 	bridge := mcpgw.NewBridge(cfg, io.Discard, "0.5.0-AT-fs-e2e")
 
-	// Wire A18's gate against the central server.
+	// Wire the gate against the central server.
 	gate := mcpgw.NewHTTPPolicyClient(cfg, pol)
 	bridge.PolicyCheck = gate.Check
 
@@ -205,9 +205,8 @@ func TestAT_FilesystemE2E_AllowAndDeny(t *testing.T) {
 	})
 	r2 := h.readResponse()
 	if r2.Error != nil {
-		// JSON-RPC error path is also acceptable per the design (some
-		// future build may surface deny as -32000); v0.5 prefers the
-		// isError tool result.
+		// The JSON-RPC error path (-32000) is also acceptable per the
+		// design; the bridge uses the isError tool result.
 		t.Logf("got JSON-RPC error path on deny: %+v", r2.Error)
 	} else {
 		var denyResult mcpgw.ToolsCallResult
@@ -254,5 +253,55 @@ func TestAT_FilesystemE2E_AllowAndDeny(t *testing.T) {
 	}
 	if !sawDeny {
 		t.Errorf("audit log missing any DENY mcp_gateway entry (the dual-check filesystem deny)")
+	}
+}
+
+// TestAT_DefaultPolicy_FilesystemSearchTreeAndPaths runs the MCP
+// filesystem server's search, tree and multi-file tools through the
+// gate against a real central server loaded with configs/default.yaml.
+// default.yaml allows every fs:* tool at the mcp_tool layer and reads
+// under /tmp/** at the filesystem layer, so these must ALLOW; a
+// read_multiple_files that slips /etc/passwd in among /tmp files must
+// not.
+func TestAT_DefaultPolicy_FilesystemSearchTreeAndPaths(t *testing.T) {
+	pol, err := policy.LoadFromFile(filepath.Join("..", "..", "configs", "default.yaml"))
+	if err != nil {
+		t.Fatalf("load default.yaml: %v", err)
+	}
+	centralURL, _, _ := startCentralServer(t, pol)
+	gate := mcpgw.NewHTTPPolicyClient(&mcpgw.Config{
+		GuardURL:   centralURL,
+		APIKey:     "AT-e2e-secret",
+		TenantID:   "local",
+		FailMode:   "deny",
+		PolicyMode: "strict",
+	}, pol)
+
+	cases := []struct {
+		tool  string
+		args  map[string]interface{}
+		allow bool
+	}{
+		{"search_files", map[string]interface{}{"path": "/tmp", "pattern": "*.txt"}, true},
+		{"directory_tree", map[string]interface{}{"path": "/tmp"}, true},
+		{"read_multiple_files", map[string]interface{}{"paths": []interface{}{"/tmp/a.txt", "/tmp/b.txt"}}, true},
+		{"read_multiple_files", map[string]interface{}{"paths": []interface{}{"/tmp/a.txt", "/etc/passwd"}}, false},
+	}
+	for _, tc := range cases {
+		dec, err := gate.Check(context.Background(), &mcpgw.ToolsCallRequest{
+			Namespace: "fs",
+			ToolName:  tc.tool,
+			FullName:  "fs:" + tc.tool,
+			Arguments: tc.args,
+			TenantID:  "local",
+			AgentID:   "mcp-gateway:AT",
+			SessionID: "mcp-gateway:AT",
+		})
+		if err != nil {
+			t.Fatalf("fs:%s %v: %v", tc.tool, tc.args, err)
+		}
+		if dec.Allow != tc.allow {
+			t.Errorf("fs:%s %v: Allow=%v, want %v (rule %q, reason %q)", tc.tool, tc.args, dec.Allow, tc.allow, dec.Rule, dec.Reason)
+		}
 	}
 }

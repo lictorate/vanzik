@@ -1,13 +1,9 @@
-"""Tests for the MCP gateway preview shipped in v0.5 (worker A15).
+"""Tests for the single-upstream MCP gateway
+(``python -m vanzik.adapters.mcp --upstream ...``).
 
 The gateway spawns a downstream MCP server via stdio, brokers JSON-RPC
 frames between the client and the downstream, and gates every
 ``tools/call`` through Vanzik.
-
-Closes R7 E6 partial: ``python -m vanzik.adapters.mcp --upstream ...``
-is now a real entry point with tools registered via the upstream, not
-the empty-server footgun. Full multi-upstream + capability merging is
-deferred to v0.6 (Phase 4B Gateway).
 """
 
 import json
@@ -36,12 +32,9 @@ from tests.conftest import MockVanzikHandler
 class _FakeUpstream:
     """Test double for :class:`_UpstreamProcess`.
 
-    Exposes the same .request() / .close() surface the gateway calls.
-    Records every frame the gateway forwarded so tests can assert
-    forwarding semantics.
-
-    The handler callable maps ``method`` → response (dict) or None for
-    notifications. Tests can replace it per-case.
+    Same .request() / .close() surface; records every forwarded frame.
+    The handler maps ``method`` → response (dict), or None for
+    notifications, and can be replaced per test.
     """
 
     def __init__(self):
@@ -129,7 +122,6 @@ class TestGatewayInitialize:
             "params": {"protocolVersion": "2024-11-05"},
         })
         assert resp["result"]["serverInfo"]["name"] == "fake-upstream"
-        # The gateway forwarded the frame verbatim.
         assert fake.calls[-1]["method"] == "initialize"
 
 
@@ -154,7 +146,6 @@ class TestGatewayToolsCall:
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": "read_file", "arguments": {"path": "/etc/hosts"}},
         })
-        # Upstream got the call.
         assert any(c.get("method") == "tools/call" for c in fake.calls)
         assert "upstream ran read_file" in resp["result"]["content"][0]["text"]
 
@@ -259,7 +250,7 @@ class TestGatewayNotifications:
 class TestServerFrameRobustness:
     def test_malformed_json_does_not_crash(self, mock_server, capsys):
         """A bad frame is logged and dropped; the next valid frame still
-        gets a response. R5 E6 / S9 regression coupon."""
+        gets a response."""
         MockVanzikHandler.check_response = {"decision": "ALLOW"}
         s = GuardedMCPServer(guard_url=mock_server)
         s.add_tool("ping", "", handler=lambda **_: "pong", scope="shell")
@@ -333,7 +324,7 @@ class TestServerFrameRobustness:
 
 
 # ---------------------------------------------------------------------------
-# Redactor application on synthesized commands (R7 T7)
+# Redactor application on synthesized commands
 # ---------------------------------------------------------------------------
 
 
@@ -356,11 +347,7 @@ class TestSynthesizedCommandRedaction:
         })
 
         body = json.loads(MockVanzikHandler.last_request_body)
-        # Synthesized command was forwarded to the policy server.
         cmd = body.get("command", "")
-        # Either the value is replaced by [REDACTED] or the whole `password=hunter2`
-        # match is collapsed; the regex is `(secret|token|password|api_key)\s*=\s*\S+`
-        # so 'hunter2' must NOT appear.
         assert "hunter2" not in cmd, f"secret leaked into command: {cmd!r}"
         assert "[REDACTED]" in cmd
 

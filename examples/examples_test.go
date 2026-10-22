@@ -1,18 +1,10 @@
 package examples_test
 
-// AT (Test Wrangler) — verifies that every client-config JSON file
-// shipped under examples/ parses as valid JSON, contains the expected
-// shape (an "mcpServers.vanzik" entry), and references the
-// production Vanzik CLI flags. A20 owns the file contents; this
-// test catches accidental JSON breakage during edits, and pins that
-// the documented flag set is the same set the gateway's flag parser
-// understands.
-//
-// Why this is a test, not a Make target: example JSON files are
-// trivially editable by humans, easy to break (trailing comma, missing
-// quote), and operators copy-paste them. A regression here is a
-// silent UX failure. Running it as `go test` keeps the check in the
-// same gate as the rest of CI.
+// Verifies that every client-config JSON file under examples/ parses,
+// has a "vanzik" server entry, and uses only flags the gateway
+// understands. Operators copy-paste these hand-edited files, so a
+// trailing comma or a renamed flag would be a silent UX failure; as a
+// `go test` it runs in the same CI gate as everything else.
 
 import (
 	"encoding/json"
@@ -22,11 +14,10 @@ import (
 	"testing"
 )
 
-// expectedFlags are the long-form flags every example config must
-// reference at least once (any subset is fine — different IDEs may
-// reasonably configure different defaults). The set is the public
-// interface from cmd/vanzik-mcp-gateway/main.go via
-// pkg/mcpgw.ParseConfig.
+// expectedFlags are the long-form flags an example config may use (any
+// subset). The set is a hand-kept copy of gateway flags, not read from
+// pkg/mcpgw.ParseConfig: add a flag here when an example starts using
+// one the gateway gained.
 var expectedFlags = []string{
 	"--upstream",
 	"--upstream-http",
@@ -56,17 +47,13 @@ func TestExamples_ClientConfigsParseAsJSON(t *testing.T) {
 				t.Fatalf("read: %v", err)
 			}
 
-			// Parse as a generic map so we can inspect structure.
 			var doc map[string]interface{}
 			if err := json.Unmarshal(data, &doc); err != nil {
 				t.Fatalf("invalid JSON: %v\n--- contents ---\n%s", err, string(data))
 			}
 
-			// Every config has a server-list object containing at least
-			// an "vanzik" entry. The container key varies by IDE:
-			//   - Claude Desktop / Cline / Continue / Cursor → "mcpServers"
-			//   - Zed → "context_servers" (Zed's MCP-equivalent key)
-			// We accept either.
+			// The server map is "mcpServers" in every client except Zed,
+			// which uses "context_servers".
 			var servers map[string]interface{}
 			if v, ok := doc["mcpServers"].(map[string]interface{}); ok {
 				servers = v
@@ -80,8 +67,6 @@ func TestExamples_ClientConfigsParseAsJSON(t *testing.T) {
 				t.Fatalf("missing or non-object .vanzik entry; servers=%v", servers)
 			}
 
-			// The vanzik entry must have a command + args. The
-			// command should be the gateway binary name.
 			cmd, ok := ag["command"].(string)
 			if !ok || cmd == "" {
 				t.Fatalf("missing or empty command field; ag=%v", ag)
@@ -101,11 +86,8 @@ func TestExamples_ClientConfigsParseAsJSON(t *testing.T) {
 				}
 			}
 
-			// At least the flag mentioned in the file must be in the
-			// gateway's flag set. We don't require ALL expected flags
-			// (some IDE configs reasonably omit --policy in fast mode);
-			// instead, we assert that every flag that DOES appear is
-			// one of the documented set.
+			// Every flag that appears must be in the documented set; not
+			// every documented flag has to appear.
 			for _, arg := range args {
 				if !strings.HasPrefix(arg, "--") {
 					continue // value, not a flag

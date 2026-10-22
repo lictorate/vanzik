@@ -1,22 +1,8 @@
 package llmproxy
 
-// at_concurrency_stress_test.go is the AT-added concurrency stress
-// test. The v0.5 plan AT brief calls for:
-//
-//   "100 concurrent streaming requests through the proxy with random
-//    tool_call mixes. Assert no cross-request leakage of tool_call
-//    deltas."
-//
-// A22's TestStreamingConcurrent_NoCrossLeak runs 10 concurrent
-// requests; this test scales to 100 with a random gating mix
-// (some ALLOW, some DENY, some REQUIRE_APPROVAL) per request. The
-// invariant is hard: per-request goroutine isolation must hold so
-// one client never receives bytes intended for another.
-//
-// Run with -race to surface any data races on accumulator state. The
-// streaming orchestrator constructs a fresh accumulator per request
-// goroutine; this test is the structural assertion that the
-// invariant holds under load.
+// Concurrency stress: 100 streams with mixed ALLOW / DENY /
+// REQUIRE_APPROVAL outcomes; no client may receive another request's
+// bytes. Run with -race.
 
 import (
 	"context"
@@ -30,25 +16,13 @@ import (
 	"testing"
 )
 
-// TestAT_Concurrency_NoCrossRequestLeak fans 100 concurrent streaming
-// chat-completions requests at the proxy. Each request is tagged with
-// a unique tool_call id (mirrored by the upstream), and the gate's
-// decision is deterministic per agent_id (so each client knows what
-// to expect in its own response).
-//
-// Assertions:
-//   - Each client's response contains its own call id (or refusal
-//     marker for DENY/APPROVAL clients).
-//   - Each client's response does NOT contain another request's call
-//     id (the per-request isolation invariant).
-//   - No HTTP errors; status 200 across the board.
-//   - The proxy survives without panic under -race.
+// TestAT_Concurrency_NoCrossRequestLeak: each request has a unique
+// tool_call id and a deterministic outcome; each response must show its
+// own id (or refusal) and never another request's.
 func TestAT_Concurrency_NoCrossRequestLeak(t *testing.T) {
 	const concurrency = 100
 
-	// Upstream that echoes the client's tag header into the tool_call
-	// id, so each request has a unique tool_call id traceable back to
-	// the client that issued it.
+	// The upstream echoes the client's tag into the tool_call id.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callID := r.Header.Get("X-Test-Call-ID")
 		if callID == "" {
@@ -71,8 +45,7 @@ func TestAT_Concurrency_NoCrossRequestLeak(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	// Per-request expectation: index 0..99 mapped to one of three
-	// outcomes by `i % 3`. Gate inspects ToolCallID to decide.
+	// Outcome is `i % 3`, decided from the ToolCallID.
 	const (
 		outcomeAllow    = 0
 		outcomeDeny     = 1
@@ -83,7 +56,6 @@ func TestAT_Concurrency_NoCrossRequestLeak(t *testing.T) {
 	base, teardown := newStreamingTestServer(t, upstream, func(s *Server) {
 		s.BuildRefusal = BuildRefusalRich
 		s.PolicyCheck = func(ctx context.Context, tc *ToolCallCheck) (Decision, error) {
-			// Decode the request index from the call id.
 			var idx int
 			if _, err := fmt.Sscanf(tc.ToolCallID, "call_stress_%d", &idx); err != nil {
 				return Decision{Allow: true, Rule: "allow:fallback"}, nil
@@ -135,11 +107,8 @@ func TestAT_Concurrency_NoCrossRequestLeak(t *testing.T) {
 			got, _ := io.ReadAll(resp.Body)
 			gotStr := string(got)
 
-			// No other request's call id may appear here. Use
-			// quote-delimited matching ("call_stress_<n>") because
-			// `call_stress_4` is a substring of `call_stress_48`,
-			// `call_stress_45`, etc. — the wire format always emits
-			// ids inside JSON string quotes.
+			// Match quoted ids: `call_stress_4` is a substring of
+			// `call_stress_48`.
 			for j := 0; j < concurrency; j++ {
 				if j == i {
 					continue
@@ -151,26 +120,20 @@ func TestAT_Concurrency_NoCrossRequestLeak(t *testing.T) {
 					failures.Add(1)
 				}
 			}
-			// Quoted match for own id — same substring-safety as above.
 			ownIDQuoted := fmt.Sprintf(`"%s"`, callID)
 			ownApprovalQuoted := fmt.Sprintf(`ap_stress_%d`, i)
 
-			// Outcome-specific assertions.
 			switch expectedOutcome(i) {
 			case outcomeAllow:
-				// ALLOW: own id MUST appear (the buffered event flushed).
 				if !strings.Contains(gotStr, ownIDQuoted) {
 					t.Errorf("client %d (ALLOW): expected own id %q, got %q", i, callID, gotStr)
 					failures.Add(1)
 				}
-				// finish_reason: tool_calls flushed back since ALLOW.
 				if !strings.Contains(gotStr, "tool_calls") {
 					t.Errorf("client %d (ALLOW): expected tool_calls finish_reason; got %q", i, gotStr)
 					failures.Add(1)
 				}
 			case outcomeDeny:
-				// DENY: own id MUST NOT appear (buffered events
-				// discarded). Refusal text must mention the rule.
 				if strings.Contains(gotStr, ownIDQuoted) {
 					t.Errorf("client %d (DENY): leaked own buffered id %q", i, callID)
 					failures.Add(1)
@@ -189,20 +152,13 @@ func TestAT_Concurrency_NoCrossRequestLeak(t *testing.T) {
 						i, ownApprovalQuoted, gotStr)
 					failures.Add(1)
 				}
-				// Other clients' approval ids must not appear (use the
-				// natural string boundary that an approval URL/ID
-				// shows up with: `ap_stress_<n>` followed by either
-				// the URL terminator quote or whitespace; the bug is
-				// only false positives with prefix matches like
-				// ap_stress_5 ⊂ ap_stress_50, so use a length check).
+				// Other clients' approval ids must not appear; match at
+				// a boundary since ap_stress_5 is a prefix of ap_stress_50.
 				for j := 0; j < concurrency; j++ {
 					if j == i {
 						continue
 					}
 					otherAp := fmt.Sprintf("ap_stress_%d", j)
-					// Fail only if the FULL otherAp appears at a
-					// natural boundary — followed by quote, slash,
-					// space, or newline. Prevents the substring trap.
 					if containsAtBoundary(gotStr, otherAp) {
 						t.Errorf("client %d (APPROVAL): leaked other approval %q", i, otherAp)
 						failures.Add(1)
@@ -217,11 +173,8 @@ func TestAT_Concurrency_NoCrossRequestLeak(t *testing.T) {
 	}
 }
 
-// containsAtBoundary returns true if needle appears in s followed by
-// a non-identifier byte (so `ap_stress_5` does not match inside
-// `ap_stress_50`). Used to guard against substring false positives
-// when checking for cross-request id leaks in tests where the ids
-// share a numeric suffix.
+// containsAtBoundary reports whether needle appears in s not followed
+// by an identifier byte, so `ap_stress_5` does not match `ap_stress_50`.
 func containsAtBoundary(s, needle string) bool {
 	idx := 0
 	for {
@@ -234,7 +187,6 @@ func containsAtBoundary(s, needle string) bool {
 			return true
 		}
 		next := s[end]
-		// Identifier character — could be the start of a longer id.
 		if (next >= '0' && next <= '9') || (next >= 'A' && next <= 'Z') || (next >= 'a' && next <= 'z') || next == '_' {
 			idx = end
 			continue
@@ -243,10 +195,9 @@ func containsAtBoundary(s, needle string) bool {
 	}
 }
 
-// TestAT_Concurrency_FailModeAllowAndDenyRespected asserts the
-// per-request fail-mode interpretation under load: when PolicyCheck
-// returns an error, the proxy honours the configured fail-mode
-// uniformly across all in-flight goroutines.
+// TestAT_Concurrency_FailModeAllowAndDenyRespected: under load, a
+// PolicyCheck error is handled per the configured fail-mode on every
+// stream.
 func TestAT_Concurrency_FailModeAllowAndDenyRespected(t *testing.T) {
 	const concurrency = 30
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -267,11 +218,7 @@ func TestAT_Concurrency_FailModeAllowAndDenyRespected(t *testing.T) {
 	t.Run("fail-mode-deny", func(t *testing.T) {
 		base, teardown := newStreamingTestServer(t, upstream, func(s *Server) {
 			s.cfg.FailMode = "deny"
-			// Wire the rich refusal builder so the rule string
-			// FailModeRuleClosed ("deny:llm_api_proxy:fail_closed")
-			// lands in the client-visible refusal — that's the
-			// dashboard-grep marker the operator alerts on. Default
-			// builder only renders Reason; rich renders Rule too.
+			// Only the rich builder renders the Rule operators alert on.
 			s.BuildRefusal = BuildRefusalRich
 			s.PolicyCheck = func(ctx context.Context, tc *ToolCallCheck) (Decision, error) {
 				return Decision{}, fmt.Errorf("simulated /v1/check unreachable")
@@ -295,16 +242,13 @@ func TestAT_Concurrency_FailModeAllowAndDenyRespected(t *testing.T) {
 				defer resp.Body.Close()
 				got, _ := io.ReadAll(resp.Body)
 				gotStr := string(got)
-				// Buffered tool_call must NOT leak.
 				if strings.Contains(gotStr, `"call_fm"`) {
 					leaks.Add(1)
 				}
-				// Rich refusal carries the fail-closed rule.
 				if !strings.Contains(gotStr, FailModeRuleClosed) {
 					leaks.Add(1)
 				}
-				// And it MUST NOT carry the audit variant — that's a
-				// different fail-mode and would mask a regression.
+				// The audit variant belongs to a different fail-mode.
 				if strings.Contains(gotStr, FailModeRuleClosedAudit) {
 					leaks.Add(1)
 				}
@@ -340,13 +284,8 @@ func TestAT_Concurrency_FailModeAllowAndDenyRespected(t *testing.T) {
 				}
 				defer resp.Body.Close()
 				got, _ := io.ReadAll(resp.Body)
-				// fail-mode allow: tool_call was buffered, gate
-				// errored, fail-mode allow → continue (tool_call never
-				// flushed because no Decision Allow path took it).
-				// The buffered events do NOT flush in fail-mode allow
-				// (gateAndFlushOpenAI's `continue` skips refusal but
-				// also skips the post-loop flush guard); but [DONE]
-				// must arrive, status 200.
+				// The gate error is ignored; the stream must still end
+				// with [DONE].
 				if !strings.Contains(string(got), "[DONE]") {
 					miss.Add(1)
 				}

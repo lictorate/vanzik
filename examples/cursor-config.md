@@ -20,7 +20,10 @@ Cursor supports two scopes:
 
 A project-level file overrides the global file for that workspace, so a
 single `vanzik` server entry in `~/.cursor/mcp.json` is enough to gate
-every Cursor session.
+every Cursor session, as long as every path in it exists everywhere: the
+example's `--policy /etc/vanzik/default.yaml` does, while a
+`${workspaceFolder}/.vanzik/policy.yaml` path would need that file in
+every workspace (the gateway refuses to start without it).
 
 ## What this config does
 
@@ -30,7 +33,7 @@ Cursor (Composer / agent mode)
     ▼
 vanzik-mcp-gateway
     │
-    ├─stdio──► server-filesystem via npx (scoped to ${workspaceFolder})
+    ├─stdio──► server-filesystem via npx (scoped to ${workspaceFolder} and /tmp)
     ├─stdio──► mcp-server-fetch (uvx)
     ├─stdio──► github-mcp-server (docker)
     │
@@ -40,44 +43,31 @@ vanzik-mcp-gateway
 
 `${workspaceFolder}` is a Cursor variable that expands to the open
 project's root, so the filesystem upstream is automatically scoped to the
-current workspace. `${env:VAR}` reads the variable from Cursor's launching
+current workspace (plus `/tmp`, for the verification below). `${env:VAR}` reads the variable from Cursor's launching
 environment.
 
 ## Setup
 
-The example config starts three downstream MCP servers, each with its own
-launcher:
+Install the launchers (`npx`, `uvx`, `docker`) for the upstreams you keep;
+see [Downstream servers](README.md#downstream-servers).
 
-| Upstream | Launcher | Install |
-|---|---|---|
-| `fs` — filesystem server | `npx` | [Node.js](https://nodejs.org/) 20+ |
-| `fetch` — fetch server | `uvx` | [uv](https://docs.astral.sh/uv/getting-started/installation/) |
-| `github` — [GitHub's MCP server](https://github.com/github/github-mcp-server) | `docker` | [Docker](https://docs.docker.com/get-started/get-docker/) |
-
-Install the launchers for the upstreams you keep and delete the
-`--upstream` entries you don't need. A missing launcher disables only
-that namespace: the gateway logs
-`info mcpgw: startup: upstream "fetch" failed to spawn: …` and serves the
-others. The GitHub server reads `GITHUB_PERSONAL_ACCESS_TOKEN` from the
-config's `env` block; the gateway passes its environment to every
-upstream, and `docker run -e GITHUB_PERSONAL_ACCESS_TOKEN` forwards it
-into the container.
-
-1. **Install binaries** (Go 1.25+):
+1. **Install binaries** (Go 1.26+):
 
    ```bash
    go install lictorate.com/vanzik/v2/cmd/vanzik@latest
    go install lictorate.com/vanzik/v2/cmd/vanzik-mcp-gateway@latest
    ```
 
-2. **Drop a policy file in the project root:**
+2. **Pick a policy.** The config points `--policy` at
+   `/etc/vanzik/default.yaml`; the gateway and the server must load the
+   same file. For a user install or a `go install` setup, see
+   [Policy file](README.md#policy-file).
 
-   ```bash
-   mkdir -p .vanzik
-   cp /path/to/Vanzik/configs/default.yaml .vanzik/policy.yaml
-   ```
-
-   Adjust `--policy` in the JSON if you put the file elsewhere.
+   For a policy that lives in one project instead, copy it to
+   `.vanzik/policy.yaml` there, use
+   `"--policy", "${workspaceFolder}/.vanzik/policy.yaml"` in that
+   project's `.cursor/mcp.json` only, and start the server with the same
+   file.
 
 3. **Export the API key** in the shell that starts Cursor:
 
@@ -85,14 +75,16 @@ into the container.
    export VANZIK_API_KEY="$(openssl rand -hex 32)"
    ```
 
-   On macOS, set this in `~/.zshrc` so Cursor (launched from Spotlight or
-   Finder) inherits it. On Windows, set it as a User Environment Variable.
+   Cursor launched from Finder, Spotlight or the Dock on macOS may not
+   see exports from `~/.zshrc`, so also put the key in the config's
+   `env` block (`"VANZIK_API_KEY": "<the key>"`). On Windows, set it as
+   a User Environment Variable or in the `env` block.
 
 4. **Run the central server** in a terminal:
 
    ```bash
    vanzik server \
-     --policy .vanzik/policy.yaml \
+     --policy /etc/vanzik/default.yaml \
      --dashboard \
      --watch \
      --api-key "$VANZIK_API_KEY"
@@ -106,32 +98,38 @@ into the container.
 
 In Cursor's chat (Composer):
 
-- "Read `package.json` from this workspace" → ALLOW (in default policy).
+- "Read `/tmp/hello.txt`" → ALLOW: the default policy allows reads under
+  `/tmp` (and `./workspace`).
+- "Read `package.json` from this workspace" → DENY under the default
+  policy, which doesn't know your project's path. To allow it, add the
+  workspace to the read `paths` of the existing `filesystem` block in
+  the policy the server loads:
+
+  ```yaml
+  - scope: filesystem
+    allow:
+      - action: read
+        paths: ["./workspace/**", "/tmp/**", "/Users/you/projects/myapp/**"]
+  ```
+
+  The server reloads the file on save; the same read is then ALLOWed.
 - "Read `/etc/passwd`" (or `C:\Windows\System32\drivers\etc\hosts` on
   Windows) → DENY, surfaced on the dashboard at
   <http://127.0.0.1:8080/dashboard>.
 
 ## API key handling
 
-Do **not** pass `--api-key "$VANZIK_API_KEY"` as an `args` entry.
 Cursor's `${env:VAR}` interpolation has been unreliable across
-versions, and JSON-level `$VAR` shell-expansion never happens. The
-safe path is to set `VANZIK_API_KEY` in the `env` block (or
-inherited from Cursor's parent shell) and **omit** the `--api-key`
-flag entirely — the gateway picks up the env var automatically when
-the flag is absent.
+versions, and plain `$VAR` is never expanded: set `VANZIK_API_KEY` in
+the `env` block (or inherit it from Cursor's parent shell) and omit
+`--api-key`. See [API key handling](README.md#api-key-handling).
 
 ## Tenant ID
 
-`--tenant-id` picks the tenant whose policy evaluates the gateway's
-calls (they go to `/v1/t/<tenant>/check`). Keep `local` — the policy
-the server loads with `--policy` — unless you've registered another
-tenant on the central server with
-`vanzik tenant put <id> --policy <file.yaml>`. A tenant the server
-doesn't know (including a templated value such as
-`cursor-${env:USER}` that you haven't registered) answers `404`, which the gateway
-treats like an unreachable server: `--fail-mode` decides, so with `deny`
-every call is refused.
+Keep `--tenant-id local` unless you've registered another tenant; see
+[Tenant ID](README.md#tenant-id). A templated value such as
+`cursor-${env:USER}` counts too: each value it expands to must be
+registered, or the server answers `404`.
 
 ## Notes
 
@@ -140,7 +138,5 @@ every call is refused.
   changes.
 - If you have an existing top-level `mcpServers` block, add the
   `vanzik` entry inside it; Cursor merges entries by name.
-- The `env` field on a server entry is forwarded to the gateway's parent
-  process, which then forwards it to each spawned upstream — but
-  `${env:VAR}` interpolation happens at Cursor's level, before the gateway
-  sees the args.
+- Cursor expands `${env:VAR}` before the gateway sees the args; the
+  `env` entries reach the gateway and every upstream it spawns.

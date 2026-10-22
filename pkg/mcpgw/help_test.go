@@ -38,8 +38,7 @@ func TestParseConfig_HelpGroupsEveryFlag(t *testing.T) {
 	}
 }
 
-// --reconnect-cap was parsed but never used: the gateway always waited up to
-// 60s between restarts. BackoffSchedule applies it.
+// BackoffSchedule applies --reconnect-cap to the waits between restarts.
 func TestBackoffSchedule(t *testing.T) {
 	cases := []struct {
 		maxWait time.Duration

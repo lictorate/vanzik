@@ -15,19 +15,20 @@ import (
 // MaxStdoutLineBytes caps a single JSON-RPC frame. What the gateway is
 // SUPPOSED to guarantee when that cap is exceeded:
 //
-//   F1. One oversized frame is a per-frame failure, not a process-wide one.
-//       The gateway keeps serving and later frames are still handled.
-//   F2. A caller never waits forever for a frame the gateway refused. Silence
-//       is not an acceptable handling of a frame it declined to process.
-//   F3. An upstream that outlives its reader must not stay advertised as
-//       usable. Either it recovers, or calls to it fail -- never hang.
+//   1. One oversized frame is a per-frame failure, not a process-wide one.
+//      The gateway keeps serving and later frames are still handled.
+//   2. A caller never waits forever for a frame the gateway refused. Silence
+//      is not an acceptable handling of a frame it declined to process.
+//   3. An upstream that outlives its reader must not stay advertised as
+//      usable. Either it recovers, or calls to it fail -- never hang.
 //
 // Deliberately NOT asserted: which error code comes back, whether recovery is
 // by skip or by respawn, or how many frames are lost. Those are choices.
 // ---------------------------------------------------------------------------
 
-// F3: an upstream whose stdout reader dies while the subprocess is still alive
-// must not remain in a state where calls are dispatched into the void.
+// Guarantee 3: an upstream whose stdout reader dies while the subprocess is
+// still alive must not remain in a state where calls are dispatched into the
+// void.
 func TestUpstream_SurvivesOversizedStdoutLine(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skip in short mode")
@@ -74,8 +75,8 @@ func TestUpstream_SurvivesOversizedStdoutLine(t *testing.T) {
 			"stayed %q and nothing marked the upstream unusable", callErr, up.Status())
 	}
 
-	// F3: within a reasonable window the upstream must reach a state that is
-	// honest -- either recovered (OK) or visibly unusable (degraded/stopped).
+	// Guarantee 3: within a reasonable window the upstream must reach an honest
+	// state -- either recovered (OK) or visibly unusable (degraded/stopped).
 	// What it must not do is sit at OK while silently swallowing every call.
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
@@ -95,8 +96,8 @@ func TestUpstream_SurvivesOversizedStdoutLine(t *testing.T) {
 		"it is wedged while still advertising itself as usable", up.Status())
 }
 
-// F1 + F2: one oversized HOST frame must not take the gateway down, and a
-// caller that sent it must not be left waiting forever.
+// Guarantees 1 and 2: one oversized HOST frame must not take the gateway down,
+// and a caller that sent it must not be left waiting forever.
 //
 // Every write happens on a helper goroutine: stdin is an io.Pipe, so once
 // Run returns nothing drains it and a write blocks forever. That blocking is
@@ -154,8 +155,8 @@ func TestBridge_SurvivesOversizedHostFrame(t *testing.T) {
 		}
 	}()
 
-	// F1 is the load-bearing assertion: the frame BEHIND the oversized one
-	// must still be served. An error reply for the oversized frame alone does
+	// Guarantee 1 is the load-bearing assertion: the frame BEHIND the oversized
+	// one must still be served. An error reply for the oversized frame alone does
 	// not prove the gateway survived -- it can be written on the way out.
 	var sawOversizedReply, sawFollowup bool
 	deadline := time.After(20 * time.Second)
@@ -181,8 +182,8 @@ func TestBridge_SurvivesOversizedHostFrame(t *testing.T) {
 		}
 	}
 
-	// F2: the caller that sent the oversized frame was answered rather than
-	// left waiting on a frame the gateway silently refused.
+	// Guarantee 2: the caller that sent the oversized frame was answered rather
+	// than left waiting on a frame the gateway silently refused.
 	if !sawOversizedReply {
 		t.Error("the oversized frame got no reply at all; a caller that sent one waits " +
 			"forever on a frame the gateway declined to process")

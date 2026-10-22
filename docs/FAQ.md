@@ -39,7 +39,7 @@ Layers compose — running the gateway *and* the LLM proxy *and* the SDK against
 
 ### Why is `/v1/check` unauthenticated?
 
-So agents can call it with zero per-request setup. The only authenticated endpoints are approve/deny/status/audit and the dashboard. If your threat model requires `/v1/check` to be authenticated, gate it at the reverse proxy (allowlist source IPs or require a second header) — see [`DEPLOYMENT.md`](DEPLOYMENT.md).
+So agents can call it with zero per-request setup. With `--api-key` set, the authenticated endpoints are approve, deny and status, `/v1/audit` (`GET` and `POST`) and `/v1/audit/head`, `/v1/sessions`, the dashboard's `/api/*` routes, and their `/v1/t/<tenant>/…` mirrors; `/v1/check`, `/health`, `/v1/health` and `/metrics` stay open. If your threat model requires `/v1/check` to be authenticated, gate it at the reverse proxy (allowlist source IPs or require a second header) — see [`DEPLOYMENT.md`](DEPLOYMENT.md).
 
 ### My agents can't connect remotely, but `curl localhost:8080/health` works.
 
@@ -51,15 +51,15 @@ For production yes — TLS termination, connection pooling, static IP, and buffe
 
 ### Can I run multiple replicas?
 
-Yes — since v1.0, point every replica at PostgreSQL (`--store-dsn postgres://…`) with a distinct `--node-id`, and approvals, rate-limit buckets, and session costs are shared across the cluster via background reconciliation (default every 2s; the enforcement hot path never waits on the database). Know the semantics: distributed limiting is **bounded-overshoot** — brief bursts can exceed a cap by roughly `reconcile-interval × peak rate` per extra replica before nodes converge — and approvals resolved on one node reach the others within one reconcile interval, always converging to DENY on a conflict. On the default SQLite store, state stays **per-instance**: pin sessions via load-balancer affinity, divide limits by replica count, or stick to one replica (usually plenty — Vanzik handles 500+ RPS per vCPU). See [`OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments).
+Yes — point every replica at PostgreSQL (`--store-dsn postgres://…`) with a distinct `--node-id`, and approvals, rate-limit buckets, and session costs are shared across the cluster via background reconciliation (default every 2s; the enforcement hot path never waits on the database). Know the semantics: distributed limiting is **bounded-overshoot** — brief bursts can exceed a cap by roughly `reconcile-interval × peak rate` per extra replica before nodes converge — and approvals resolved on one node reach the others within one reconcile interval, always converging to DENY on a conflict. On the default SQLite store, state stays **per-instance**: pin sessions via load-balancer affinity, divide limits by replica count, or stick to one replica (usually plenty — Vanzik handles 500+ RPS per vCPU). See [`OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments).
 
 ### My approval queue is empty after a restart. Where did the approvals go?
 
-Since v0.6 it shouldn't be — the queue is **persistent by default**. `--persist` (default `true`) snapshots approvals, rate-limit buckets, and session-cost accumulators to the SQLite store (`vanzik.db`) and rehydrates them on boot. If your queue is empty after a restart, check that you aren't running `--persist=false` (the pre-v0.6 in-memory mode) and that the process can write its `--data-dir`. Note the store syncs on a ≥1 s tick, so approvals created in the final second before a crash can still be lost — agents polling across that window hit their SDK timeout and receive a fail-deny response. See [`CLI.md`](CLI.md#persistence--multi-tenancy-v06).
+It shouldn't be — the queue is **persistent by default**. `--persist` (default `true`) snapshots approvals, rate-limit buckets, and session-cost accumulators to the SQLite store (`vanzik.db`) and rehydrates them on boot. If your queue is empty after a restart, check that you aren't running `--persist=false` (in-memory only) and that the process can write its `--data-dir`. Note the store syncs on a ≥1 s tick, so approvals created in the final second before a crash can still be lost — agents polling across that window hit their SDK timeout and receive a fail-deny response. See [`CLI.md`](CLI.md#persistence--multi-tenancy-v06).
 
 ### Does the audit log rotate?
 
-Yes — rotation is **on by default** as of v0.5. The size-triggered rotator runs out of the box, controlled by `--audit-max-size-mb` (default 100 MiB), `--audit-max-backups` (default 5), `--audit-max-age-days` (default 30), and `--audit-compress` (default true). Operators following older guidance should NOT also configure `logrotate` against `audit.jsonl` — the dual-rotator chain corrupts the rotation index. See [`OPERATIONS.md`](OPERATIONS.md#audit-log-rotation). To opt out (e.g., when an external shipper handles rotation), set `--audit-max-size-mb 0`. Also note the startup replay: the active file plus a checkpointed prefix of the rotation chain is re-read on boot to seed counters.
+Yes — rotation is **on by default**, controlled by `--audit-max-size-mb` (default 100 MiB), `--audit-max-backups` (default 5), `--audit-max-age-days` (default 30), and `--audit-compress` (default true). Do NOT also configure `logrotate` against `audit.jsonl` — two rotators on one file corrupt the rotation index. See [`OPERATIONS.md`](OPERATIONS.md#audit-log-rotation). To opt out (e.g., when an external shipper handles rotation), set `--audit-max-size-mb 0`. Also note the startup replay: the active file plus a checkpointed prefix of the rotation chain is re-read on boot to seed counters.
 
 ### Why does `*.foo.com` not match `foo.com`?
 
@@ -74,7 +74,7 @@ See [`POLICY_REFERENCE.md`](POLICY_REFERENCE.md#pattern-matching-semantics-read-
 
 ### Can I use `time_window` without `require_prior`?
 
-No — as of v0.5.0 this is a **hard policy-load error**. `time_window` only means something as a modifier on a `require_prior` condition (i.e., "only match if the prior action happened within this window"). v0.4.1 emitted a `WARNING` log line; v0.5.0 promoted it to a load failure. Either remove the orphan `time_window` or add a `require_prior` clause. See [`DEPRECATIONS.md`](DEPRECATIONS.md).
+No — it is a **hard policy-load error**. `time_window` only means something as a modifier on a `require_prior` condition (i.e., "only match if the prior action happened within this window"). Either remove the orphan `time_window` or add a `require_prior` clause. See [`DEPRECATIONS.md`](DEPRECATIONS.md).
 
 ### Python fail-closed vs TypeScript failMode — which should I use?
 
@@ -87,11 +87,11 @@ Use fail-open only when Vanzik is advisory (e.g., you have another enforcement l
 
 ### Is the SQLite audit backend ready?
 
-Yes — since v0.6 it ships as the durable-store backend: run with `--persist --audit-backend=store` and the audit trail lands in the SQLite store's indexed `audit_entries` table (writes stay off the /v1/check hot path via the async buffer, which the store backend force-enables). The default remains the JSON-Lines file logger with rotation. The earlier standalone `audit.SQLiteLogger` prototype was never wired and has been removed.
+Yes — the durable-store backend: run with `--persist --audit-backend=store` and the audit trail lands in the SQLite store's indexed `audit_entries` table (writes stay off the /v1/check hot path via the async buffer, which the store backend force-enables). The default remains the JSON-Lines file logger with rotation.
 
 ### Where's the admin API for managing approvers / RBAC?
 
-There isn't one. As of v1.0 there is still **one API key** — anyone with it has full access to approve/deny/audit/status and the dashboard. Multi-tenant policy and state isolation shipped in v0.6 (`/v1/t/{tenant}/...` routes plus the `vanzik tenant` CLI — see [`API.md`](API.md) and [`CLI.md`](CLI.md#vanzik-tenant-v06)), but per-approver identities and RBAC did not. For now, treat the API key like a root password.
+There isn't one. There is **one API key** — anyone with it has full access to approve/deny/audit/status and the dashboard. Multi-tenant policy and state isolation exist (`/v1/t/{tenant}/...` routes plus the `vanzik tenant` CLI — see [`API.md`](API.md) and [`CLI.md`](CLI.md#vanzik-tenant-v06)), but per-approver identities and RBAC do not. For now, treat the API key like a root password.
 
 ### Can I edit policies from the dashboard?
 
@@ -99,11 +99,11 @@ No. Policies are YAML files; edit them on disk — the server hot-reloads on cha
 
 ### Does Vanzik support streaming responses / LLM output filtering?
 
-No — Vanzik decides on discrete actions (shell commands, HTTP calls, file writes), not on streaming LLM tokens. For content filtering at generation time, use a different layer (e.g., a prompt-filtering library or an output-scanning middleware). Vanzik is about what the agent *does*, not what it *says*.
+Streaming responses, yes: the LLM API Proxy gates the tool calls inside OpenAI and Anthropic SSE streams, holding each tool call until `/v1/check` answers (see [`LLM_API_PROXY.md`](LLM_API_PROXY.md)). Output filtering, no — Vanzik decides on discrete actions (shell commands, HTTP calls, file writes), not on the model's text tokens. For content filtering at generation time, use a different layer (e.g., a prompt-filtering library or an output-scanning middleware). Vanzik is about what the agent *does*, not what it *says*.
 
 ### How do I test my policy without a live agent?
 
-Two ways:
+Three ways:
 
 1. **CLI validate** — syntax + load-time checks: `vanzik validate --policy configs/my-policy.yaml`.
 2. **Direct curl** — semantics:
@@ -113,7 +113,7 @@ Two ways:
      -d '{"agent_id":"test","scope":"shell","command":"rm -rf /"}'
    ```
 
-Scripted coverage in CI is on the roadmap (P2 item: policy-as-code testing).
+3. **Policy tests in CI** — `vanzik test` runs a policy against YAML fixture files of requests and expected decisions, with no server, and exits non-zero on a failed case. See [`CLI.md` § `vanzik test`](CLI.md#vanzik-test).
 
 ### How much does running Vanzik cost in overhead?
 
@@ -129,7 +129,7 @@ YAML is human-friendly for rule lists with comments. JSON is too noisy for neste
 
 ### I think I found a security issue. Where do I report?
 
-Email `hello@lictorate.com`. Do **not** open a public issue. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the disclosure policy.
+Email `hello@lictorate.com`. Do **not** open a public issue. See [`SECURITY.md`](../SECURITY.md) for the disclosure policy.
 
 ---
 

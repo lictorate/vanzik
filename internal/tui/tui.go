@@ -15,7 +15,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // ErrQuit is returned when the user presses Ctrl-C (or Ctrl-D) in a menu.
@@ -169,14 +171,29 @@ func hintText(s Style, h string) string {
 // is then replaced by one line recording the answer. newline is what ends
 // a line: "\r\n" while the terminal is in raw mode.
 func Run(r io.Reader, w io.Writer, s Style, m *Menu, newline string) (int, error) {
-	drawn := 0
+	return run(r, w, s, m, newline, nil)
+}
+
+// run is Run with the terminal's width: cols reports it (0 when unknown).
+// A line wider than the terminal wraps onto more rows, and the redraw has
+// to move up over every one of them, or each key press leaves a copy of
+// the menu's wrapped lines behind.
+func run(r io.Reader, w io.Writer, s Style, m *Menu, newline string, cols func() int) (int, error) {
+	drawn := 0 // terminal rows the menu takes up
 	draw := func() {
 		if drawn > 0 {
-			fmt.Fprintf(w, "\x1b[%dA\r\x1b[J", drawn) // back to the menu's first line, clear below
+			fmt.Fprintf(w, "\x1b[%dA\r\x1b[J", drawn) // back to the menu's first row, clear below
 		}
 		lines := m.Render(s)
 		fmt.Fprint(w, strings.Join(lines, newline)+newline)
-		drawn = len(lines)
+		width := 0
+		if cols != nil {
+			width = cols()
+		}
+		drawn = 0
+		for _, l := range lines {
+			drawn += rows(l, width)
+		}
 	}
 	clear := func() {
 		if drawn > 0 {
@@ -221,6 +238,20 @@ func Run(r io.Reader, w io.Writer, s Style, m *Menu, newline string) (int, error
 		draw()
 	}
 }
+
+// rows is how many terminal rows line takes in a terminal cols characters
+// wide: colour codes take no space, and every character the menu draws
+// (including ›, ─ and ↑) is one column wide. A line exactly cols wide still
+// takes one row. cols <= 0 means the width is unknown: one row per line.
+func rows(line string, cols int) int {
+	n := utf8.RuneCountInString(ansiCode.ReplaceAllString(line, ""))
+	if cols <= 0 || n <= cols {
+		return 1
+	}
+	return (n + cols - 1) / cols
+}
+
+var ansiCode = regexp.MustCompile("\x1b\\[[0-9;]*m")
 
 // ColorWanted reports whether colour output is welcome: NO_COLOR unset
 // (https://no-color.org) and not a dumb terminal.

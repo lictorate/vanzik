@@ -3,17 +3,10 @@ package llmproxy
 // stream_refusal_audit_test.go pins that every proxy-manufactured streaming
 // refusal reaches the central audit trail.
 //
-// Two refusal families never wrote an entry: the structural ones (a stream the
-// accumulator cannot bind to a gateable call) and the buffer-cap ones. In both
-// the gate never runs, so the /v1/check path that normally writes the entry is
-// never taken, and the only signal was a counter in the proxy's process-local
-// registry — which has no scrape endpoint. The client got a refusal and the
-// operator got silence: no tenant, no agent, no rule, no idea it happened.
-//
-// Container-verified before the fix: driving an orphaned-tool-input stream and
-// a multi-choice stream through the real cluster produced correct refusals and
-// `null` from /v1/audit, while the neighbouring EOF and whitespace-seed
-// scenarios both produced entries.
+// Structural refusals (a stream that cannot be bound to a gateable call)
+// and buffer-cap refusals never run the gate, so /v1/check writes nothing;
+// the proxy's own counter has no scrape endpoint. auditStreamRefusal must
+// record them.
 
 import (
 	"fmt"
@@ -146,8 +139,7 @@ func TestAudit_MultiChoiceToolCalls_IsRecorded(t *testing.T) {
 	}
 }
 
-// TestAudit_InterleavedToolUse_IsRecorded — the refusal that has existed since
-// 1.0 and has never been audited.
+// TestAudit_InterleavedToolUse_IsRecorded — interleaved tool_use refusal.
 func TestAudit_InterleavedToolUse_IsRecorded(t *testing.T) {
 	stream := pvAnthropicToolStart(0, "toolu_first", "bash", `{}`) +
 		pvAnthropicInputDelta(0, `{"command":"ls"}`) +
@@ -164,10 +156,8 @@ func TestAudit_InterleavedToolUse_IsRecorded(t *testing.T) {
 }
 
 // TestAudit_CumulativeBufferOverflow_IsRecorded — arguments that cross
-// --max-buffer-bytes only when ADDED UP. Each individual event stays well
-// under the per-event ceiling, so this is the accumulator's own overflow
-// branch, not the oversized-single-event one below. They are separate code
-// paths with separate refusals, and both were silent.
+// --max-buffer-bytes only when added up: the accumulator's overflow
+// branch, separate from the oversized-single-event path below.
 func TestAudit_CumulativeBufferOverflow_IsRecorded(t *testing.T) {
 	frag := strings.Repeat("A", 200) // 4 of these blow a 512-byte cap
 
@@ -202,10 +192,9 @@ func TestAudit_CumulativeBufferOverflow_IsRecorded(t *testing.T) {
 	})
 }
 
-// TestAudit_OversizedSingleEvent_IsRecorded — ONE event past twice the cap.
-// This trips in readSSEEvent, before the parser sees anything, so it is the
-// path least likely to carry identity — which is exactly why it must still
-// leave an entry naming the tenant, agent and rule.
+// TestAudit_OversizedSingleEvent_IsRecorded — one event past twice the cap
+// trips in readSSEEvent before the parser sees anything; the entry must
+// still name tenant, agent and rule.
 func TestAudit_OversizedSingleEvent_IsRecorded(t *testing.T) {
 	huge := strings.Repeat("B", 8192)
 

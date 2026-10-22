@@ -25,7 +25,11 @@ go 1.26.0
 // an HPACK encoder race). govulncheck finds the affected code reachable; the
 // server itself serves plaintext HTTP/1.1 (TLS ends at a reverse proxy), so
 // it does not run Go's HTTP/2 server, but the gate is on reachability.
-toolchain go1.26.9
+//
+// go1.26.10 adds the fix for GO-2026-6809 (crypto/x509: distrust compromised
+// intermediate certificates), reachable from proxy.Server.Start through
+// http.Server.ListenAndServe.
+toolchain go1.26.10
 
 require (
 	github.com/fsnotify/fsnotify v1.10.1

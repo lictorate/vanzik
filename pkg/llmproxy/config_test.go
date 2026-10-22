@@ -77,8 +77,8 @@ func TestConfig_GuardURLEnvFallback(t *testing.T) {
 	}
 }
 
-// A positional argument used to be ignored: `vanzik-llm-proxy version`
-// started the proxy.
+// A positional argument is rejected, so `vanzik-llm-proxy version` does
+// not start the proxy.
 func TestConfig_RejectsPositionalArgs(t *testing.T) {
 	t.Setenv("VANZIK_API_KEY", "")
 	for _, args := range [][]string{{"version"}, {"--listen", "127.0.0.1:9", "extra"}} {
@@ -116,9 +116,8 @@ func TestConfig_ValidationErrors(t *testing.T) {
 	}
 }
 
-// Non-loopback bind without --proxy-api-key is refused per
-// docs/LLM_API_PROXY.md § 8.1 (avoid accidental internet-exposed
-// proxies).
+// Non-loopback bind without --proxy-api-key is refused
+// (docs/LLM_API_PROXY.md § 8.1).
 func TestConfig_NonLoopbackBindRequiresProxyAuth(t *testing.T) {
 	t.Setenv("VANZIK_API_KEY", "")
 	_, err := ParseConfigWithOutput([]string{"--listen", "0.0.0.0:8081"}, &bytes.Buffer{})
@@ -135,10 +134,8 @@ func TestConfig_NonLoopbackBindRequiresProxyAuth(t *testing.T) {
 	}
 }
 
-// An empty host (":8081") makes net/http listen on every interface, so it
-// must be treated like 0.0.0.0: refused without --proxy-api-key. It used to
-// pass validation as "loopback" and start an unauthenticated proxy on all
-// interfaces.
+// An empty host (":8081") listens on every interface, so it is refused
+// without --proxy-api-key, like 0.0.0.0.
 func TestConfig_EmptyHostBindRequiresProxyAuth(t *testing.T) {
 	t.Setenv("VANZIK_API_KEY", "")
 	for _, l := range []string{":8081", "[::]:8081"} {
@@ -175,9 +172,6 @@ func TestConfig_LoopbackVariants(t *testing.T) {
 }
 
 func TestConfig_HelpDoesNotPanic(t *testing.T) {
-	// flag.ContinueOnError returns ErrHelp for --help; we just want
-	// to make sure ParseConfigWithOutput surfaces that without
-	// crashing.
 	t.Setenv("VANZIK_API_KEY", "")
 	var buf bytes.Buffer
 	_, err := ParseConfigWithOutput([]string{"--help"}, &buf)
@@ -210,9 +204,7 @@ func TestConfig_DirectValidate(t *testing.T) {
 	}
 }
 
-// Ensure the package compiles cleanly with no environment leakage.
 func TestConfig_OSEnvIsolation(t *testing.T) {
-	// Save and restore the env var to keep this test reentrant.
 	const env = "VANZIK_API_KEY"
 	prev, hadPrev := os.LookupEnv(env)
 	defer func() {

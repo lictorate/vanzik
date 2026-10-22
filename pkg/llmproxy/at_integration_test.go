@@ -1,22 +1,9 @@
 package llmproxy
 
-// at_integration_test.go — AT (Test Wrangler) audit-fixup verification.
-//
-// The audit-fixup workers' fixes touch interconnected code paths. AT
-// adds two cross-fix integration tests that exercise multiple closed
-// blockers together to confirm they compose correctly:
-//
-//   1. Streaming DENY path (B3/B4-adjacent) + transport-tagged audit
-//      — the central server records `transport: "llm_api_proxy"` AND
-//      the rule string is the gate's rule (NOT the streaming
-//      orchestrator's pre-F5 hardcoded `policy_unreachable`).
-//   2. Non-streaming DENY path (F9/B2) + transport-tagged audit —
-//      F9's gating + the same transport-tag plumbing agree.
-//
-// Both tests use a real HTTPPolicyClient against a mock central
-// recorder (see at_b2_e2e_test.go) so the /v1/check wire shape, the
-// transport meta tag, and the rule construction all flow through
-// production code.
+// Streaming and non-streaming DENY paths end to end: the client sees the
+// central server's rule, and /v1/check carries transport=llm_api_proxy.
+// A real HTTPPolicyClient talks to the mock central recorder from
+// at_b2_e2e_test.go.
 
 import (
 	"bytes"
@@ -30,19 +17,10 @@ import (
 	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
-// TestAT_FullStack_StreamingDenyPath_TransportTaggedAudit drives a
-// streaming OpenAI request through the full proxy → gate → mock
-// central. The model emits a tool_call; the central returns DENY
-// with a specific rule. The test asserts:
-//
-//  1. The client sees a synthetic refusal with the central's rule
-//     string (not a hardcoded streaming-side rule).
-//  2. The central recorder shows exactly one /v1/check request,
-//     tagged with `transport: "llm_api_proxy"`.
-//  3. The central recorder's recorded request uses the gate's
-//     build path (provider=openai, mapped_scope set).
+// TestAT_FullStack_StreamingDenyPath_TransportTaggedAudit: the refusal
+// carries the central's rule, and exactly one transport-tagged /v1/check
+// was made with provider and mapped_scope set.
 func TestAT_FullStack_StreamingDenyPath_TransportTaggedAudit(t *testing.T) {
-	// Upstream emits a streaming response with a complete tool_call.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
@@ -79,9 +57,7 @@ func TestAT_FullStack_StreamingDenyPath_TransportTaggedAudit(t *testing.T) {
 	got, _ := io.ReadAll(resp.Body)
 	gotStr := string(got)
 
-	// 1. Refusal must carry the gate's central-server rule, NOT the
-	//    streaming orchestrator's old hardcoded `policy_unreachable`
-	//    rule (pre-F5 bug shape that B4 closed).
+	// 1. The central server's rule, not a streaming-side constant.
 	if !strings.Contains(gotStr, "deny:shell:rm_rf_at_integration") {
 		t.Errorf("refusal missing central-server rule: %q", gotStr)
 	}
@@ -107,26 +83,20 @@ func TestAT_FullStack_StreamingDenyPath_TransportTaggedAudit(t *testing.T) {
 	}
 	ar := reqs[0]
 
-	// 3. Transport tag must be `llm_api_proxy` (not blank, not `sdk`,
-	//    not `mcp_gateway`). This is the dashboard-chip discriminator.
+	// 3. The dashboard tells transports apart by this tag.
 	if got := ar.Meta["transport"]; got != "llm_api_proxy" {
 		t.Errorf("transport meta tag = %q, want llm_api_proxy", got)
 	}
 	if got := ar.Meta["provider"]; got != "openai" {
 		t.Errorf("provider meta tag = %q, want openai", got)
 	}
-	// Streaming requests have `stream: "true"` in meta per
-	// buildLLMMeta — pin the meta-tag plumbing as well.
 	if got := ar.Meta["stream"]; got != "true" {
 		t.Errorf("stream meta tag = %q, want \"true\" (streaming path indicator)", got)
 	}
 }
 
 // TestAT_FullStack_NonStreamingDenyPath_TransportTaggedAudit is the
-// non-streaming twin of the above — verifies F9's non-streaming gating
-// path emits the same transport tag and rule-string contract as the
-// streaming path. Closes the integration of B2 (non-streaming gating)
-// + the transport-tag plumbing.
+// non-streaming twin: same transport tag and rule-string contract.
 func TestAT_FullStack_NonStreamingDenyPath_TransportTaggedAudit(t *testing.T) {
 	upstreamBody := makeOpenAIResponse(t, "gpt-4", []ChatCompletionToolCallEcho{
 		{
@@ -181,15 +151,10 @@ func TestAT_FullStack_NonStreamingDenyPath_TransportTaggedAudit(t *testing.T) {
 		t.Errorf("upstream tool_call args leaked into non-streaming refusal: %q", gotStr)
 	}
 
-	// Verify the refusal echoes the original model name (B2 invariant).
 	if refusal.Model != "gpt-4" {
 		t.Errorf("refusal model = %q, want gpt-4", refusal.Model)
 	}
 
-	// Central recorder must show one /v1/check call with the same
-	// transport tag as the streaming path. F9's non-streaming code
-	// path goes through the same HTTPPolicyClient.Check entry point
-	// → buildLLMMeta → identical transport tag.
 	if got := central.calls.Load(); got != 1 {
 		t.Errorf("central /v1/check calls = %d, want 1", got)
 	}
@@ -204,14 +169,11 @@ func TestAT_FullStack_NonStreamingDenyPath_TransportTaggedAudit(t *testing.T) {
 	if got := ar.Meta["provider"]; got != "openai" {
 		t.Errorf("provider meta tag = %q, want openai", got)
 	}
-	// Non-streaming has stream != "true". Pin so a future regression
-	// where someone forces stream:"true" everywhere is caught.
 	if got := ar.Meta["stream"]; got == "true" {
 		t.Errorf("stream meta tag = %q on non-streaming path; must NOT be \"true\"", got)
 	}
 
-	// Belt-and-braces: refusal body must NOT contain the streaming
-	// SSE marker `data:` — F9's non-streaming refusal is pure JSON.
+	// The non-streaming refusal is plain JSON, not SSE.
 	if bytes.Contains(got, []byte("\ndata:")) {
 		t.Errorf("non-streaming refusal contains SSE markers: %q", gotStr)
 	}

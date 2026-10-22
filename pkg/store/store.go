@@ -2,7 +2,7 @@
 // the "cold path" behind the in-memory fast path. pkg/persist owns the
 // write-behind bridge between the two.
 //
-// CONTRACT (see CLAUDE.md):
+// CONTRACT:
 //   - Implementations MUST NOT be called on the streaming proxy hot path. The
 //     in-memory maps in pkg/ratelimit, pkg/policy (Engine.sessionCosts) and
 //     pkg/proxy (ApprovalQueue) stay authoritative for /v1/check; a Store is
@@ -120,7 +120,7 @@ type ApprovalStore interface {
 
 // RateLimitStore persists token buckets so a restart does not reset every
 // limiter to full. Snapshot/restore only — the authoritative check stays in
-// pkg/ratelimit (CLAUDE.md rule #2: async syncs only for rate limits/costs).
+// pkg/ratelimit; rate limits and costs are only ever synced asynchronously.
 type RateLimitStore interface {
 	UpsertBuckets(ctx context.Context, buckets []BucketState) error
 	LoadBuckets(ctx context.Context) ([]BucketState, error)
@@ -139,15 +139,15 @@ type CostStore interface {
 }
 
 // AuditSink persists the audit trail. AppendAudit is batched write-behind fed
-// by the existing BufferedAsyncLogger workers; QueryAudit backs the
+// by the BufferedAsyncLogger workers; QueryAudit backs the
 // tenant-scoped /v1/audit read.
 type AuditSink interface {
 	AppendAudit(ctx context.Context, entries []audit.Entry) error
 	QueryAudit(ctx context.Context, tenantID string, filter audit.QueryFilter) ([]audit.Entry, error)
 }
 
-// Store is the composed, durable persistence abstraction. SQLiteStore (and a
-// future PostgresStore) satisfy it.
+// Store is the composed, durable persistence abstraction. SQLiteStore and
+// PostgresStore satisfy it.
 type Store interface {
 	ApprovalStore
 	RateLimitStore

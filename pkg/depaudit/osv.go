@@ -41,6 +41,7 @@ func osvEcosystem(e string) string {
 // vuln it returns already affects the queried version. We then surface whether
 // a fixed release exists, because the gate only fails when an upgrade resolves
 // the issue.
+//
 // The returned queried bool reports whether an authoritative answer was
 // actually obtained: it is true only on a successful HTTP 200 from OSV. It is
 // false for skipped inputs (constraints, pseudo-versions) AND for any network

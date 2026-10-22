@@ -1,29 +1,20 @@
 package store
 
-// Cold-start migration contract for the multi-node backend.
-//
-// The defect these tests pin: replicas that boot together each ran the schema
-// DDL in their own transaction with no mutual exclusion, so a losing node
-// failed its constructor and exited at boot.
-//
-// Two distinct failures, both reproduced here:
+// Cold-start migration contract for the multi-node backend: replicas that
+// boot together must all come up. Without mutual exclusion each runs the
+// schema DDL in its own transaction and a losing node fails its constructor
+// (see PostgresStore.Migrate):
 //
 //   - Empty database: `CREATE TABLE IF NOT EXISTS` is not atomic against a
 //     concurrent creator, so nodes collide on the pg_type unique index
 //     (SQLSTATE 23505). Measured on 5 of 6 three-replica cold starts.
-//   - Existing schema: the `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`
-//     statements still take ACCESS EXCLUSIVE locks even when the columns are
-//     already there, so concurrent migrations deadlock (SQLSTATE 40P01) —
-//     6 of 8 replicas in the test below. This makes it a rolling-restart
-//     defect too, not only a first-deploy one.
+//   - Existing schema: `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` takes
+//     ACCESS EXCLUSIVE locks even when the column is there, so concurrent
+//     migrations deadlock (SQLSTATE 40P01).
 //
-// A single node was never affected either way, which is what identifies this
-// as a race rather than a schema fault.
-//
-// The pre-existing TestPostgresStore_MigrateIdempotent could not catch this:
-// it re-migrates SEQUENTIALLY on an already-created schema, so no two
-// statements ever contend. These tests boot N stores simultaneously from a
-// dropped schema, which is the state a fresh deployment is actually in.
+// TestPostgresStore_MigrateIdempotent re-migrates SEQUENTIALLY, so no two
+// statements contend; these tests boot N stores simultaneously from a dropped
+// schema, the state a fresh deployment is in.
 
 import (
 	"context"
@@ -132,9 +123,9 @@ func bootConcurrently(dsn string, n int) []error {
 
 // TestPostgresStore_ConcurrentColdStart is the regression test for the cold-
 // start race: every replica booting at once against an empty database must
-// come up. Repeated rounds because a single round can get lucky — the observed
-// pre-fix failure rate was ~83% per round, so three rounds detect it with
-// better than 99% probability.
+// come up. Repeated rounds because a single round can get lucky — without the
+// migration lock ~83% of rounds failed, so three rounds detect it with better
+// than 99% probability.
 func TestPostgresStore_ConcurrentColdStart(t *testing.T) {
 	dsn := pgDSNOrSkip(t)
 	const (
@@ -159,18 +150,12 @@ func TestPostgresStore_ConcurrentColdStart(t *testing.T) {
 	}
 }
 
-// TestPostgresStore_ConcurrentMigrateOnExistingSchema covers the steady-state
-// case: replicas restarting together against a schema that already exists —
-// i.e. every rolling restart, not just the first deploy.
-//
-// This was expected to be the harmless counterweight, on the reasoning that
-// every statement is IF NOT EXISTS and so has nothing to do. It is not:
-// without the advisory lock 6 of 8 replicas here fail with SQLSTATE 40P01.
-// The `ALTER TABLE approvals ADD COLUMN IF NOT EXISTS` statements still take
-// an ACCESS EXCLUSIVE lock on the table even when the column is already
-// present, so concurrent migration transactions deadlock against each other
-// on an untouched schema. That makes the defect a restart problem, not only a
-// cold-start one. It also pins that the fix serialises rather than stalls: the
+// TestPostgresStore_ConcurrentMigrateOnExistingSchema covers replicas
+// restarting together against a schema that already exists (a rolling
+// restart). Though every statement is IF NOT EXISTS, without the advisory
+// lock 6 of 8 replicas here failed with SQLSTATE 40P01: `ALTER TABLE ... ADD
+// COLUMN IF NOT EXISTS` takes ACCESS EXCLUSIVE even when the column is
+// present. It also pins that the lock serialises rather than stalls: the
 // whole batch must finish inside migrateTimeout.
 func TestPostgresStore_ConcurrentMigrateOnExistingSchema(t *testing.T) {
 	dsn := pgDSNOrSkip(t)

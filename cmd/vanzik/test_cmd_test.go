@@ -184,8 +184,8 @@ tests:
 }
 
 // TestTest_TenantChecksThePolicyAsThatTenant: `tenant:` runs the policy as
-// that tenant. It used to find no policy for any tenant but local, so every
-// case got deny:tenant:not_found and DENY expectations passed untested.
+// that tenant. Finding no policy for any tenant but local would give every
+// case deny:tenant:not_found, so DENY expectations would pass untested.
 func TestTest_TenantChecksThePolicyAsThatTenant(t *testing.T) {
 	dir := fixtureDir(t, map[string]string{"tenant_test.yaml": `policy: policy.yaml
 tenant: acme

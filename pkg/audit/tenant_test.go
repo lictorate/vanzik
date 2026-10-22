@@ -1,8 +1,8 @@
 package audit
 
-// Tests for the v0.6 tenant_id addition to the audit schema: the
-// EffectiveTenant() default, byte-identity of single-tenant ("local")
-// output, and tenant-scoped Query filtering. See
+// Tests for the audit schema's tenant_id: the EffectiveTenant() default,
+// byte-identity of single-tenant ("local") output, and tenant-scoped Query
+// filtering.
 
 import (
 	"encoding/json"
@@ -34,7 +34,7 @@ func TestEffectiveTenant(t *testing.T) {
 
 // TestLocalTenantByteIdentity asserts that an entry for the default tenant
 // (TenantID == "") serializes WITHOUT a tenant_id key — the property that keeps
-// single-tenant audit files byte-identical to pre-v0.6 output — while a
+// single-tenant audit files byte-identical to files without tenant_id — while a
 // non-local tenant serializes the field verbatim.
 func TestLocalTenantByteIdentity(t *testing.T) {
 	local, err := json.Marshal(Entry{AgentID: "bot", SessionID: "s1"})

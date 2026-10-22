@@ -85,10 +85,9 @@ class TestLangChainAdapter:
 # ---------------------------------------------------------------------------
 
 class TestCrewAIAdapter:
-    """Smoke tests for the CrewAI adapter. The full hardening test
-    suite — including modern API gating (invoke/ainvoke/__call__),
-    strict allowlist enforcement, and real-CrewAI integration — lives
-    in tests/test_crewai.py. These tests are the legacy-API coupon.
+    """Smoke tests for the CrewAI adapter's legacy API. Modern API gating
+    (invoke/ainvoke/__call__) and real-CrewAI integration are in
+    tests/test_crewai.py.
     """
 
     def test_guarded_crew_tool_delegates(self, mock_server):
@@ -97,10 +96,8 @@ class TestCrewAIAdapter:
         MockVanzikHandler.check_response = {"decision": "ALLOW", "reason": "ok"}
         guard = Guard(mock_server)
 
-        # Use a real class (not MagicMock) because the v0.5 wrapper has
-        # a strict attribute allowlist; MagicMock auto-generates random
-        # attributes which would either pass or fail the allowlist
-        # nondeterministically.
+        # A real class, not MagicMock, so only the attributes defined here
+        # exist.
         class _Tool:
             name = "search"
             description = "search the web"

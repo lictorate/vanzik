@@ -20,7 +20,6 @@ and make API calls.
 from vanzik import Guard
 
 def main():
-    # Connect to Vanzik
     guard = Guard("http://localhost:8080", agent_id="quickstart-demo")
 
     print("=" * 60)
@@ -36,8 +35,8 @@ def main():
     print()
 
     # --- Test 2: Dangerous command (should be DENIED) ---
-    print("[2] Checking: rm -rf /")
-    result = guard.check("shell", command="rm -rf /")
+    print("[2] Checking: dd if=/dev/zero of=/dev/sda")
+    result = guard.check("shell", command="dd if=/dev/zero of=/dev/sda")
     print(f"    Decision: {result.decision}")
     print(f"    Reason:   {result.reason}")
     print()

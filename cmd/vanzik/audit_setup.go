@@ -3,9 +3,8 @@ package main
 // audit_setup.go assembles the audit trail for `vanzik server`:
 // backend selection (JSONL file vs durable store), startup migrations,
 // rotation, and the async buffering that keeps audit I/O off the
-// /v1/check hot path. Extracted from runServe so the construction rules
-// and the shutdown ordering are testable instead of living as a tangle
-// of branches and LIFO defers in main.
+// /v1/check hot path. Kept out of runServe so the construction rules and
+// the shutdown ordering are testable.
 
 import (
 	"context"
@@ -45,7 +44,7 @@ func (p *auditPipeline) Close() {
 // buildAuditPipeline constructs the audit trail per the serve flags.
 // st must be non-nil when storeAudit is true.
 //
-// Contract rule #1 (Latency is God): a store-backed audit logger writes
+// Latency: a store-backed audit logger writes
 // to SQLite, which must never happen synchronously on the /v1/check
 // path — so the store backend forces async buffering even if the
 // operator passed --audit-buffered=false (fine for the cheap file

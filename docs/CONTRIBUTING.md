@@ -6,7 +6,7 @@ Thanks for your interest in making AI agents safer. Here's how to get involved.
 
 ```bash
 git clone https://github.com/lictorate/vanzik.git
-cd Vanzik
+cd vanzik
 go build ./...
 go test -race ./...
 ```
@@ -49,7 +49,7 @@ docs/                        Documentation
 
 ## Releasing a New Version
 
-The version string appears in 15 files. Use the bump script before tagging — never edit them by hand.
+The version string appears in 16 files (15 `bump-version.sh` targets + `package-lock.json`), as the table lists. Use the bump script before tagging — never edit them by hand.
 
 ```bash
 ./scripts/bump-version.sh 1.2.0     # whatever the new version is
@@ -60,8 +60,8 @@ This updates:
 | File | Field |
 |------|-------|
 | `cmd/vanzik/main.go` | `version = "..."` |
-| `cmd/vanzik-mcp-gateway/main.go` | `version = "..."` (v0.5+) |
-| `cmd/vanzik-llm-proxy/main.go` | `version = "..."` (v0.5+) |
+| `cmd/vanzik-mcp-gateway/main.go` | `version = "..."` |
+| `cmd/vanzik-llm-proxy/main.go` | `version = "..."` |
 | `plugins/python/pyproject.toml` | `version = "..."` under `[project]` |
 | `plugins/python/vanzik/__init__.py` | `__version__ = "..."` |
 | `plugins/python/vanzik/adapters/mcp.py` | `SDK_VERSION = "..."` |
@@ -97,7 +97,7 @@ git push && git push --tags
 
 Publishing also fires `release-assets.yml`, which builds the archives, installers and container image and attaches them to the release, about three minutes of work. Until it finishes, `…/releases/latest/download/install.sh` already points at the new release but returns 404. When it succeeds, `installer-smoke.yml` runs the published one-liners on Linux, macOS and Windows and the container image; check it is green before announcing the release.
 
-The publish workflows only trigger on `release: [published]` events or via manual `workflow_dispatch`. Pushing the tag alone does **not** trigger them. (This caught v0.5.1 — the tag was pushed but the release was never drafted, so PyPI stayed on v0.5.0 until the operator pressed Publish.)
+The publish workflows only trigger on `release: [published]` events or via manual `workflow_dispatch`. Pushing the tag alone does **not** trigger them: until the release is drafted and published, PyPI and npm keep the previous version.
 
 `publish-npm.yml` uses npm trusted publishing, so there's no npm token to store or rotate. On npmjs.com, `@lictorate/vanzik`'s trusted publisher names the repository `lictorate/vanzik` and the workflow file `publish-npm.yml`. If you rename the workflow file, update that setting too, or publishing fails. The workflow refuses to publish when the release tag doesn't match `plugins/typescript/package.json`'s version, and skips a version that's already on npm. Each version carries provenance that links it to the workflow run.
 
@@ -130,11 +130,11 @@ This runs, in order:
 | Suite | What it does |
 |-------|--------------|
 | `go` | `go test -race -coverprofile=coverage.out ./...` |
-| `policy` | builds the binary, runs `vanzik validate --strict` on every YAML in `configs/` and `configs/examples/` |
-| `python` | `pip install -e ".[dev]"` + `pytest -v --cov=vanzik` in `plugins/python` |
+| `policy` | builds the binary, runs `vanzik validate --strict` on `configs/default.yaml` and every YAML in `configs/examples/` (the agent blocks in `configs/` load only inside a policy), then `vanzik test configs/tests`; any invalid file or failing case fails the suite |
+| `python` | `pip install -e ".[dev,langchain,crewai,mcp,openai-agents]"` (the extras CI installs) + `pytest -v --cov=vanzik` in `plugins/python` |
 | `ts` | `npm install` + `npm run build` + `npm test` in `plugins/typescript` |
 
-The script does **not** stop on the first failure — every suite runs so you see the full picture in one go. Suites whose toolchain is missing (no `python`, no `npm`) are reported as `SKIP` rather than `FAIL`, so Go-only contributors aren't penalised on a partial setup. Final exit code is the number of failed suites (0 if all passed).
+The script does **not** stop on the first failure — every suite runs so you see the full picture in one go. Suites whose toolchain is missing (no `python`, no `npm`) are reported as `SKIP` rather than `FAIL`, so Go-only contributors aren't penalised on a partial setup. The script exits 0 if no suite failed and 1 if any suite failed.
 
 Useful flags:
 

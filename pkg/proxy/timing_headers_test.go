@@ -51,10 +51,10 @@ func parseMsHeader(t *testing.T, h http.Header, name string) float64 {
 // vanzik_request_duration_ms SLO histogram, which is fed the same value) is
 // the END-TO-END /v1/check processing time, including the audit write.
 //
-// Regression guard: a previous version computed Total from a timestamp captured
-// BEFORE the audit write, so a slow audit backend was silently dropped from the
-// reported latency (Total ≈ policy, well under Audit). With a deliberately slow
-// audit logger, Total must now be >= Audit.
+// Regression guard: Total must be measured after the audit write, or a slow
+// audit backend is silently dropped from the reported latency (Total ≈
+// policy, well under Audit). With a deliberately slow audit logger, Total
+// must be >= Audit.
 func TestHandleCheck_TimingHeaders_TotalIncludesAudit(t *testing.T) {
 	const auditDelay = 25 * time.Millisecond
 	slow := &slowAuditLogger{delay: auditDelay}

@@ -1,6 +1,6 @@
 package proxy
 
-// Restart contract for the decision counters (review finding R3).
+// Restart contract for the decision counters.
 //
 // "Stats survive restarts" means: after a restart the counters equal what a
 // never-restarted process would show — every entry ever written, once. The

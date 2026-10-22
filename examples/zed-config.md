@@ -37,7 +37,7 @@ verbatim only if `settings.json` is empty. Otherwise, merge the
       "args": [
         "--upstream", "fs:npx -y @modelcontextprotocol/server-filesystem /tmp",
         "--guard-url", "http://127.0.0.1:8080",
-        "--policy", "/etc/vanzik/policy.yaml",
+        "--policy", "/etc/vanzik/default.yaml",
         "--tenant-id", "local",
         "--policy-mode", "strict"
       ],
@@ -60,33 +60,19 @@ Zed (Assistant) ──stdio──► vanzik-mcp-gateway ──► fs / fetch / g
 
 ## Setup
 
-The example config starts three downstream MCP servers, each with its own
-launcher:
+Install the launchers (`npx`, `uvx`, `docker`) for the upstreams you keep;
+see [Downstream servers](README.md#downstream-servers).
 
-| Upstream | Launcher | Install |
-|---|---|---|
-| `fs` — filesystem server | `npx` | [Node.js](https://nodejs.org/) 20+ |
-| `fetch` — fetch server | `uvx` | [uv](https://docs.astral.sh/uv/getting-started/installation/) |
-| `github` — [GitHub's MCP server](https://github.com/github/github-mcp-server) | `docker` | [Docker](https://docs.docker.com/get-started/get-docker/) |
-
-Install the launchers for the upstreams you keep and delete the
-`--upstream` entries you don't need. A missing launcher disables only
-that namespace: the gateway logs
-`info mcpgw: startup: upstream "fetch" failed to spawn: …` and serves the
-others. The GitHub server reads `GITHUB_PERSONAL_ACCESS_TOKEN` from the
-config's `env` block; the gateway passes its environment to every
-upstream, and `docker run -e GITHUB_PERSONAL_ACCESS_TOKEN` forwards it
-into the container.
-
-1. **Install binaries** (Go 1.25+):
+1. **Install binaries** (Go 1.26+):
 
    ```bash
    go install lictorate.com/vanzik/v2/cmd/vanzik@latest
    go install lictorate.com/vanzik/v2/cmd/vanzik-mcp-gateway@latest
    ```
 
-2. **Pick a policy** and update `--policy`. `configs/default.yaml` ships
-   with this repo.
+2. **Pick a policy.** The config points `--policy` at
+   `/etc/vanzik/default.yaml`; for a user install or a `go install`
+   setup, see [Policy file](README.md#policy-file).
 
 3. **Export the API key** before launching Zed:
 
@@ -94,7 +80,7 @@ into the container.
    export VANZIK_API_KEY="$(openssl rand -hex 32)"
    ```
 
-   On macOS, Zed launched from Finder/Spotlight does not inherit your
+   On macOS, Zed launched from Finder/Spotlight may not inherit your
    shell rc files. Either launch from a terminal (`zed .`) or set the
    variable as a launchd / GUI environment variable, then mirror it into
    the `env` block above.
@@ -102,7 +88,7 @@ into the container.
 4. **Start the central Vanzik server:**
 
    ```bash
-   vanzik server --policy /etc/vanzik/policy.yaml --dashboard --watch --api-key "$VANZIK_API_KEY"
+   vanzik server --policy /etc/vanzik/default.yaml --dashboard --watch --api-key "$VANZIK_API_KEY"
    ```
 
 5. **Save settings.json.** Zed reloads it live; the Assistant should
@@ -118,24 +104,15 @@ In Zed's Assistant panel:
 
 ## API key handling
 
-Do **not** pass `--api-key "$VANZIK_API_KEY"` as an `args` entry.
-Zed does **not** shell-expand `$VAR` references inside JSON `args` —
-the gateway would receive the literal string `$VANZIK_API_KEY`
-and authentication would fail. Instead, use the `env` block above to
-inject the key as an environment variable; the gateway picks up
-`VANZIK_API_KEY` automatically when the `--api-key` flag is
-absent.
+Zed does not shell-expand `$VAR` inside JSON `args` and has no
+`${env:VAR}` syntax (unlike Cursor), so the context server's `env` block
+is the only way to feed the key to the gateway; omit `--api-key`. See
+[API key handling](README.md#api-key-handling).
 
 ## Tenant ID
 
-`--tenant-id` picks the tenant whose policy evaluates the gateway's
-calls (they go to `/v1/t/<tenant>/check`). Keep `local` — the policy
-the server loads with `--policy` — unless you've registered another
-tenant on the central server with
-`vanzik tenant put <id> --policy <file.yaml>`. A tenant the server
-doesn't know answers `404`, which the gateway
-treats like an unreachable server: `--fail-mode` decides, so with `deny`
-every call is refused.
+Keep `--tenant-id local` unless you've registered another tenant; see
+[Tenant ID](README.md#tenant-id).
 
 ## Notes
 
@@ -144,7 +121,5 @@ every call is refused.
   remote server, give the gateway `--upstream-http "<ns>:<url>"` instead
   of pointing Zed at the URL (see
   [`MCP_GATEWAY.md` § 8.5](../docs/MCP_GATEWAY.md#85-streamable-http-upstreams)).
-- Zed does not support an `${env:VAR}` interpolation syntax (unlike
-  Cursor); the `env` block on a context-server entry is the only way to
-  feed secrets to the subprocess. Don't paste raw keys — wire them in
-  from your shell's environment via a small launcher script.
+- To keep raw keys out of `settings.json`, have a small launcher script
+  export them from your shell's environment.

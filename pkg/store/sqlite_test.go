@@ -270,7 +270,7 @@ func TestSQLiteStore_PersistenceAcrossReopen(t *testing.T) {
 	}
 }
 
-// --- file permissions: audit 2026-06 finding M2 ---
+// --- file permissions ---
 
 // requireMode fails the test unless path exists with exactly mode 0600.
 func requireMode0600(t *testing.T, path string) {
@@ -318,8 +318,7 @@ func TestSQLiteStore_TightensPreexistingLooseModes(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "legacy.db")
 
-	// Simulate a database (plus stale sidecars) created by a pre-fix version
-	// under the default umask.
+	// A database (plus stale sidecars) created under the default umask.
 	for _, p := range []string{path, path + "-wal", path + "-shm"} {
 		if err := os.WriteFile(p, nil, 0o644); err != nil {
 			t.Fatalf("seed %s: %v", p, err)

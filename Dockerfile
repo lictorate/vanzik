@@ -1,5 +1,5 @@
 # Build stage
-# Must stay >= the `toolchain` directive in go.mod (go1.26.9), which carries the
+# Must stay >= the `toolchain` directive in go.mod (go1.26.10), which carries the
 # stdlib fixes govulncheck gates on — see that file for the advisory list. A
 # builder older than the toolchain directive still works (Go downloads the
 # pinned toolchain) but silently adds a download to every image build, so keep
@@ -8,8 +8,8 @@
 # The builder runs on the build host's own platform and cross-compiles for the
 # target (TARGETOS/TARGETARCH, set by BuildKit for each `--platform`). Every
 # dependency is pure Go, so CGO stays off and a multi-arch image needs no CPU
-# emulation. A plain `docker build` targets the host, as before.
-FROM --platform=$BUILDPLATFORM golang:1.26.9-alpine AS builder
+# emulation. A plain `docker build` targets the host.
+FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine AS builder
 
 WORKDIR /app
 COPY go.mod go.sum* ./
@@ -63,8 +63,8 @@ EXPOSE 8080
 # Liveness for orchestrators. /health is unauthenticated by design and the
 # server binds 127.0.0.1 unless --api-key is set, so the probe runs from inside
 # the container against loopback. NOTE: this reports "process is serving", not
-# "state hydration succeeded" — a boot where hydration failed still answers 200
-# (audit B9). Use it for restarts, not as an enforcement-readiness signal.
+# "state hydration succeeded" — a boot where hydration failed still answers
+# 200. Use it for restarts, not as an enforcement-readiness signal.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD wget -q --spider http://127.0.0.1:8080/health || exit 1
 

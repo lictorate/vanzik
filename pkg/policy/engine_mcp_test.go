@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// Tests for the `mcp_tool` scope and `tool_scope_map` accessor, added
-// in v0.5 to back the MCP Gateway's dual-check pattern. The engine
+// Tests for the `mcp_tool` scope and `tool_scope_map` accessor, which
+// back the MCP Gateway's dual-check pattern. The engine
 // treats `mcp_tool` as a generic scope (same dispatch path as `data`):
 // standard Pattern, Action, and Domain matching apply with no
 // scope-specific custom logic. The tool_scope_map is consulted by the

@@ -9,15 +9,10 @@ import (
 	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
-// TestEntry_UnmarshalPreV05_DefaultsTransport asserts that an audit
-// line written by a pre-v0.5 binary (no `transport` field on the
-// wire) decodes cleanly and reads back as the SDK default via
-// EffectiveTransport. This is the primary back-compat coupon: a
-// long-running deployment upgrades from v0.4.1 to v0.5 and keeps
-// reading entries from before the transport tag landed.
+// TestEntry_UnmarshalPreV05_DefaultsTransport: an audit line with no
+// `transport` field decodes cleanly and reads back as the SDK default via
+// EffectiveTransport, so existing logs stay readable.
 func TestEntry_UnmarshalPreV05_DefaultsTransport(t *testing.T) {
-	// Hand-rolled JSON without the `transport` field — exactly what a
-	// v0.4.1 FileLogger.Log() would have written.
 	wire := `{
 		"timestamp": "2026-05-04T12:00:00Z",
 		"session_id": "sess-1",
@@ -77,11 +72,9 @@ func TestEntry_UnmarshalV05_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestEntry_TransportOmitempty asserts that an Entry with Transport
-// unset marshals WITHOUT the `transport` JSON key. This keeps the
-// wire identical to v0.4.x for SDK callers that didn't set the
-// field, so any external consumer parsing the audit log strictly
-// sees no schema drift.
+// TestEntry_TransportOmitempty: an Entry with Transport unset marshals
+// WITHOUT the `transport` key, so strict external parsers of the audit log
+// see no schema drift for SDK callers.
 func TestEntry_TransportOmitempty(t *testing.T) {
 	e := Entry{
 		Timestamp: time.Date(2026, 5, 5, 10, 0, 0, 0, time.UTC),
@@ -124,11 +117,8 @@ func TestEntry_EffectiveTransport_ExplicitValuesPassThrough(t *testing.T) {
 	}
 }
 
-// TestQueryFilter_TransportFiltersEffective asserts that a
-// QueryFilter with Transport set excludes entries whose
-// EffectiveTransport doesn't match. Specifically, a filter for
-// "sdk" SHOULD include pre-v0.5 entries (Transport="" on disk)
-// because EffectiveTransport defaults them to "sdk".
+// TestQueryFilter_TransportFiltersEffective: a Transport filter compares
+// EffectiveTransport, so "sdk" includes entries with Transport="" on disk.
 func TestQueryFilter_TransportFiltersEffective(t *testing.T) {
 	preV05 := Entry{Request: policy.ActionRequest{Scope: "shell"}}                               // Transport=""
 	sdkExplicit := Entry{Transport: TransportSDK, Request: policy.ActionRequest{Scope: "shell"}} // Transport="sdk"

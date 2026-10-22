@@ -23,7 +23,7 @@ func indexEntry(i int, session, parent string) audit.Entry {
 	}
 }
 
-// Every audit and session query works before the v1.4 indexes exist, and
+// Every audit and session query works before the session indexes exist, and
 // Migrate builds them on a table that already holds rows, saying so.
 func TestSQLiteStore_AuditIndexesBuiltAfterRowsExist(t *testing.T) {
 	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "vanzik.db"))
@@ -141,9 +141,8 @@ func TestPgIndexName_CoversEverySchemaIndex(t *testing.T) {
 
 // Migrate on an existing schema must not wait behind another replica's
 // background CREATE INDEX CONCURRENTLY, which itself waits for every older
-// transaction. Before, Migrate's CREATE INDEX IF NOT EXISTS statements
-// locked audit_entries before finding the index there, so a boot could time
-// out behind any long reader.
+// transaction: a CREATE INDEX IF NOT EXISTS locks audit_entries before
+// finding the index there, so a boot could time out behind any long reader.
 func TestPostgresStore_MigrateDoesNotWaitBehindIndexBuild(t *testing.T) {
 	s := newTestPGStore(t)
 	ctx := context.Background()

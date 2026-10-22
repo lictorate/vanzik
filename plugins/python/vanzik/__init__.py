@@ -16,24 +16,19 @@ Usage:
     else:
         print(f"Blocked: {result.reason}")
 
-Layout: the :class:`Guard` client, :class:`CheckResult`, exceptions and
-constants live in :mod:`vanzik.core`; the ``@guarded`` decorator in
-:mod:`vanzik.decorators`; framework integrations in
-:mod:`vanzik.adapters`. Everything public is re-exported here —
-import from the package root.
+The client, results, exceptions and constants live in :mod:`vanzik.core`,
+``@guarded`` in :mod:`vanzik.decorators`, framework integrations in
+:mod:`vanzik.adapters`. Import public names from the package root.
 """
 
 # The SDK's release version; scripts/bump-version.sh keeps it in step with
 # pyproject.toml.
 __version__ = "2.0.0"
 
-# Back-compat module aliases. The pre-split __init__ imported these
-# stdlib modules directly, which made e.g. ``vanzik.request`` and
-# ``vanzik.time`` valid mock.patch targets ("vanzik.request.
-# urlopen", "vanzik.time.sleep", ...). Patching through these names
-# mutates the shared stdlib module, so it intercepts vanzik.core's
-# calls exactly as it did before the split. Do not remove without a
-# deprecation cycle.
+# Back-compat module aliases: they keep ``vanzik.request.urlopen``,
+# ``vanzik.time.sleep``, ... valid mock.patch targets. Patching through
+# them mutates the shared stdlib module, so it intercepts vanzik.core's
+# calls. Do not remove without a deprecation cycle.
 import functools  # noqa: F401
 import json  # noqa: F401
 import logging  # noqa: F401

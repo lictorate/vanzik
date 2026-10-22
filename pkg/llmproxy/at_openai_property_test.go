@@ -1,12 +1,6 @@
 package llmproxy
 
-// at_openai_property_test.go is the AT-added property-based test for the
-// OpenAI streaming tool_call accumulator. The combinatorial space of
-// (random JSON-encoded arguments string × random splitting across N SSE
-// deltas) is too large for hand-rolled cases — testing/quick (stdlib)
-// generates random inputs and asserts the parser's invariants.
-//
-// Properties verified (per the v0.5 plan AT brief):
+// Property tests (testing/quick) for the OpenAI tool_call accumulator:
 //   1. Args reassembly: for any random JSON arguments and any random
 //      splitting across N deltas, concat(deltas) == accumulator.Arguments.
 //   2. Multi-tool: random N tools (1-5), each with random args, random
@@ -36,43 +30,32 @@ var quickConfig = &quick.Config{MaxCount: 200}
 // must reassemble the exact original byte sequence.
 func TestAT_OpenAIParser_AssemblesArgsAcrossArbitraryChunkBoundaries(t *testing.T) {
 	property := func(seed int64, rawJSON string, splitCount uint8) bool {
-		// Reject inputs the test generator cannot meaningfully exercise.
-		// We need a non-empty JSON-shaped string and a finite split count.
 		if rawJSON == "" || splitCount == 0 {
 			return true // no-op
 		}
-		// Bound size so a single property run doesn't allocate megabytes.
 		if len(rawJSON) > 4096 {
 			rawJSON = rawJSON[:4096]
 		}
-		// Bound splits to a sane multiple of len.
 		nSplits := int(splitCount) % 32
 		if nSplits == 0 {
 			nSplits = 1
 		}
 
-		// Use the seed for a deterministic local RNG so failures are
-		// reproducible; testing/quick passes the seed via the input.
+		// Seeded from the input so failures reproduce.
 		r := rand.New(rand.NewSource(seed))
 
-		// Wrap rawJSON as the JSON-encoded value of a "cmd" arg so the
-		// resulting tool_call arguments are well-formed for the
-		// post-stream parse step. We feed the parser raw fragments of
-		// the JSON ENCODING (a string), not of the final structure.
+		// Fragments are of the JSON encoding of {"cmd": rawJSON}.
 		encoded, _ := json.Marshal(map[string]string{"cmd": rawJSON})
 		argsString := string(encoded)
 
 		fragments := splitIntoFragments(argsString, nSplits, r)
 
-		// Audit B3: with ~30% probability, bundle the FINAL args fragment
-		// into the same SSE event as finish_reason: "tool_calls". Real
-		// OpenAI streams sometimes pack these together; the parser must
-		// still assemble the full arguments. Without this branch in the
-		// generator, the property test misses the bundling regression.
+		// ~30% of runs put the final fragment and finish_reason in one
+		// event, as real OpenAI streams sometimes do; the parser must
+		// still assemble the full arguments.
 		bundleFinish := len(fragments) >= 2 && r.Intn(100) < 30
 
 		acc := NewOpenAIToolCallAccumulator(0)
-		// Start delta — establishes name + id + first (possibly empty) frag.
 		feed(acc, openAIStartDelta("call_prop", "bash", fragments[0]))
 
 		var res FeedResult
@@ -88,13 +71,10 @@ func TestAT_OpenAIParser_AssemblesArgsAcrossArbitraryChunkBoundaries(t *testing.
 			for _, frag := range fragments[1:] {
 				feed(acc, openAIArgDelta(frag))
 			}
-			// Close cycle.
 			res, err = acc.FeedEvent([]byte(openAIFinishDelta()))
 		}
-		// JSON unmarshal of args may fail when rawJSON contains quote
-		// chars that break the wrapper — accept that case (we still
-		// preserve RawArguments byte-for-byte; property holds against
-		// RawArguments below).
+		// A parse error is acceptable; the property is checked on
+		// RawArguments.
 		_ = err
 		if !res.Completed || len(res.CompletedToolCalls) != 1 {
 			t.Logf("seed=%d nSplits=%d bundleFinish=%v: completion missing; res=%+v", seed, nSplits, bundleFinish, res)
@@ -121,14 +101,11 @@ func TestAT_OpenAIParser_MultiToolReassemblyByIndex(t *testing.T) {
 		nTools := int(n)%5 + 1
 		r := rand.New(rand.NewSource(seed))
 
-		// Build N tool_calls with random args (small JSON objects).
 		args := make([]string, nTools)
 		for i := range args {
 			args[i] = fmt.Sprintf(`{"i":%d,"r":%d}`, i, r.Intn(100000))
 		}
 
-		// Generate fragments for each tool, then interleave them
-		// randomly. Each fragment carries its tool's index.
 		type frag struct {
 			toolIdx int
 			text    string
@@ -139,7 +116,6 @@ func TestAT_OpenAIParser_MultiToolReassemblyByIndex(t *testing.T) {
 		var allFrags []frag
 		for ti := 0; ti < nTools; ti++ {
 			pieces := splitIntoFragments(args[ti], 1+r.Intn(4), r)
-			// First fragment is the start delta with name+id.
 			allFrags = append(allFrags, frag{
 				toolIdx: ti, text: pieces[0], isStart: true,
 				name: fmt.Sprintf("tool_%d", ti),
@@ -150,9 +126,8 @@ func TestAT_OpenAIParser_MultiToolReassemblyByIndex(t *testing.T) {
 			}
 		}
 
-		// Stable-sort partial: each tool's fragments must stay in
-		// order, but different tools' fragments can interleave. We
-		// achieve this by random selection from the heads of N queues.
+		// Interleave tools while keeping each tool's fragments in
+		// order: pick randomly among the heads of N queues.
 		queues := make([][]frag, nTools)
 		for _, f := range allFrags {
 			queues[f.toolIdx] = append(queues[f.toolIdx], f)
@@ -220,10 +195,9 @@ func TestAT_OpenAIParser_MultiToolReassemblyByIndex(t *testing.T) {
 	}
 }
 
-// TestAT_OpenAIParser_OverflowFiresAtCorrectThreshold pins the
-// overflow semantic: with MaxBufferBytes=N, overflow fires once
-// cumulative arguments bytes (or buffered envelope bytes) exceed N.
-// Below the threshold no overflow; above, it must trip.
+// TestAT_OpenAIParser_OverflowFiresAtCorrectThreshold: with
+// MaxBufferBytes=N, overflow fires exactly when cumulative argument
+// bytes or buffered envelope bytes exceed N.
 func TestAT_OpenAIParser_OverflowFiresAtCorrectThreshold(t *testing.T) {
 	property := func(capN uint16, argSize uint16) bool {
 		cap := int(capN)%2048 + 64 // [64..2111]
@@ -233,7 +207,6 @@ func TestAT_OpenAIParser_OverflowFiresAtCorrectThreshold(t *testing.T) {
 		}
 		acc := NewOpenAIToolCallAccumulator(cap)
 
-		// First delta: start the cycle with name + empty args.
 		startEv := openAIStartDelta("call_x", "bash", "")
 		startRes, err := acc.FeedEvent([]byte(startEv))
 		if err != nil || (!startRes.Accumulating && !startRes.OverflowBufferBytes) {
@@ -241,21 +214,16 @@ func TestAT_OpenAIParser_OverflowFiresAtCorrectThreshold(t *testing.T) {
 			return false
 		}
 		if startRes.OverflowBufferBytes {
-			// The start envelope itself blew the cap — sanity: it has
-			// to have been > cap bytes. If size==0 the envelope is
-			// small, but the parser counts bufferedBytes too.
+			// The start envelope alone exceeded the cap.
 			return true
 		}
-		// Then a single arg-only delta with `size` bytes of payload.
 		bigArg := strings.Repeat("a", size)
 		ev := openAIArgDelta(bigArg)
 		res, err := acc.FeedEvent([]byte(ev))
 		if err != nil {
 			return true // malformed JSON path is allowed
 		}
-		// The parser checks BOTH cumulative args bytes AND buffered
-		// envelope bytes. Both can trip overflow; the first one wins.
-		// We assert the outcome is consistent: overflow IFF
+		// Overflow iff either check trips:
 		//   (size > cap)                            // args check
 		//   OR (lenStartEnvelope + lenContEnvelope > cap) // buffer check
 		startEnvLen := len(startEv)
@@ -297,7 +265,6 @@ func TestAT_OpenAIParser_TextDeltasPassThroughUntilToolCall(t *testing.T) {
 				return false
 			}
 		}
-		// Now begin a tool_call; it must NOT be PassThrough.
 		startEv := openAIStartDelta("call_t", "bash", `{"cmd":"x"}`)
 		res, err := acc.FeedEvent([]byte(startEv))
 		if err != nil {
@@ -310,10 +277,8 @@ func TestAT_OpenAIParser_TextDeltasPassThroughUntilToolCall(t *testing.T) {
 	}
 }
 
-// TestAT_OpenAIParser_MalformedNeverPanics pins that random byte
-// injection into a delta-shape envelope returns an error (not a
-// panic). testing/quick generates random byte slices; we wrap each
-// in `data: ...\n\n` and feed it. The parser must remain alive.
+// TestAT_OpenAIParser_MalformedNeverPanics: random bytes framed as
+// `data: ...\n\n` never panic the parser.
 func TestAT_OpenAIParser_MalformedNeverPanics(t *testing.T) {
 	property := func(garbage []byte) (ok bool) {
 		defer func() {
@@ -323,11 +288,8 @@ func TestAT_OpenAIParser_MalformedNeverPanics(t *testing.T) {
 			}
 		}()
 		acc := NewOpenAIToolCallAccumulator(0)
-		// Wrap as `data: <bytes>\n\n` so the framing is at least valid.
 		ev := append([]byte("data: "), garbage...)
 		ev = append(ev, '\n', '\n')
-		// FeedEvent may return an error or a benign result; either is
-		// acceptable as long as it does not panic.
 		_, _ = acc.FeedEvent(ev)
 		return true
 	}
@@ -340,36 +302,28 @@ func TestAT_OpenAIParser_MalformedNeverPanics(t *testing.T) {
 // Helpers
 // ---------------------------------------------------------------------
 
-// splitIntoFragments splits s into n random pieces along rune
-// boundaries. Splitting on byte boundaries inside a multi-byte rune
-// produces invalid UTF-8 fragments which json.Marshal would replace
-// with U+FFFD, breaking the byte-identity property under test.
-// Real upstreams emit valid UTF-8 in each delta (the spec requires it
-// per RFC 8259); the parser is fed pre-encoded JSON regardless. The
-// rune-boundary constraint reflects what actually arrives on the wire.
+// splitIntoFragments splits s into n random pieces on rune boundaries:
+// json.Marshal would replace a split rune with U+FFFD, and real upstreams
+// send valid UTF-8 per delta.
 func splitIntoFragments(s string, n int, r *rand.Rand) []string {
 	if n <= 1 || len(s) == 0 {
 		return []string{s}
 	}
-	// Build a list of valid rune-boundary indices (0 and after each rune).
 	boundaries := make([]int, 0, len(s)+1)
 	for i := range s {
 		boundaries = append(boundaries, i)
 	}
 	boundaries = append(boundaries, len(s))
 	if n >= len(boundaries)-1 {
-		// One rune per fragment (cap at rune count).
 		out := make([]string, 0, len(boundaries)-1)
 		for i := 0; i < len(boundaries)-1; i++ {
 			out = append(out, s[boundaries[i]:boundaries[i+1]])
 		}
 		return out
 	}
-	// Pick n-1 random cut points (no duplicates) from interior boundaries.
 	used := map[int]bool{}
 	cuts := make([]int, 0, n-1)
 	for len(cuts) < n-1 {
-		// Interior indices are 1..len(boundaries)-2 (exclude 0 and end).
 		bi := 1 + r.Intn(len(boundaries)-2)
 		c := boundaries[bi]
 		if !used[c] {
@@ -377,7 +331,6 @@ func splitIntoFragments(s string, n int, r *rand.Rand) []string {
 			cuts = append(cuts, c)
 		}
 	}
-	// Sort cut points.
 	for i := 1; i < len(cuts); i++ {
 		for j := i; j > 0 && cuts[j-1] > cuts[j]; j-- {
 			cuts[j-1], cuts[j] = cuts[j], cuts[j-1]
@@ -411,11 +364,9 @@ func openAIFinishDelta() string {
 	return `data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n"
 }
 
-// openAIArgAndFinishDelta emits a single SSE event that carries BOTH
-// the closing args fragment AND finish_reason: "tool_calls". This is
-// the bundling case real OpenAI streams sometimes produce; pinning
-// audit blocker B3 (parser must apply delta BEFORE checking
-// finish_reason in the same envelope).
+// openAIArgAndFinishDelta emits one event carrying both the closing args
+// fragment and finish_reason "tool_calls"; the parser must apply the
+// delta before checking finish_reason.
 func openAIArgAndFinishDelta(argsFrag string) string {
 	return fmt.Sprintf(
 		`data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":%s}}]},"finish_reason":"tool_calls"}]}`+"\n\n",

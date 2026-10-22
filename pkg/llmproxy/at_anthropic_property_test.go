@@ -1,11 +1,6 @@
 package llmproxy
 
-// at_anthropic_property_test.go is the AT-added property-based test
-// for the Anthropic streaming tool_use accumulator. Same shape as
-// at_openai_property_test.go: testing/quick (stdlib) generates random
-// inputs and asserts parser invariants.
-//
-// Properties verified (per the v0.5 plan AT brief):
+// Property tests (testing/quick) for the Anthropic tool_use accumulator:
 //   1. partial_json reassembly: random JSON encoded as random
 //      partial_json fragments across N content_block_delta events;
 //      assembled string parses to original JSON.
@@ -27,10 +22,8 @@ import (
 	"testing/quick"
 )
 
-// TestAT_AnthropicParser_AssemblesPartialJSONAcrossArbitraryBoundaries
-// pins the central reassembly invariant for Anthropic: regardless of
-// how many partial_json fragments the upstream chooses to emit, the
-// parser reconstructs the exact original byte sequence.
+// TestAT_AnthropicParser_AssemblesPartialJSONAcrossArbitraryBoundaries:
+// any split into partial_json fragments reassembles the exact bytes.
 func TestAT_AnthropicParser_AssemblesPartialJSONAcrossArbitraryBoundaries(t *testing.T) {
 	property := func(seed int64, rawJSON string, splitCount uint8) bool {
 		if rawJSON == "" || splitCount == 0 {
@@ -45,16 +38,11 @@ func TestAT_AnthropicParser_AssemblesPartialJSONAcrossArbitraryBoundaries(t *tes
 		}
 		r := rand.New(rand.NewSource(seed))
 
-		// Wrap the random string as the value of a "cmd" arg so we
-		// always feed a JSON-shaped input to the parser. The parser
-		// concatenates partial_json fragments verbatim and parses at
-		// content_block_stop.
 		encoded, _ := json.Marshal(map[string]string{"cmd": rawJSON})
 		argsString := string(encoded)
 		fragments := splitIntoFragments(argsString, nSplits, r)
 
 		acc := NewAnthropicAccumulator(0)
-		// content_block_start: tool_use at index 0.
 		startEv := `event: content_block_start
 data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_prop","name":"bash","input":{}}}
 
@@ -97,13 +85,9 @@ data: {"type":"content_block_stop","index":0}
 	}
 }
 
-// TestAT_AnthropicParser_TextBlocksDoNotInterfereWithToolUse pins the
-// independence invariant: text blocks at indexes other than the
-// active tool_use's index do not corrupt the tool_use's accumulator.
-// Buffer-while-active is the spec'd ordering rule (text deltas to
-// other indexes get buffered alongside the tool_use to preserve
-// client-visible ordering); on ALLOW the buffered events flush
-// byte-identical, on DENY they are discarded with the tool_use.
+// TestAT_AnthropicParser_TextBlocksDoNotInterfereWithToolUse: text
+// deltas for other blocks are buffered with the active tool_use (to keep
+// order) without corrupting its arguments.
 func TestAT_AnthropicParser_TextBlocksDoNotInterfereWithToolUse(t *testing.T) {
 	property := func(seed int64, textChunks []string) bool {
 		r := rand.New(rand.NewSource(seed))
@@ -111,7 +95,6 @@ func TestAT_AnthropicParser_TextBlocksDoNotInterfereWithToolUse(t *testing.T) {
 		toolArgs := `{"cmd":"echo hi"}`
 
 		acc := NewAnthropicAccumulator(0)
-		// Tool_use at index 1 (so a text block at index 0 can precede it).
 		startTool := `event: content_block_start
 data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_x","name":"bash","input":{}}}
 
@@ -120,12 +103,8 @@ data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use"
 			return false
 		}
 
-		// Now interleave random text deltas at index 0 with tool_use
-		// partial_json fragments at index 1. All MUST be buffered
-		// (since a tool_use is active).
 		fragments := splitIntoFragments(toolArgs, 1+len(textChunks), rand.New(rand.NewSource(seed+1)))
 
-		// Walk fragments and textChunks side-by-side.
 		fi, ti := 0, 0
 		for fi < len(fragments) || ti < len(textChunks) {
 			pickFrag := false
@@ -135,7 +114,6 @@ data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use"
 			case ti >= len(textChunks):
 				pickFrag = true
 			default:
-				// Use a deterministic interleave based on (fi+ti)%2.
 				pickFrag = (fi+ti)%2 == 0
 			}
 			if pickFrag {
@@ -158,8 +136,6 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 `, mustJSON(textChunks[ti]),
 				)
 				res, _ := acc.FeedEvent([]byte(ev))
-				// While tool_use is active, text deltas at OTHER
-				// indexes must also buffer to preserve order.
 				if !res.Accumulating {
 					return false
 				}
@@ -183,9 +159,6 @@ data: {"type":"content_block_stop","index":1}
 	}
 }
 
-// TestAT_AnthropicParser_OverflowFiresAtCorrectThreshold pins the
-// overflow semantic for partial_json bytes (or buffered envelope
-// bytes) exceeding the cap.
 func TestAT_AnthropicParser_OverflowFiresAtCorrectThreshold(t *testing.T) {
 	property := func(capN uint16, argSize uint16) bool {
 		cap := int(capN)%2048 + 64
@@ -195,7 +168,6 @@ func TestAT_AnthropicParser_OverflowFiresAtCorrectThreshold(t *testing.T) {
 		}
 		acc := NewAnthropicAccumulator(cap)
 
-		// Start envelope.
 		startEv := `event: content_block_start
 data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_x","name":"bash","input":{}}}
 
@@ -205,7 +177,6 @@ data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use"
 			return false
 		}
 		if startRes.OverflowBufferBytes {
-			// Start envelope itself blew the cap — accept.
 			return true
 		}
 		bigArg := strings.Repeat("a", size)
@@ -234,11 +205,9 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta"
 	}
 }
 
-// TestAT_AnthropicParser_EventLineOptional pins that Anthropic events
-// arriving with or without an `event:` preamble line are both
-// recognised and dispatched on the JSON `type` field. Real upstreams
-// emit the preamble; some intermediaries strip it. testing/quick
-// generates random whitespace patterns to verify tolerance.
+// TestAT_AnthropicParser_EventLineOptional: events are dispatched on the
+// JSON `type` with or without an `event:` line, which some
+// intermediaries strip.
 func TestAT_AnthropicParser_EventLineOptional(t *testing.T) {
 	property := func(includeEventLine bool, indexN uint8) bool {
 		acc := NewAnthropicAccumulator(0)
@@ -275,8 +244,6 @@ data: {"type":"content_block_start","index":%d,"content_block":{"type":"tool_use
 	}
 }
 
-// TestAT_AnthropicParser_MalformedNeverPanics — random byte injection
-// returns an error or a benign result; never a panic.
 func TestAT_AnthropicParser_MalformedNeverPanics(t *testing.T) {
 	property := func(garbage []byte) (ok bool) {
 		defer func() {

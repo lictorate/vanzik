@@ -102,8 +102,7 @@ func TestDispatcher_DispatchTimeoutPerTargetOverride(t *testing.T) {
 }
 
 // TestDispatcher_DispatchTimeoutDefaultsWhenUnset: an empty DispatchTimeout
-// must fall back to policy.DefaultNotifyDispatchTimeout so removing the
-// config key restores v0.4.0 behavior exactly.
+// must fall back to policy.DefaultNotifyDispatchTimeout.
 func TestDispatcher_DispatchTimeoutDefaultsWhenUnset(t *testing.T) {
 	cfg := policy.NotificationCfg{
 		ApprovalRequired: []policy.NotifyTarget{{Type: "webhook", URL: "http://x"}},
@@ -533,8 +532,8 @@ func TestDispatcher_RedactsBeforeDelivery(t *testing.T) {
 }
 
 // TestDispatcher_RedactsPathInWebhookBody: secrets embedded in Request.Path
-// must be scrubbed before the event leaves the process as webhook JSON
-// (audit finding M4 — Redact previously skipped Path/Domain/Action).
+// must be scrubbed before the event leaves the process as webhook JSON (Redact
+// covers Path, Domain and Action, not only Command).
 func TestDispatcher_RedactsPathInWebhookBody(t *testing.T) {
 	const token = "ghp_abcdef1234567890abcdef1234567890abcd"
 
@@ -580,7 +579,7 @@ func TestDispatcher_RedactsPathInWebhookBody(t *testing.T) {
 
 // TestDispatcher_RedactsPathInSlackPayload: the Slack notifier uses
 // Request.Path as its display action when Command is empty, so a secret in
-// Path would otherwise land verbatim in the Slack message text (M4).
+// Path would otherwise land verbatim in the Slack message text.
 func TestDispatcher_RedactsPathInSlackPayload(t *testing.T) {
 	const token = "ghp_abcdef1234567890abcdef1234567890abcd"
 
@@ -671,14 +670,12 @@ func TestDispatcher_MultiAgentFanout(t *testing.T) {
 	}
 }
 
-// TestDispatcherCloseDoubleCall closes R3 #6: Close must be idempotent.
-// A second Close call used to panic on close-of-closed-channel; the
-// sync.Once guard makes repeat calls a no-op.
+// TestDispatcherCloseDoubleCall: Close must be idempotent; a second call must
+// not panic on close-of-closed-channel.
 //
-// Intentional overlap with TestDispatcher_DoubleCloseRandomized (notify_
-// property_test.go): this is the focused, deterministic pin tied to the R3 #6
-// regression (sequential double-close); the property test adds the concurrent
-// interleaving. Keep both — they fail for different reasons.
+// Intentional overlap with TestDispatcher_DoubleCloseRandomized: this is the
+// deterministic sequential double-close; the property test adds the
+// concurrent interleaving. Keep both — they fail for different reasons.
 func TestDispatcherCloseDoubleCall(t *testing.T) {
 	d := NewDispatcherWithOpts(policy.NotificationCfg{}, 1, 4)
 	d.Close()
@@ -691,7 +688,7 @@ func TestDispatcherCloseDoubleCall(t *testing.T) {
 	d.Close()
 }
 
-// TestDispatcherCloseCancelsInflight closes R3 #7: an in-flight webhook
+// TestDispatcherCloseCancelsInflight: an in-flight webhook
 // roundtrip must be cancelled when the dispatcher Closes, so graceful
 // shutdown is bounded by ctx-observation latency rather than the per-call
 // HTTP timeout. The test fixture is a webhook target that hangs for 10
@@ -699,8 +696,7 @@ func TestDispatcherCloseDoubleCall(t *testing.T) {
 // returns within ~250ms.
 func TestDispatcherCloseCancelsInflight(t *testing.T) {
 	// Slow server: blocks until the request context is cancelled OR 10s
-	// elapses. With the v0.4.x build (no context plumbing) Close would
-	// have to wait the full 10s; with the fix it returns immediately.
+	// elapses. Without context plumbing Close would wait the full 10s.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
@@ -851,15 +847,12 @@ func readSpooledIndices(t *testing.T, path string) []int {
 	return out
 }
 
-// TestDispatcher_CloseSpoolsQueueRemainderWithCorrectIndex covers H10 plus the
-// index plumbing that replaced its reverse lookup.
-//
-// Close must spool whatever is still queued (H10: an orderly SIGTERM used to
-// drop it silently, while the queue-FULL path spooled to disk — durable when
-// overflowing, lossy when shutting down cleanly). And each spooled record must
-// carry the index of the notifier the job was actually bound for, because
-// spooledJob persists an index, not a notifier: a wrong index replays the event
-// against the wrong target on the next boot.
+// TestDispatcher_CloseSpoolsQueueRemainderWithCorrectIndex: Close must spool
+// whatever is still queued, so an orderly SIGTERM is as durable as the
+// queue-FULL path. Each spooled record must carry the index of the notifier
+// the job was bound for, because spooledJob persists an index, not a
+// notifier: a wrong index replays the event against the wrong target on the
+// next boot.
 func TestDispatcher_CloseSpoolsQueueRemainderWithCorrectIndex(t *testing.T) {
 	spool := filepath.Join(t.TempDir(), "notify-spool.jsonl")
 
@@ -1042,22 +1035,12 @@ func TestDispatcher_SpoolCorruptLineSkippedRemainderDelivered(t *testing.T) {
 	}, "valid spooled event following a corrupt line to be delivered")
 }
 
-// TestDispatcher_SpoolScannerErrorRetainsFile is the H11 regression test.
-//
-// A CORRUPT LINE and a SCANNER ERROR are different branches, and only the first
-// was covered. A corrupt line is skipped and the scan continues (the test
-// above). A scanner error — bufio.ErrTooLong on an over-long line, or a
-// transient I/O failure — ABORTS the scan partway, leaving every event past the
-// failure point unread.
-//
-// The bug: `os.Remove(draining)` ran unconditionally after the scan, so those
-// unread events were deleted. And because the file had already been renamed
-// away from spoolPath, there was no second chance — the data was simply gone,
-// with one log line to show for it.
-//
-// The fix keeps the file for operator recovery. Deliberately NOT auto-retried:
-// a permanent scanner error (an over-long line is permanent) would livelock the
-// drain on the same file and starve newly spooled events forever.
+// TestDispatcher_SpoolScannerErrorRetainsFile: unlike a corrupt line (skipped,
+// the test above), a scanner error — bufio.ErrTooLong on an over-long line,
+// or a transient I/O failure — ABORTS the scan partway, leaving every event
+// past the failure point unread. The draining file, already renamed away
+// from spoolPath, must be kept for operator recovery rather than removed.
+// It is deliberately NOT auto-retried (see drainSpoolOnce).
 func TestDispatcher_SpoolScannerErrorRetainsFile(t *testing.T) {
 	dir := t.TempDir()
 	spool := filepath.Join(dir, "notify-spool.jsonl")

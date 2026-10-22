@@ -41,12 +41,12 @@ export interface CheckOptions {
    * Replay of a previously issued approval → request body `approval_id`.
    *
    * Set it on the re-check after {@link Vanzik.waitForApproval} resolved
-   * ALLOW, with the same scope and fields as the original request. That
-   * replay is what consumes the one-shot approval, enforces
-   * `--approval-validity`, reserves cost for cost-scoped actions, and audits
-   * the execution as `allow:approved`. Polling `/v1/status` is read-only and
-   * spends nothing. A refused replay (consumed or expired) comes back as a
-   * fresh REQUIRE_APPROVAL under a new id.
+   * ALLOW, with the same scope and fields as the original request. The
+   * replay, not the read-only `/v1/status` poll, consumes the one-shot
+   * approval, enforces `--approval-validity`, reserves cost for cost-scoped
+   * actions, and audits the execution as `allow:approved`. A refused replay
+   * (consumed or expired) comes back as a fresh REQUIRE_APPROVAL under a
+   * new id.
    */
   approvalId?: string;
 }
@@ -66,10 +66,7 @@ export interface CheckResult {
   readonly needsApproval: boolean;
 }
 
-/**
- * Wire-format of the /v1/check response as emitted by the Go server. Kept
- * internal: callers see the normalized `CheckResult` shape above.
- */
+/** Wire format of the /v1/check response; callers see `CheckResult`. */
 interface CheckResponseJSON {
   decision: "ALLOW" | "DENY" | "REQUIRE_APPROVAL";
   reason: string;
@@ -98,16 +95,11 @@ export interface VanzikOptions {
   /** Behavior when Vanzik is unreachable: 'deny' (default) or 'allow' */
   failMode?: "deny" | "allow";
   /**
-   * Optional tenant identifier.
-   *
-   * When set to a non-empty value other than `"local"`, every HTTP call
-   * is routed through the tenant-aware `/v1/t/{tenantId}/...` URL family
-   * instead of the legacy `/v1/...` path. Empty string, `undefined`, or
-   * `"local"` selects the legacy URLs. Falls back to the
-   * `VANZIK_TENANT_ID` env var when available (Node only).
-   *
-   * The bundled FilePolicyProvider only recognises `"local"`;
-   * multi-tenant providers can register others.
+   * Optional tenant identifier. A non-empty value other than `"local"`
+   * routes every call through `/v1/t/{tenantId}/...` instead of the legacy
+   * `/v1/...` URLs. Falls back to `VANZIK_TENANT_ID` (Node only). The
+   * bundled FilePolicyProvider only recognises `"local"`; multi-tenant
+   * providers can register others.
    */
   tenantId?: string;
   /**
@@ -120,19 +112,13 @@ export interface VanzikOptions {
   parentSessionId?: string;
 }
 
-/**
- * Sentinel tenant value treated as an alias for the legacy URL family.
- * Exported so callers can build the same comparison the SDK does without
- * hardcoding the string literal in user code.
- */
+/** Tenant value that selects the legacy (single-tenant) URL family. */
 export const LOCAL_TENANT_ID = "local";
 
 /**
- * Read a process.env variable without assuming Node. Returns undefined if
- * the runtime has no `process` (browsers, Deno without --compat, etc.) or
- * if the variable is unset/empty. Keeps the SDK usable in non-Node
- * contexts while still honoring env fallback when it is available — this
- * matches the Python SDK's `base_url or os.environ.get(...)` pattern.
+ * Read a process.env variable without assuming Node: undefined when the
+ * runtime has no `process` (browsers, Deno without --compat) or the
+ * variable is unset or empty.
  */
 function readEnv(name: string): string | undefined {
   try {
@@ -193,11 +179,8 @@ class CheckResultImpl implements CheckResult {
 
 /**
  * Base class for Vanzik policy-failure errors thrown by {@link guarded}.
- *
- * Callers can `catch (e) { if (e instanceof VanzikDeniedError) ... }`
- * and read structured fields (`result`, `approvalId`, `approvalUrl`). Every
- * subclass extends the standard `Error`, so generic `catch { ... }`
- * handlers are unaffected.
+ * Subclasses carry structured fields (`result`, `approvalId`,
+ * `approvalUrl`) for `instanceof` checks.
  */
 export class VanzikError extends Error {
   readonly result?: CheckResult;
@@ -260,10 +243,8 @@ export class VanzikApprovalTimeoutError extends VanzikError {
 
 /**
  * Thrown when an auth-gated Vanzik endpoint (`/v1/approve`,
- * `/v1/deny`, `/v1/status`, `/v1/audit`) returns 401 or 403.
- *
- * Lets callers tell apart "API key wrong / expired" from "approval poll
- * timed out" so the operator-facing error surfaces the right cause.
+ * `/v1/deny`, `/v1/status`, `/v1/audit`) returns 401 or 403, so a wrong
+ * or expired API key is not mistaken for an approval timeout.
  */
 export class VanzikAuthError extends VanzikError {
   readonly status: number;
@@ -276,16 +257,13 @@ export class VanzikAuthError extends VanzikError {
   }
 }
 
-/**
- * Valid values for the `failMode` SDK option. Exported so callers can
- * use the same allowlist when validating their own configuration.
- */
+/** Valid values for the `failMode` option. */
 const VALID_FAIL_MODES = ["deny", "allow"] as const;
 
 /**
- * Allowed keys on `VanzikOptions`. Used to reject unknown options at
- * construction time instead of silently ignoring them — typos like
- * `agnetId: "x"` should fail loudly, not silently default to `agentId=""`.
+ * Allowed keys on `VanzikOptions`. Unknown keys throw at construction, so
+ * a typo like `agnetId: "x"` fails loudly instead of running with
+ * `agentId = ""`.
  */
 const VALID_VANZIK_OPTION_KEYS: ReadonlySet<string> = new Set([
   "baseUrl",
@@ -317,12 +295,8 @@ export class Vanzik {
   private parentSessionId: string;
 
   constructor(baseUrlOrOptions?: string | VanzikOptions) {
-    // Environment fallbacks mirror the Python SDK: VANZIK_URL supplies
-    // baseUrl when the caller did not pass one; VANZIK_API_KEY supplies
-    // apiKey; VANZIK_TENANT_ID supplies tenantId. Explicit values in
-    // the options object override the env var so callers that genuinely
-    // want to disable a setting can pass an empty string.
-    // Each is read only when the caller left the setting out, so a stale
+    // VANZIK_URL / VANZIK_API_KEY / VANZIK_TENANT_ID are read only for
+    // settings the caller left out (as in the Python SDK), so a stale
     // AGENTGUARD_* variable matters only where it would have been used.
     if (typeof baseUrlOrOptions === "string") {
       this.baseUrl = baseUrlOrOptions.replace(/\/$/, "");
@@ -335,10 +309,6 @@ export class Vanzik {
     } else {
       const opts = baseUrlOrOptions ?? {};
 
-      // Reject unknown options so a typo like `agnetId: "x"` raises
-      // at construction instead of silently running with
-      // `agentId = ""` and surfacing as a confusing policy-decision
-      // mystery later.
       const unknown = Object.keys(opts).filter(
         (k) => !VALID_VANZIK_OPTION_KEYS.has(k)
       );
@@ -359,18 +329,14 @@ export class Vanzik {
       this.apiKey = opts.apiKey ?? fromEnv("API_KEY") ?? "";
       this.timeout = opts.timeout ?? 5000;
       this.failMode = opts.failMode ?? "deny";
-      // tenantId precedence: an explicit options field — including the
-      // empty string — wins over the env var. Passing tenantId: "" is
-      // the supported way to suppress an env-var-leaked tenant in a
-      // scoped test or a sub-process that should hit the legacy URLs.
+      // An explicit tenantId, even "", wins over the env var: "" is the
+      // supported way to suppress a leaked VANZIK_TENANT_ID.
       this.tenantId = opts.tenantId !== undefined ? opts.tenantId : fromEnv("TENANT_ID") ?? "";
       this.parentSessionId = opts.parentSessionId ?? "";
     }
 
-    // Validate failMode. "deny" and "allow" are the only meaningful
-    // values; anything else (typo, accidental boolean, user passing the
-    // Python convention "DENY") is a programming bug and must surface
-    // at startup, not at the first request.
+    // A bad failMode (typo, boolean, "DENY") must fail at startup, not at
+    // the first request.
     if (
       !(VALID_FAIL_MODES as readonly string[]).includes(this.failMode)
     ) {
@@ -406,13 +372,9 @@ export class Vanzik {
 
   /**
    * `fetch` with the client timeout applied to the WHOLE exchange — connect,
-   * headers, **and** the body read performed by `consume`.
-   *
-   * The timer is cleared in a `finally`, after `consume` has finished with
-   * the response. Clearing it as soon as the headers arrive (what `check`
-   * used to do) left a server that answers promptly and then stalls
-   * mid-body able to hang the calling agent forever. `approve`, `deny` and
-   * every `waitForApproval` poll had no timeout at all.
+   * headers, **and** the body read performed by `consume`. Clearing the
+   * timer when the headers arrive would let a server that stalls mid-body
+   * hang the calling agent forever.
    */
   private async withTimeout<T>(
     url: string,
@@ -459,11 +421,9 @@ export class Vanzik {
           body: JSON.stringify(payload),
         },
         async (response) => {
-          // Honest response validation. A misconfigured reverse proxy
-          // returning HTML or a chunked text body would either explode or
-          // — worse — successfully decode a malformed JSON payload missing
-          // `decision`, masking the actual issue. We positively assert each
-          // layer.
+          // Positively assert status, content type and a `decision` field:
+          // a misconfigured reverse proxy can return HTML, or JSON that
+          // parses but lacks `decision`.
           if (!response.ok) {
             return this.failModeResult(
               `Vanzik returned status ${response.status}`
@@ -516,15 +476,7 @@ export class Vanzik {
     }
   }
 
-  /**
-   * Build a CheckResult honoring the configured `failMode`.
-   *
-   * Centralizes the fail-mode dispatch so transport failures and HTTP
-   * contract violations (bad status, wrong content-type, malformed
-   * body) all flow through one decision point. Without this a 200-OK
-   * with the wrong Content-Type would surface as an opaque "Vanzik
-   * unreachable" instead of a clean "wrong content-type" reason.
-   */
+  /** Build a CheckResult honoring the configured `failMode`. */
   private failModeResult(reason: string): CheckResult {
     const fallbackDecision = this.failMode === "allow" ? "ALLOW" : "DENY";
     return new CheckResultImpl({
@@ -582,9 +534,7 @@ export class Vanzik {
           this.url(`/status/${approvalId}`),
           { headers: this.authHeaders() },
           async (res) => {
-            // 401/403 means the API key is broken. Continuing to poll
-            // would just spin until the deadline elapses and return a
-            // synthetic "Approval timed out" DENY, hiding the real cause.
+            // A broken API key must not end as a timeout DENY that hides it.
             if (res.status === 401 || res.status === 403) {
               throw new VanzikAuthError(
                 `Vanzik rejected status poll for ${approvalId} ` +
@@ -605,17 +555,14 @@ export class Vanzik {
         );
         if (resolved) return resolved;
       } catch (e) {
-        // VanzikAuthError must propagate so the caller sees the auth
-        // failure immediately. Other transport errors (DNS, ECONNREFUSED,
-        // 5xx surfaced above, a per-poll timeout, or a body that is not
-        // JSON) are swallowed and retried until the deadline — a malformed
-        // poll body must never reject out of the waiting agent.
+        // Everything but VanzikAuthError (DNS, ECONNREFUSED, a per-poll
+        // timeout, a non-JSON body) is retried until the deadline; a
+        // malformed poll body must never reject out of the waiting agent.
         if (e instanceof VanzikAuthError) throw e;
       }
 
-      // Jittered sleep — 80%..120% of pollIntervalMs. Avoids a
-      // thundering-herd when many SDK clients wait on the same approval
-      // and would otherwise poll on identical period boundaries.
+      // 80%..120% jitter so many clients waiting on one approval don't
+      // poll in lockstep.
       const jitter = pollIntervalMs * (0.8 + 0.4 * Math.random());
       await new Promise((resolve) => setTimeout(resolve, jitter));
     }
@@ -634,7 +581,7 @@ export class Vanzik {
  * throwing immediately on REQUIRE_APPROVAL — mirrors the Python SDK's
  * `wait_for_approval=True`.
  */
-export interface GuardedOptions<T extends (...args: unknown[]) => Promise<unknown>> {
+export interface GuardedOptions<T extends (...args: any[]) => Promise<any>> {
   /** Custom extractor for the `CheckOptions` payload from the wrapped function's args. */
   getCheckOptions?: (...args: Parameters<T>) => CheckOptions;
   /** Block until a human approves/denies when the decision is REQUIRE_APPROVAL. Default false. */
@@ -667,19 +614,19 @@ export interface GuardedOptions<T extends (...args: unknown[]) => Promise<unknow
  * });
  * ```
  */
-export function guarded<T extends (...args: unknown[]) => Promise<unknown>>(
+export function guarded<T extends (...args: any[]) => Promise<any>>(
   guard: Vanzik,
   scope: string,
   fn: T,
   getCheckOptions?: (...args: Parameters<T>) => CheckOptions
 ): T;
-export function guarded<T extends (...args: unknown[]) => Promise<unknown>>(
+export function guarded<T extends (...args: any[]) => Promise<any>>(
   guard: Vanzik,
   scope: string,
   fn: T,
   options: GuardedOptions<T>
 ): T;
-export function guarded<T extends (...args: unknown[]) => Promise<unknown>>(
+export function guarded<T extends (...args: any[]) => Promise<any>>(
   guard: Vanzik,
   scope: string,
   fn: T,
@@ -693,9 +640,7 @@ export function guarded<T extends (...args: unknown[]) => Promise<unknown>>(
       ? { getCheckOptions: optionsOrGetCheckOptions }
       : optionsOrGetCheckOptions ?? {};
 
-  // Reject unknown option keys at decoration time. A typo such as
-  // `waitForApprovel: true` would otherwise be silently ignored and
-  // the wrapper would throw on REQUIRE_APPROVAL instead of waiting.
+  // A typo such as `waitForApprovel: true` must not be silently ignored.
   const unknownGuardedKeys = Object.keys(opts).filter(
     (k) => !VALID_GUARDED_OPTION_KEYS.has(k)
   );
@@ -732,10 +677,8 @@ export function guarded<T extends (...args: unknown[]) => Promise<unknown>>(
           approvalPollIntervalMs
         );
         if (resolved.allowed) {
-          // Replay the approval through /v1/check. The status poll is
-          // read-only; only this replay spends the one-shot capability,
-          // applies --approval-validity, reserves cost, and writes the
-          // allow:approved audit entry for the execution.
+          // The status poll is read-only; only this replay spends the
+          // one-shot approval.
           const replay = await guard.check(scope, {
             ...options,
             approvalId: result.approvalId ?? "",
@@ -744,9 +687,8 @@ export function guarded<T extends (...args: unknown[]) => Promise<unknown>>(
             return fn(...args);
           }
           if (replay.needsApproval) {
-            // Consumed or expired: the server re-entered the approval flow
-            // under a new id. Surface it rather than waiting again, or a
-            // refused replay would loop forever.
+            // Consumed or expired, re-issued under a new id. Don't wait
+            // again: a refused replay would loop forever.
             throw new VanzikApprovalRequiredError(
               `Action requires approval. Approve at: ${replay.approvalUrl}`,
               replay,

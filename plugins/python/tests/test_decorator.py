@@ -87,11 +87,8 @@ class TestGuardedDecorator:
 
 
 class TestGuardedTypedExceptions:
-    """Verify the v0.5.0 typed-exception API.
-
-    Each typed class extends ``PermissionError`` so the v0.4.x pattern
-    ``except PermissionError:`` keeps working. New callers can catch the
-    specific subclass and inspect structured fields.
+    """The typed-exception API: each class extends ``PermissionError`` (so
+    ``except PermissionError:`` still works) and carries structured fields.
     """
 
     def test_deny_raises_vanzik_denied_with_result(self, mock_server):
@@ -109,11 +106,9 @@ class TestGuardedTypedExceptions:
         with pytest.raises(VanzikDenied) as excinfo:
             my_func("rm -rf /")
 
-        # Carries the originating CheckResult with the matched rule visible.
         assert excinfo.value.result is not None
         assert excinfo.value.result.denied
         assert excinfo.value.result.matched_rule == "deny:shell:rm"
-        # Still a PermissionError for backward compat.
         assert isinstance(excinfo.value, PermissionError)
 
     def test_approval_required_raises_typed_exception(self, mock_server):
@@ -136,13 +131,12 @@ class TestGuardedTypedExceptions:
         assert excinfo.value.approval_url == "http://example.com/approve/ap_abc"
         assert excinfo.value.result is not None
         assert excinfo.value.result.needs_approval
-        # v0.4.1 message format preserved.
+        # Stable message text; caller code matches on it.
         assert "requires approval" in str(excinfo.value)
-        # Backward-compat: still catchable as PermissionError.
         assert isinstance(excinfo.value, PermissionError)
 
     def test_permission_error_still_catches_denied(self, mock_server):
-        """v0.4.x callers using ``except PermissionError:`` must still catch."""
+        """``except PermissionError:`` must still catch."""
         MockVanzikHandler.check_response = {
             "decision": "DENY",
             "reason": "blocked",

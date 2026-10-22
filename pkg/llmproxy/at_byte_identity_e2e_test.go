@@ -1,22 +1,9 @@
 package llmproxy
 
-// at_byte_identity_e2e_test.go is the AT-added full-server byte-
-// identity invariant test. A22's TestStreamingAllowPath_ByteIdentity
-// drives the streaming pipeline at the parser level; this file boots
-// the full Server through the same routes the binary serves and
-// confirms that on the ALLOW path the bytes a real HTTP client
-// receives are byte-identical to the upstream's SSE payload, AND on
-// the DENY path the upstream tool_call deltas never leak through.
-//
-// Byte-level normalization considerations (documented per the AT brief):
-//   - Go's net/http server uses chunked transfer-encoding for streaming
-//     responses. Chunk boundaries (the `<hex>\r\n<chunk>\r\n` framing)
-//     are added by net/http and stripped by the standard client. Both
-//     ends are using net/http so the chunk-boundary overhead cancels
-//     out at the application layer; bytes.Equal(got, fixture) works
-//     directly without any normalization.
-//   - SSE event payloads (the actual `data: ...\n\n` blocks) survive
-//     through the full pipe unchanged on the ALLOW path.
+// Byte identity through the full Server and its routes: on ALLOW a real
+// HTTP client receives the upstream SSE bytes unchanged; on DENY no
+// upstream tool_call bytes leak. Chunked-encoding framing is stripped by
+// the client, so bytes.Equal needs no normalization.
 
 import (
 	"bytes"
@@ -28,11 +15,6 @@ import (
 	"testing"
 )
 
-// TestAT_E2E_ByteIdentity_ALLOW boots the full Server (mux), routes
-// a streaming /v1/chat/completions through it to a captured-fixture
-// upstream, and asserts the test client receives bytes byte-identical
-// to the upstream payload. This is the highest-fidelity coupon for
-// the byte-identity invariant on the ALLOW path.
 func TestAT_E2E_ByteIdentity_ALLOW(t *testing.T) {
 	for _, fx := range []string{
 		"openai_streaming_text_only.txt",
@@ -78,9 +60,6 @@ func TestAT_E2E_ByteIdentity_ALLOW(t *testing.T) {
 	}
 }
 
-// TestAT_E2E_ByteIdentity_DENY_DoesNotLeakUpstreamToolCalls drives
-// the same fixtures with a PolicyCheck that DENYs and asserts the
-// upstream tool_call ids never leak into the client's bytes.
 func TestAT_E2E_ByteIdentity_DENY_DoesNotLeakUpstreamToolCalls(t *testing.T) {
 	cases := []struct {
 		fx          string
@@ -124,7 +103,7 @@ func TestAT_E2E_ByteIdentity_DENY_DoesNotLeakUpstreamToolCalls(t *testing.T) {
 			defer resp.Body.Close()
 			got, _ := io.ReadAll(resp.Body)
 
-			// Sanity: fixture truly contains the secrets we're checking against.
+			// The fixture must contain the ids checked below.
 			fixtureStr := string(fixture)
 			for _, id := range c.secretIDs {
 				if !strings.Contains(fixtureStr, id) {
@@ -140,7 +119,6 @@ func TestAT_E2E_ByteIdentity_DENY_DoesNotLeakUpstreamToolCalls(t *testing.T) {
 			if strings.Contains(gotStr, c.fingerprint) {
 				t.Errorf("upstream fingerprint %q leaked into DENY-path client bytes", c.fingerprint)
 			}
-			// Refusal terminator.
 			if !strings.Contains(gotStr, "[DONE]") {
 				t.Errorf("expected [DONE] in OpenAI refusal; got %q", gotStr)
 			}
@@ -148,9 +126,6 @@ func TestAT_E2E_ByteIdentity_DENY_DoesNotLeakUpstreamToolCalls(t *testing.T) {
 	}
 }
 
-// TestAT_E2E_ByteIdentity_DENY_Anthropic_NoLeak — same as above for
-// Anthropic. Ensures the buffered tool_use id never reaches the client
-// when the gate denies.
 func TestAT_E2E_ByteIdentity_DENY_Anthropic_NoLeak(t *testing.T) {
 	fixture := readFixture(t, "anthropic_streaming_single_tool_use.txt")
 	if !strings.Contains(string(fixture), "toolu_xyz") {
@@ -191,12 +166,9 @@ func TestAT_E2E_ByteIdentity_DENY_Anthropic_NoLeak(t *testing.T) {
 	}
 }
 
-// TestAT_E2E_ByteIdentity_SSEPayloadEquality drills into the SSE-
-// payload-level equality (vs gross byte-equality) so the test is
-// resilient to any future intermediary that re-chunks or normalizes
-// chunk boundaries (which Go's net/http does NOT today, but a future
-// revproxy in front would). Asserts that the sequence of `data: ...`
-// lines the client sees equals the upstream's sequence on ALLOW.
+// TestAT_E2E_ByteIdentity_SSEPayloadEquality compares the sequence of
+// `data:` lines rather than raw bytes, so it survives an intermediary
+// that re-chunks the stream.
 func TestAT_E2E_ByteIdentity_SSEPayloadEquality(t *testing.T) {
 	fixture := readFixture(t, "openai_streaming_single_tool_call.txt")
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

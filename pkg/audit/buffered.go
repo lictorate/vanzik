@@ -1,34 +1,3 @@
-// Package audit — BufferedAsyncLogger.
-//
-// BufferedAsyncLogger wraps any audit.Logger with a bounded channel and a
-// pool of N worker goroutines that drain the channel into the underlying
-// Log call. The wrapper:
-//
-//   - Keeps the /v1/check hot path off the audit mutex: workers absorb
-//     I/O latency; Log() returns after a channel send or overflow append.
-//   - On saturation, persists entries to a JSON-Lines overflow file
-//     (mode 0600); a recovery goroutine drains the overflow back into
-//     the channel when capacity returns. Entries are durable across the
-//     saturation boundary; they are NOT ordered across that boundary.
-//   - Runs JSON encode + file write on workers, so the FileLogger.mu
-//     hold shrinks to the actual encode+write.
-//
-// Concurrency contract:
-//   - Log MUST NOT block. Path A: non-blocking channel send. Path B: append
-//     a JSON line to the overflow file. Either path returns nil to the
-//     caller. The only error Log can return is "queue full AND overflow
-//     append failed" — both legs of durability gone.
-//   - Close is idempotent (sync.Once). It closes the recovery goroutine's
-//     stop channel, closes the work queue (workers drain remaining entries),
-//     and then runs a one-shot best-effort overflow drain bounded by a
-//     short timeout.
-//   - The recovery goroutine runs at RecoveryInterval (default 5s). On each
-//     tick it atomically renames the overflow file to a `.draining.<ts>`
-//     sibling so concurrent Log() callers do not see partially drained
-//     state, then reads each line, attempts a non-blocking enqueue, and
-//     re-spills any line that would have blocked into a fresh overflow file.
-//   - Counters are exposed via getters that return atomic loads. Callers see
-//     a value at *some* point in time, not a snapshot across all three.
 package audit
 
 import (
@@ -46,15 +15,14 @@ import (
 	"lictorate.com/vanzik/v2/pkg/metrics"
 )
 
-// Defaults for BufferedAsyncOpts. Tuned for "ten or so RPS sustained, bursts
-// of a few hundred". Operators with heavier audit load should override via
-// the CLI flags wired in cmd/vanzik/main.go.
+// Defaults for BufferedAsyncOpts, tuned for ~10 RPS sustained with bursts of
+// a few hundred; heavier loads override them via the CLI flags.
 const (
 	defaultBufferedQueueSize        = 1024
 	defaultBufferedWorkers          = 4
 	defaultBufferedRecoveryInterval = 5 * time.Second
-	// closeFlushTimeout bounds the best-effort final overflow drain run by
-	// Close. We do not want shutdown to hang on a recovery cycle.
+	// closeFlushTimeout bounds Close's best-effort final overflow drain so
+	// shutdown cannot hang on it.
 	closeFlushTimeout = 2 * time.Second
 )
 
@@ -76,9 +44,26 @@ type BufferedAsyncOpts struct {
 	Transform EntryTransform
 }
 
-// BufferedAsyncLogger wraps an underlying Logger with a bounded queue,
-// worker pool, and disk-overflow spill path. See package doc for the
-// concurrency contract.
+// BufferedAsyncLogger wraps an underlying Logger with a bounded queue, a
+// pool of worker goroutines draining it into the underlying Log, and a
+// disk-overflow spill path. Workers absorb I/O latency, keeping the
+// /v1/check hot path off the audit mutex.
+//
+// Concurrency contract:
+//   - Log MUST NOT block: a non-blocking channel send, else a JSON-line
+//     append to the overflow file (mode 0600). Its only error is "queue
+//     full AND overflow append failed": both legs of durability gone.
+//     Entries are durable across saturation but NOT ordered across it.
+//   - Close is idempotent (sync.Once). It signals shutdown through b.closed
+//     (the queue itself is never closed), lets workers drain what is
+//     queued, then runs a best-effort overflow drain bounded by a short
+//     timeout.
+//   - The recovery goroutine runs every RecoveryInterval. Each tick renames
+//     the overflow file to a `.draining.<ts>` sibling so concurrent Log()
+//     callers never see a partially drained file, enqueues each line
+//     without blocking, and re-spills lines that would block into a fresh
+//     overflow file.
+//   - Counter getters are independent atomic loads, not one snapshot.
 type BufferedAsyncLogger struct {
 	underlying Logger
 
@@ -88,25 +73,23 @@ type BufferedAsyncLogger struct {
 	transform        EntryTransform
 	recoveryInterval time.Duration
 
-	// overflowMu serializes appends to the overflow file. JSON encoding is
-	// not atomic across multiple workers writing the same fd — we keep this
-	// mutex narrow (single Encode call) so it does not become a hot lock.
+	// overflowMu serializes overflow-file appends (concurrent Encodes on one
+	// fd interleave) and the drain renames. Held for one Encode only.
 	overflowMu sync.Mutex
 
 	closeOnce sync.Once
 	closed    chan struct{} // closed by Close to signal recovery goroutine
 	wg        sync.WaitGroup
 
-	// metrics (atomic). The counters are observably-consistent — a getter
-	// returns a value at some point in time, not a snapshot.
+	// Atomic counters.
 	droppedToOverflow   uint64
 	drainedFromOverflow uint64
 	queueDepthHint      int64
 }
 
 // NewBufferedAsyncLogger constructs a buffered async wrapper around
-// underlying. The parent directory of OverflowPath is created if missing
-// (mode 0700) so the operator does not have to pre-provision it.
+// underlying, creating OverflowPath's parent directory (mode 0700) if
+// missing.
 func NewBufferedAsyncLogger(underlying Logger, opts BufferedAsyncOpts) (*BufferedAsyncLogger, error) {
 	if underlying == nil {
 		return nil, errors.New("audit: underlying logger is nil")
@@ -124,9 +107,7 @@ func NewBufferedAsyncLogger(underlying Logger, opts BufferedAsyncOpts) (*Buffere
 		opts.RecoveryInterval = defaultBufferedRecoveryInterval
 	}
 
-	// Ensure the overflow file's parent directory exists. We use 0700
-	// because the overflow file itself is 0600 and inherits the same
-	// secrecy constraint as the live audit log.
+	// 0700: the spill file carries the same secrecy as the live audit log.
 	if dir := filepath.Dir(opts.OverflowPath); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			return nil, fmt.Errorf("audit: mkdir overflow dir %s: %w", dir, err)
@@ -158,24 +139,17 @@ func NewBufferedAsyncLogger(underlying Logger, opts BufferedAsyncOpts) (*Buffere
 // Returns an error only when both legs of durability fail (queue full AND
 // overflow append failed), which means the entry is lost.
 //
-// After Close has been called, Log spills directly to the overflow file
-// rather than touching the (now-closed) queue. This is the documented
-// behavior for the racy "Log called concurrently with Close" path: the
-// entry is durable on disk and a future process startup will pick it up
-// (once the recovery loop is reinstated, which is the operator's
-// restart-the-binary remediation).
+// After Close, Log spills directly to the overflow file instead of the
+// queue, including when it races Close: the entry is durable on disk and
+// the next process start drains it.
 func (b *BufferedAsyncLogger) Log(e Entry) error {
 	if e.Timestamp.IsZero() {
 		e.Timestamp = time.Now().UTC()
 	}
-	// Guard against the channel being closed between our select-check and
-	// the actual send. A send on a closed channel panics; close happens
-	// inside Close() under sync.Once. Reading b.closed first means we
-	// short-circuit through the overflow path during/after shutdown.
+	// Checking b.closed first routes every entry to disk once shutdown
+	// has begun, when no worker may be left to drain the queue.
 	select {
 	case <-b.closed:
-		// Closed: the queue is either already closed or about to be.
-		// Persist directly to disk so the entry is not lost.
 		if err := b.appendOverflow(e); err != nil {
 			return fmt.Errorf("buffered audit: closed and overflow append failed: %w", err)
 		}
@@ -213,22 +187,17 @@ func (b *BufferedAsyncLogger) Query(filter QueryFilter) ([]Entry, error) {
 }
 
 // Close drains the queue and stops all goroutines. Safe to call multiple
-// times (sync.Once). Close also runs a one-shot best-effort overflow
-// drain bounded by closeFlushTimeout so a small backlog at shutdown still
-// reaches the underlying logger.
+// times. It also runs a best-effort overflow drain bounded by
+// closeFlushTimeout so a small backlog at shutdown still reaches the
+// underlying logger.
 //
-// Close does NOT close the underlying logger — the caller owns that
-// lifecycle (typically `defer logger.Close()` in cmd/vanzik/main.go,
-// after the buffered wrapper's defer fires).
+// Close does NOT close the underlying logger; the caller owns that.
 //
-// We DO NOT close b.queue: with concurrent Log() callers in flight, a
-// `close(channel)` would race a `chansend`. Instead we signal shutdown
-// via b.closed and let workers exit on a `select` that picks up either
-// a queued entry or the close signal. Log() also reads b.closed first
-// and routes to the overflow file once shutdown has begun.
+// b.queue is never closed: a close would race concurrent Log() sends.
+// Shutdown is signalled via b.closed instead.
 func (b *BufferedAsyncLogger) Close() error {
 	b.closeOnce.Do(func() {
-		close(b.closed) // tell workers + recoveryLoop to exit after draining
+		close(b.closed)
 		b.wg.Wait()
 		b.flushOverflowOnce(closeFlushTimeout)
 	})
@@ -236,9 +205,8 @@ func (b *BufferedAsyncLogger) Close() error {
 }
 
 // QueueDepth returns the approximate number of entries sitting in the
-// in-memory queue. Returned value is an atomic load of an int64 counter
-// maintained by Log() / workerLoop(); it can briefly drift past the
-// channel's actual len at a few hundred RPS but converges quickly.
+// in-memory queue. It is a counter kept by Log() and the workers, so it can
+// briefly drift from the channel's len under load.
 func (b *BufferedAsyncLogger) QueueDepth() int {
 	return int(atomic.LoadInt64(&b.queueDepthHint))
 }
@@ -275,11 +243,8 @@ func (b *BufferedAsyncLogger) noteDroppedToOverflow() {
 // durable; this is the same recovery guarantee Log() makes for queue
 // saturation.
 //
-// Shutdown semantics: when b.closed is closed, the worker keeps pulling
-// any entries already buffered in the queue (drain-on-close), then exits
-// once the queue is empty. We never close b.queue itself — that would
-// race concurrent Log() sends — so this drain check uses a non-blocking
-// receive after observing the closed signal.
+// Once b.closed is closed the worker drains what is already queued with
+// non-blocking receives, then exits (b.queue itself is never closed).
 func (b *BufferedAsyncLogger) workerLoop() {
 	defer b.wg.Done()
 	for {
@@ -288,7 +253,6 @@ func (b *BufferedAsyncLogger) workerLoop() {
 			b.noteQueueDepth(-1)
 			b.processEntry(entry)
 		case <-b.closed:
-			// Drain anything still in the channel, then exit.
 			for {
 				select {
 				case entry := <-b.queue:
@@ -302,9 +266,8 @@ func (b *BufferedAsyncLogger) workerLoop() {
 	}
 }
 
-// processEntry runs the underlying.Log call and falls back to the overflow
-// path on failure. Pulled out of workerLoop so the drain-on-close inner
-// loop can call the same code without duplicating the body.
+// processEntry runs the underlying Log and falls back to the overflow path
+// on failure.
 func (b *BufferedAsyncLogger) processEntry(entry Entry) {
 	if err := b.safeUnderlyingLog(entry); err != nil {
 		log.Printf("WARN audit buffered: underlying log failed: %v (writing to overflow)", err)
@@ -318,15 +281,12 @@ func (b *BufferedAsyncLogger) processEntry(entry Entry) {
 
 // safeUnderlyingLog invokes b.underlying.Log behind a recover barrier so a
 // panic in a store driver, a custom Entry MarshalJSON, or a nil-handle close
-// race cannot escape the worker goroutine and abort the whole process.
-// CLAUDE.md §2 requires "a flush worker crash must never block or crash the
-// proxy loop"; an unrecovered goroutine panic would violate that.
+// race cannot escape the worker goroutine and abort the process: a flush
+// worker crash must never block or crash the proxy loop.
 //
-// A recovered panic is converted into an error so it flows into the SAME
-// overflow-fallback path an ordinary Log error takes at both call sites
-// (processEntry and flushOverflowOnce): the entry stays durable and the
-// worker keeps draining. This mirrors pkg/notify's workerWithRecover, which
-// isolates panics from custom notifiers the same way.
+// The panic becomes an error, so it takes the same overflow fallback as an
+// ordinary Log error: the entry stays durable and the worker keeps
+// draining. pkg/notify's workerWithRecover does the same for notifiers.
 func (b *BufferedAsyncLogger) safeUnderlyingLog(entry Entry) (err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -337,10 +297,8 @@ func (b *BufferedAsyncLogger) safeUnderlyingLog(entry Entry) (err error) {
 	return b.underlying.Log(entry)
 }
 
-// appendOverflow writes a single entry as a JSON line to the overflow file
-// in O_APPEND mode (mode 0600). Concurrent appends are serialized by
-// overflowMu so workers and the saturation path do not produce interleaved
-// bytes.
+// appendOverflow appends one entry as a JSON line to the overflow file
+// (mode 0600), serialized by overflowMu so writers never interleave.
 func (b *BufferedAsyncLogger) appendOverflow(e Entry) error {
 	if b.transform != nil {
 		e = b.transform(e)
@@ -383,13 +341,11 @@ func (b *BufferedAsyncLogger) recoveryLoop() {
 // onto the work queue. Lines that would have blocked are re-spilled into a
 // fresh overflow file so the next tick can try again.
 //
-// We rename rather than read-and-truncate so concurrent Log() saturation
-// appends always target the live overflow path; a rename leaves the live
-// path open for a fresh file (created lazily by appendOverflow) and the
-// drain works against an immutable snapshot.
+// Rename rather than read-and-truncate: concurrent saturation appends keep
+// targeting the live path (appendOverflow recreates it lazily) while the
+// drain reads an immutable snapshot.
 func (b *BufferedAsyncLogger) tryDrainOverflow() {
-	// Take overflowMu to serialize against appendOverflow; the rename is
-	// fast enough that this does not meaningfully delay saturation writes.
+	// Held across stat+rename only, to serialize against appendOverflow.
 	b.overflowMu.Lock()
 	if _, err := os.Stat(b.overflowPath); err != nil {
 		b.overflowMu.Unlock()
@@ -406,7 +362,6 @@ func (b *BufferedAsyncLogger) tryDrainOverflow() {
 	}
 	b.overflowMu.Unlock()
 
-	// Read the snapshot, try to enqueue each entry. Re-spill on full.
 	in, err := os.Open(drainingPath)
 	if err != nil {
 		log.Printf("WARN audit buffered: open draining %s: %v", drainingPath, err)
@@ -425,8 +380,7 @@ func (b *BufferedAsyncLogger) tryDrainOverflow() {
 		}
 		var entry Entry
 		if err := json.Unmarshal(line, &entry); err != nil {
-			// Corrupt overflow line. Skip — same posture FileLogger.Query
-			// takes for corrupt audit lines.
+			// Skip corrupt lines, as FileLogger.Query does.
 			log.Printf("WARN audit buffered: skipping corrupt overflow line in %s (%v)", drainingPath, err)
 			continue
 		}
@@ -436,8 +390,7 @@ func (b *BufferedAsyncLogger) tryDrainOverflow() {
 			b.noteQueueDepth(1)
 			requeued++
 		default:
-			// Queue full again. Re-spill into a fresh overflow file. We do
-			// not block; the next recovery tick will pick it up.
+			// Queue full again: re-spill for the next tick, never block.
 			if err := b.appendOverflow(entry); err != nil {
 				log.Printf("ERROR audit buffered: re-spill failed: %v (entry lost)", err)
 				continue
@@ -449,23 +402,17 @@ func (b *BufferedAsyncLogger) tryDrainOverflow() {
 	if scanErr != nil {
 		log.Printf("WARN audit buffered: scan draining %s: %v", drainingPath, scanErr)
 	}
-	// Close the read handle BEFORE os.Remove so Windows lets the unlink
-	// through (Windows refuses to remove a file open in the current
-	// process; POSIX is permissive but we close anyway for tidiness).
+	// Close BEFORE os.Remove: Windows refuses to remove a file open in this
+	// process.
 	if cerr := in.Close(); cerr != nil {
 		log.Printf("WARN audit buffered: close draining %s: %v", drainingPath, cerr)
 	}
 
-	// On scanner error (e.g. line larger than the 4 MiB buffer, or a
-	// truncated read) we MUST NOT remove drainingPath: the unread tail
-	// would be silently lost. The rename above already swapped a fresh
-	// overflow file in for concurrent appendOverflow callers, so the
-	// safe recovery posture is to rename the draining file BACK to
-	// b.overflowPath so the next recovery tick (or process startup)
-	// picks it up. If a fresh overflow file has appeared in the meantime
-	// (concurrent saturation during this drain) we keep the draining
-	// file in place under its `.draining.<ts>` name; an operator must
-	// inspect / merge it manually, but the entries are durable on disk.
+	// On a scanner error (a line over 4 MiB, a truncated read) drainingPath
+	// MUST NOT be removed: the unread tail would be lost. Rename it back to
+	// b.overflowPath for the next tick or startup; if a fresh overflow file
+	// appeared meanwhile, leave it under its `.draining.<ts>` name for the
+	// operator to merge. Either way the entries stay on disk.
 	if scanErr != nil {
 		b.overflowMu.Lock()
 		_, statErr := os.Stat(b.overflowPath)
@@ -477,8 +424,6 @@ func (b *BufferedAsyncLogger) tryDrainOverflow() {
 				log.Printf("WARN audit buffered: preserved partial drain by renaming %s -> %s for next tick", drainingPath, b.overflowPath)
 			}
 		} else {
-			// A fresh overflow already exists; leave the draining file
-			// in place under its timestamped name. Operator-recoverable.
 			log.Printf("WARN audit buffered: leaving %s on disk after scanner error (fresh overflow already exists)", drainingPath)
 		}
 		b.overflowMu.Unlock()
@@ -498,11 +443,8 @@ func (b *BufferedAsyncLogger) tryDrainOverflow() {
 // flushOverflowOnce is a one-shot drain attempt run by Close. Bounded by
 // timeout so shutdown does not hang on a stuck rename or a slow disk.
 //
-// We are deliberately conservative here: at this point workers are already
-// gone, so enqueueing into b.queue is pointless — instead we forward each
-// surviving overflow entry directly to the underlying logger. Any entry
-// that the underlying refuses is left in a re-spilled overflow file for
-// the next process to pick up on startup.
+// Workers are already gone, so each overflow entry goes straight to the
+// underlying logger; entries it refuses are re-spilled for the next process.
 func (b *BufferedAsyncLogger) flushOverflowOnce(timeout time.Duration) {
 	deadline := time.Now().Add(timeout)
 
@@ -543,24 +485,18 @@ func (b *BufferedAsyncLogger) flushOverflowOnce(timeout time.Duration) {
 			continue
 		}
 		if err := b.safeUnderlyingLog(entry); err != nil {
-			// Best-effort: re-spill into a fresh overflow file. safeUnderlyingLog
-			// also absorbs a panicking underlying so the close-flush drain
-			// cannot crash on the way out.
 			_ = b.appendOverflow(entry)
 		}
 	}
-	// Close the read handle BEFORE rename/remove. On Windows the file
-	// cannot be removed or renamed while it is still open in this
-	// process, so deferring Close until function exit (the original
-	// posture) reliably failed there.
+	// Close BEFORE rename/remove, not deferred: on Windows an open file
+	// cannot be renamed or removed.
 	if cerr := in.Close(); cerr != nil {
 		log.Printf("WARN audit buffered: close-flush close draining: %v", cerr)
 	}
 
 	if timedOut {
-		// Remaining lines stay durable on disk: rename the partially
-		// processed draining file back into place so the next process
-		// restart picks up where we left off.
+		// Rename the partly processed file back so the next process
+		// resumes it.
 		if rerr := os.Rename(drainingPath, b.overflowPath); rerr != nil {
 			log.Printf("WARN audit buffered: close-flush re-spill rename: %v", rerr)
 		}
@@ -577,9 +513,8 @@ func (b *BufferedAsyncLogger) flushOverflowOnce(timeout time.Duration) {
 // Path returns the audit file path of the wrapped logger when it is
 // file-backed (a *FileLogger, or anything else exposing Path()), and ""
 // otherwise. The server's startup seeder keys its replay checkpoint off
-// this: without it the production pipeline — which always wraps the
-// FileLogger in a BufferedAsyncLogger — could never resume from a
-// checkpoint and re-scanned the whole live file on every boot.
+// this, since production always wraps the FileLogger in a
+// BufferedAsyncLogger.
 func (b *BufferedAsyncLogger) Path() string {
 	if pr, ok := b.underlying.(interface{ Path() string }); ok {
 		return pr.Path()

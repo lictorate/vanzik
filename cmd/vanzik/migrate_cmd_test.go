@@ -1,15 +1,13 @@
 package main
 
-// Tests for `vanzik migrate` (review finding R2).
+// Tests for `vanzik migrate`.
 //
-// The defect: the CLI computed the replay checkpoint as
-// `<audit-dir>/.replay-checkpoint` while `vanzik server` reads and writes
-// `<audit-log>.replay-checkpoint`, so `--reset-checkpoint` deleted a file
-// that never existed and reported success, and a CLI-run migration left the
-// live checkpoint pointing at byte offsets of the old file. No test drove
-// runMigrate, which is how it shipped. These tests pin the cross-component
-// contract by booting the real server to write the checkpoint and then
-// driving the real CLI code path against it.
+// The CLI must use the replay checkpoint path `vanzik server` reads and
+// writes, `<audit-log>.replay-checkpoint`. With any other path,
+// `--reset-checkpoint` deletes a file that never existed and reports
+// success, and a CLI-run migration leaves the live checkpoint pointing at
+// byte offsets of the old file. These tests boot the real server to write
+// the checkpoint and then drive the real CLI code path against it.
 
 import (
 	"bytes"

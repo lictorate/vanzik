@@ -7,7 +7,7 @@
 // renderers write the finished Report as Markdown, JSON or HTML. That keeps
 // every number in the report testable from a fixed list of entries.
 //
-// The JSON form is a stable shape for 1.x: fields are only ever added.
+// The JSON form is a stable shape for 2.x: fields are only ever added.
 // FormatVersion changes only if that ever stops being true. See
 // docs/COMPLIANCE.md.
 package report

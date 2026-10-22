@@ -71,27 +71,24 @@ func (c DecisionCounts) Other() uint64 {
 // gigabytes of history.
 //
 // Offset and AuditSize describe the live audit file at the time the
-// checkpoint was written. FileID identifies WHICH file they describe: it is
-// the live file's schema-v2 `_meta.segment_id` (or, for a file written before
-// v1.4, its `_meta.created_at`), which rotation rewrites for every new live
-// file. A boot whose live file carries a different FileID
-// knows the log rotated in between and follows the `_meta.rotated_from`
-// chain back to the checkpointed segment rather than trusting a byte offset
-// into an unrelated file. FileID is empty for legacy headerless files, in
-// which case the older size heuristic applies (see ReplayWithCheckpoint).
+// checkpoint was written. FileID identifies WHICH file they describe (see
+// fileIDOf), which differs for every new live file. A boot whose live file
+// carries a different FileID knows the log rotated in between and follows
+// the `_meta.rotated_from` chain back to the checkpointed segment rather
+// than trusting a byte offset into an unrelated file. FileID is empty for
+// headerless files, which fall back to a size heuristic (see
+// ReplayWithCheckpoint).
 //
-// Counts is the cumulative decision tally as of Offset. It is what makes the
-// counters restart-safe. A checkpoint without Counts (written by a pre-1.1.0
-// binary) triggers one full replay so the lifetime totals are re-established
-// before the next checkpoint is written.
+// Counts is the cumulative decision tally as of Offset; it makes the
+// counters restart-safe. A checkpoint without Counts triggers one full
+// replay to re-establish the lifetime totals.
 //
-// Both new fields are additive and omitted when empty, so an older binary
-// reading a newer checkpoint sees exactly the shape it always did.
+// LastSeq and LastHash (sealed logs only) are the head of the seal chain
+// when the checkpoint was written. At startup the FileLogger compares them
+// with the end of the live file: a file that ends before them lost entries.
 //
-// LastSeq and LastHash (v1.4, sealed logs only) are the head of the seal
-// chain when the checkpoint was written. At startup the FileLogger compares
-// them with the end of the live file: a file that ends before them lost
-// entries. Also additive and omitted when empty.
+// All fields after AuditSize are additive and omitted when empty, so a
+// reader that predates them sees the shape it expects.
 type Checkpoint struct {
 	Offset    int64           `json:"offset"`
 	AuditSize int64           `json:"audit_size"`
@@ -164,9 +161,8 @@ func WriteCheckpoint(auditPath string, cp Checkpoint) error {
 // Missing audit file: returns (0, nil) — a fresh install has nothing to
 // replay, and that is not an error.
 //
-// ReplayFrom is the pre-1.1.0 primitive and is kept unchanged for embedders.
-// It knows nothing about rotation or persisted counts; the server uses
-// ReplayWithCheckpoint.
+// ReplayFrom knows nothing about rotation or persisted counts; the server
+// uses ReplayWithCheckpoint.
 func ReplayFrom(auditPath string, cp *Checkpoint, fn func(Entry)) (int64, error) {
 	info, err := os.Stat(auditPath)
 	if err != nil {
@@ -182,9 +178,8 @@ func ReplayFrom(auditPath string, cp *Checkpoint, fn func(Entry)) (int64, error)
 	}
 
 	if err := replayFile(auditPath, start, fn); err != nil {
-		// Replay is best-effort at startup — counters being off after a
-		// truncated replay is preferable to refusing to start. We surface
-		// the error so the caller (NewServer) can log it.
+		// Best-effort: off counters beat refusing to start. The caller logs
+		// the error.
 		return info.Size(), err
 	}
 	return info.Size(), nil
@@ -203,12 +198,11 @@ func ReplayFrom(auditPath string, cp *Checkpoint, fn func(Entry)) (int64, error)
 //
 // Resume rules, in order:
 //
-//  1. cp nil, or cp without Counts (legacy checkpoint): full replay of the
+//  1. cp nil, or cp without Counts: full replay of the
 //     live file from byte 0. The one-time cost re-establishes the lifetime
 //     tally; every later boot resumes.
-//  2. cp.FileID set and equal to the live file's identity (`_meta.segment_id`,
-//     or `_meta.created_at` before v1.4; see fileIDOf): same file, resume at
-//     cp.Offset.
+//  2. cp.FileID set and equal to the live file's identity (see fileIDOf):
+//     same file, resume at cp.Offset.
 //  3. cp.FileID set but different: the log rotated since the checkpoint.
 //     Walk `_meta.rotated_from` from the live file back through the
 //     archives (gzip or plain). The archive whose header matches cp.FileID
@@ -217,7 +211,7 @@ func ReplayFrom(auditPath string, cp *Checkpoint, fn func(Entry)) (int64, error)
 //     checkpointed segment was pruned), everything reachable is replayed
 //     from 0 and cp.Counts is still carried forward — the pruned entries
 //     were counted before they were pruned.
-//  4. cp.FileID empty (headerless legacy live file): the size heuristic —
+//  4. cp.FileID empty (headerless live file): the size heuristic —
 //     resume at cp.Offset when the file has only grown, else full replay.
 //
 // Missing audit file: returns a zero Checkpoint and nil — a fresh install
@@ -292,7 +286,7 @@ type replaySegment struct {
 func planReplaySegments(livePath string, liveSize int64, liveMeta *MetaRecord, cp *Checkpoint) []replaySegment {
 	full := []replaySegment{{path: livePath, start: 0}}
 	if cp == nil || cp.Counts == nil {
-		// Rule 1: nothing, or a legacy checkpoint with no tally to carry.
+		// Rule 1: nothing, or a checkpoint with no tally to carry.
 		return full
 	}
 
@@ -334,7 +328,7 @@ func planReplaySegments(livePath string, liveSize int64, liveMeta *MetaRecord, c
 		return segs
 	}
 
-	// Rule 4: legacy headerless live file — size heuristic.
+	// Rule 4: headerless live file — size heuristic.
 	if cp.AuditSize <= liveSize && cp.Offset <= liveSize && cp.Offset >= 0 {
 		return []replaySegment{{path: livePath, start: cp.Offset}}
 	}
@@ -348,8 +342,8 @@ func reverseSegments(s []replaySegment) {
 }
 
 // fileIDOf derives the checkpoint identity of a segment from its header: its
-// SegmentID, or for a file written before v1.4, its CreatedAt timestamp.
-// Empty for headerless (legacy) files.
+// SegmentID, or its CreatedAt timestamp for a header without one. Empty for
+// headerless files.
 func fileIDOf(m *MetaRecord) string {
 	if m == nil {
 		return ""
@@ -449,9 +443,9 @@ func scanReader(r io.Reader, name string, fn func(Entry), bad func(error)) error
 		line, tooLong, err := readBoundedLine(br, maxEntryLine)
 		switch {
 		case tooLong:
-			// One bad line, not the end of the file: a bufio.Scanner stopped
-			// here, so every entry after an oversize one was silently lost
-			// while audit verify (which has no cap) called the log intact.
+			// One bad line, not the end of the file: stopping here (as
+			// bufio.Scanner does) would silently drop every later entry while
+			// audit verify, which has no cap, calls the log intact.
 			bad(fmt.Errorf("line longer than %d bytes", maxEntryLine))
 		case len(line) == 0:
 		case bytes.HasPrefix(bytes.TrimLeft(line, " \t"), metaLinePrefix):
@@ -470,9 +464,7 @@ func scanReader(r io.Reader, name string, fn func(Entry), bad func(error)) error
 			if !replay {
 				return fmt.Errorf("read %s: %w", name, err)
 			}
-			// Replay is best-effort at startup — counters being off after a
-			// truncated replay is preferable to refusing to start. Bump the
-			// corrupt-lines counter so /metrics shows the degradation.
+			// Best-effort, as in ReplayFrom; /metrics shows the degradation.
 			metrics.IncAuditCorruptLine()
 			log.Printf("WARN audit: replay read error on %s (%v) — counters may be under-seeded", name, err)
 			return fmt.Errorf("replay scan: %w", err)
@@ -512,8 +504,7 @@ func readBoundedLine(br *bufio.Reader, max int) (line []byte, tooLong bool, err 
 }
 
 // Path returns the filesystem path of the underlying audit log, or "" if
-// the FileLogger has no open file. Used by callers that need to co-locate
-// auxiliary files (checkpoint, rotation markers) next to the log.
+// the FileLogger has no open file.
 func (l *FileLogger) Path() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()

@@ -457,10 +457,10 @@ func containsWord(list []string, w string) bool {
 // (`command -v bash`, `sudo -l`) is itself the command.
 //
 // More than maxWrapperLevels wrappers, or maxEnvSplits env -S strings, in
-// one command is unparseable. Real commands nest a few; without a bound, a 1 MiB chain of
-// `env env env …` had the caller join the remaining words at every level,
-// which is quadratic. inner is only called once the whole chain is
-// unwrapped within the bound.
+// one command is unparseable. Real commands nest a few; without a bound, a
+// 1 MiB chain of `env env env …` would have the caller join the remaining
+// words at every level, which is quadratic. inner is only called once the
+// whole chain is unwrapped within the bound.
 func unwrapCommand(words []string, inner func([]string)) ([]string, error) {
 	budget, splits := maxWrapperLevels, maxEnvSplits
 	var stages [maxWrapperLevels + 1][]string

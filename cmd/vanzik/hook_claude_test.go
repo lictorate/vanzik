@@ -381,7 +381,7 @@ func TestSetupConnectsAndUninstallDisconnects(t *testing.T) {
 	svc := &fakeService{}
 	s := &setup{m: m, ui: ui, svc: svc}
 	s.doSetup()
-	// A policy from before this release: no Claude Code block.
+	// A policy without a Claude Code block.
 	_ = os.WriteFile(m.policyPath(), []byte("version: \"1\"\nname: old\nrules:\n  - scope: shell\n    allow:\n      - pattern: \"ls *\"\n"), 0o644)
 
 	ui.choices = []int{0, 0} // "Add Vanzik's Claude Code rules"; server down: let calls through

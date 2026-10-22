@@ -208,7 +208,7 @@ func runAgentHook(a hookAgent, stdin io.Reader, stdout, stderr io.Writer, cfg ho
 		return a.warn(stdout, stderr, call, open)
 	}
 
-	// The first JSON value is the call, as on master: an agent that writes
+	// The first JSON value is the call: an agent that writes
 	// it and keeps stdin open must not leave the hook waiting for EOF.
 	var raw json.RawMessage
 	err := json.NewDecoder(io.LimitReader(stdin, 16<<20)).Decode(&raw)

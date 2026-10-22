@@ -15,21 +15,21 @@ Every operational endpoint is exposed at **both** of these paths:
 
 | Family | Pattern | Tenant resolution |
 |---|---|---|
-| Legacy | `/v1/<suffix>` | Always evaluates against tenant `local`. Wire-compatible with v0.4.x clients. |
+| Legacy | `/v1/<suffix>` | Always evaluates against tenant `local`. |
 | Tenant-aware | `/v1/t/{tenant}/<suffix>` | `{tenant}` is extracted from the URL and validated by the engine's `PolicyProvider`. |
 
-Since v0.6, `{tenant}` is validated against the policy registry: `local` is always recognised (the bundled file policy), and additional tenants are registered with `vanzik tenant put <id> --policy <yaml>` (requires `--persist`). An unregistered tenant returns `404` with body `{"error":"tenant not found"}`; a store infrastructure failure during tenant resolution returns `500 {"error":"policy provider error"}`. `/v1/check` and `/v1/t/local/check` remain identical in responses, audit entries, and headers.
+`{tenant}` is validated against the policy registry: `local` is always recognised (the bundled file policy), and additional tenants are registered with `vanzik tenant put <id> --policy <yaml>` (requires `--persist`). An unregistered tenant returns `404` with body `{"error":"tenant not found"}`; a store infrastructure failure during tenant resolution returns `500 {"error":"policy provider error"}`. `/v1/check` and `/v1/t/local/check` remain identical in responses, audit entries, and headers.
 
 **Tenant ID format constraints:**
 - Non-empty after URL-decoding.
 - URL-safe characters only — SDKs `URL-encode` the value before building the path, so reserved characters (`/`, spaces, etc.) are escaped to `%XX`.
 - Must be registered (or `local`) — unknown tenants 404.
 
-**Runtime state is partitioned by tenant (v0.6+).** Each tenant gets isolated approvals (no cross-tenant existence oracle), rate-limit buckets (`scope:tenant:agent` keys), session-cost accumulators, SSE feeds, and tenant-scoped audit reads — `/v1/t/<tenant>/audit` only returns that tenant's entries.
+**Runtime state is partitioned by tenant.** Each tenant gets isolated approvals (no cross-tenant existence oracle), rate-limit buckets (`scope:tenant:agent` keys), session-cost accumulators, SSE feeds, and tenant-scoped audit reads — `/v1/t/<tenant>/audit` only returns that tenant's entries.
 
 The wire format ([`docs/WIRE_PROTOCOL.md`](WIRE_PROTOCOL.md)) does **not** change between families: the same request body and response shape (`schema_version: "v1"`) flow through both.
 
-The legacy paths are not deprecated. v0.5 documents both as supported.
+The legacy paths are not deprecated; both families are supported.
 
 ---
 
@@ -105,14 +105,14 @@ Content-Type: application/json
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `agent_id` | string | no (strongly recommended) | Keys per-agent overrides, rate-limit buckets, and audit filtering. Omitting it is not rejected — the policy just evaluates without per-agent context. |
-| `scope` | string | yes* | `shell`, `filesystem`, `network`, `browser`, `cost`, `data`, or any custom string. *Not enforced with a `400` — an empty scope matches no rules and falls through to default deny (`200`). |
+| `scope` | string | yes* | `shell`, `filesystem`, `network`, `browser`, `cost`, `data`, `mcp_tool`, or any custom string. *Not enforced with a `400` — an empty scope matches no rules and falls through to default deny (`200`). |
 | `command` | string | — | For `shell` scope (required to match `pattern`). |
 | `action` | string | — | For `filesystem` scope (required alongside `path`). |
 | `path` | string | — | For `filesystem`. Normalized with `filepath.Clean + ToSlash`. |
 | `domain` | string | — | For `network` / `browser`. |
 | `url` | string | — | For `network` / `browser`. |
 | `session_id` | string | — | For `cost` scope accumulator. Groups entries in [`GET /v1/sessions`](#get-v1sessions--tenant-aware-mirror). |
-| `parent_session_id` | string | — | **(v1.4)** The session that started this one, e.g. an orchestrator's session for a sub-agent. Policy ignores it; the audit log keeps it so `GET /v1/sessions` can link parent and child sessions. |
+| `parent_session_id` | string | — | The session that started this one, e.g. an orchestrator's session for a sub-agent. Policy ignores it; the audit log keeps it so `GET /v1/sessions` can link parent and child sessions. |
 | `est_cost` | float | — | For `cost` scope. Negative values denied. |
 | `meta` | object | — | Free-form string→string map; logged as-is. |
 | `approval_id` | string | — | Replay of a previously issued approval (see [`APPROVAL_WORKFLOW.md`](APPROVAL_WORKFLOW.md)). Honored only when the request's operationally-meaningful fields match the original, the resolution is younger than `--approval-validity` (default 5m), and — for ALLOW — **at most once**: approvals are one-shot capabilities, so a second replay of the same id falls through to fresh policy evaluation and re-enters the approval flow under a new id. Refusals are counted in `vanzik_approval_replay_refused_total`. |
@@ -136,7 +136,7 @@ Body is limited to `MaxRequestBodyBytes` (default 1 MB; configurable via `proxy.
 | `decision` | always — `ALLOW`, `DENY`, or `REQUIRE_APPROVAL`. |
 | `reason` | always. |
 | `matched_rule` | always except the default-deny fall-through, where it is omitted. |
-| `approval_id` / `approval_url` | only when `decision == REQUIRE_APPROVAL`; omitted otherwise. |
+| `approval_id` / `approval_url` | `approval_url` only when `decision == REQUIRE_APPROVAL`. `approval_id` then too, and also on the `ALLOW` / `DENY` a replayed approval returns (`matched_rule` `allow:approved` / `deny:approved`); omitted otherwise. |
 
 ### Response headers
 
@@ -165,7 +165,7 @@ Rate-limit denials return `200` with `decision: "DENY"` and `matched_rule: "deny
 
 Tenant-aware mirrors live at `POST /v1/t/{tenant}/approve/{id}` and `POST /v1/t/{tenant}/deny/{id}`. Auth posture and request body are identical.
 
-Resolve a pending approval. Resolution is **write-once**: the first decision stands forever. Re-sending the *same* decision returns `200` (idempotent no-op, safe for retried requests); sending the *opposite* decision returns `409` with `{"error":"already resolved","id":"ap_…","status":"approved"|"denied"}` and mutates nothing. A wrong decision is corrected by re-running the action through `/v1/check` (fresh approval id) — never by editing history. Each resolution also records how it arrived (`resolved_via`: `bearer` / `session` / `open`, plus the peer host) for incident reconstruction.
+Resolve a pending approval. Resolution is **write-once**: the first decision stands forever. Re-sending the *same* decision returns `200` (idempotent no-op, safe for retried requests); sending the *opposite* decision returns `409` with `{"error":"already resolved","id":"ap_…","status":"approved"|"denied"}` and mutates nothing. A wrong decision is corrected by re-running the action through `/v1/check` (fresh approval id) — never by editing history. Each resolution also records how it arrived (`resolved_via`: `bearer` / `session` / `open`, plus the peer host) for incident reconstruction, and the first one writes an audit entry with `matched_rule: approval:resolved:<via>`.
 
 ### Request (Bearer)
 
@@ -236,7 +236,7 @@ original approval `request` and `created_at` are not returned here — use
 
 ## `GET /v1/audit` · tenant-aware mirror
 
-Tenant-aware mirror: `GET /v1/t/{tenant}/audit`. Auth posture and query parameters are identical. Since v0.6 the tenant-aware URL is scoped to its tenant's entries; the legacy `/v1/audit` serves the `local` tenant.
+Tenant-aware mirror: `GET /v1/t/{tenant}/audit`. Auth posture and query parameters are identical. The tenant-aware URL is scoped to its tenant's entries; the legacy `/v1/audit` serves the `local` tenant.
 
 Query the audit log.
 
@@ -250,15 +250,15 @@ Query the audit log.
 | `scope` | string | — | Exact match on `request.scope`. |
 | `limit` | int | `auditDefaultLimit` (default 100) | Silently clamped at `auditMaxLimit` (default 1000). `<1` or non-integer → `400`. |
 | `offset` | int | `0` | Skip N matching entries. Must be ≥ 0. With `order=desc` it counts from the newest entry. |
-| `order` | string | `asc` | **(v1.2)** `asc` returns the oldest matches first (the original behaviour); `desc` returns the newest first. Anything else → `400`. |
-| `parent_session_id` | string | — | **(v1.4)** Exact match on `request.parent_session_id`: the calls of the sessions started by that session. |
-| `since` | RFC 3339 time | — | **(v1.4)** Entries at or after this time (inclusive). Any time zone; compared as an instant. In a query string a `+` means a space, so write a positive offset as `%2B` (`2026-10-14T11:00:00%2B02:00`); an unencoded `+` before the offset is still read as one. The same applies to every `since`/`until` below. |
-| `until` | RFC 3339 time | — | **(v1.4)** Entries before this time (exclusive). `until` before `since`, or a value that is not RFC 3339, → `400`. |
-| `transport` | string | — | Filter on the `Entry.Transport` audit field. Recognised values: `sdk`, `mcp_gateway`, `llm_api_proxy`, and the coding-agent hooks' `claude_code`, `cursor`, `gemini_cli`, `codex_cli`. Pre-v0.5 entries have no transport tag and are excluded when this filter is set. |
+| `order` | string | `asc` | `asc` returns the oldest matches first; `desc` returns the newest first. Anything else → `400`. |
+| `parent_session_id` | string | — | Exact match on `request.parent_session_id`: the calls of the sessions started by that session. |
+| `since` | RFC 3339 time | — | Entries at or after this time (inclusive). Any time zone; compared as an instant. In a query string a `+` means a space, so write a positive offset as `%2B` (`2026-10-14T11:00:00%2B02:00`); an unencoded `+` before the offset is still read as one. The same applies to every `since`/`until` below. |
+| `until` | RFC 3339 time | — | Entries before this time (exclusive). `until` before `since`, or a value that is not RFC 3339, → `400`. |
+| `transport` | string | — | Filter on the `Entry.Transport` audit field. Recognised values: `sdk`, `mcp_gateway`, `llm_api_proxy`, and the coding-agent hooks' `claude_code`, `cursor`, `gemini_cli`, `codex_cli`. Entries with no transport tag count as `sdk`: `transport=sdk` matches them, any other value leaves them out. |
 
 ### Response
 
-Array of entries (JSON Lines rows as JSON objects). On a sealed log the entries also carry `seq`, `prev_hash` and `hash` ([FILE_FORMATS](FILE_FORMATS.md#current-on-disk-artifacts)):
+Array of entries (JSON Lines rows as JSON objects). A query that matches nothing returns `null`, not `[]`; treat both as an empty result. On a sealed log the entries also carry `seq`, `prev_hash` and `hash` ([FILE_FORMATS](FILE_FORMATS.md#current-on-disk-artifacts)):
 
 ```json
 [
@@ -299,7 +299,7 @@ If a window holds more than `limit` entries, page inside it with `offset`, or st
 
 ## `GET /v1/audit/head` · tenant-aware mirror
 
-Tenant-aware mirror: `GET /v1/t/{tenant}/audit/head`. **(v1.4)** Same auth as `GET /v1/audit`: Bearer or session.
+Tenant-aware mirror: `GET /v1/t/{tenant}/audit/head`. Same auth as `GET /v1/audit`: Bearer or session.
 
 Returns the head of the sealed audit log (`vanzik server --audit-seal`): the newest sealed entry's `seq` and `hash`, the `segment_id` of the file that holds it, and when the head was read. Copy it somewhere the audit host can't rewrite; `vanzik audit verify --anchor <seq>:<hash>` checks it later. See [OPERATIONS § Sealing and anchoring](OPERATIONS.md#sealing-and-anchoring).
 
@@ -319,7 +319,7 @@ Returns the head of the sealed audit log (`vanzik server --audit-seal`): the new
 
 ## `GET /v1/sessions` · tenant-aware mirror
 
-Tenant-aware mirror: `GET /v1/t/{tenant}/sessions`. **(v1.4)** Same auth as `GET /v1/audit`: Bearer or session.
+Tenant-aware mirror: `GET /v1/t/{tenant}/sessions`. Same auth as `GET /v1/audit`: Bearer or session.
 
 Lists the tenant's sessions: the audit entries grouped by `session_id`, newest first. Entries without a `session_id` are not part of any session. The dashboard's Sessions view is built on this route.
 
@@ -371,7 +371,7 @@ The file audit backend scans the live audit file (not rotated archives), like `G
 
 ## `GET /v1/sessions/{id}` · tenant-aware mirror
 
-Tenant-aware mirror: `GET /v1/t/{tenant}/sessions/{id}`. **(v1.4)** Same auth as `GET /v1/audit`.
+Tenant-aware mirror: `GET /v1/t/{tenant}/sessions/{id}`. Same auth as `GET /v1/audit`.
 
 Returns one session: its summary (same shape as in the list), the sessions it started, and its entries oldest first. URL-encode the id: session ids are chosen by the caller and may contain `/` or spaces (`sub%2F1`). The ids `.` and `..` can't be read this way, because clients and the server collapse them as path segments; read such a session with `GET /v1/audit?session_id=.`.
 
@@ -509,13 +509,13 @@ Returns `204 No Content`. Safe to call with no session (no-op).
 { "status": "ok", "version": "2.0.0" }
 ```
 
-Always `200` once the HTTP server is accepting connections. Use for liveness probes (see [`DEPLOYMENT.md`](DEPLOYMENT.md)). The legacy `/health` body shape is unchanged in v0.5 — for the richer operator probe see `/v1/health` below.
+Always `200` once the HTTP server is accepting connections. Use for liveness probes (see [`DEPLOYMENT.md`](DEPLOYMENT.md)). For the richer operator probe see `/v1/health` below.
 
 ---
 
 ## `GET /v1/health` · `GET /v1/t/{tenant}/health`
 
-Operator-grade health endpoint introduced in v0.5. Richer than `/health`: includes the resolved tenant, uptime, last-request and last-policy-load timestamps, and a warnings array.
+Operator-grade health endpoint. Richer than `/health`: includes the resolved tenant, uptime, last-request and last-policy-load timestamps, and a warnings array.
 
 ### Response
 
@@ -533,11 +533,11 @@ Operator-grade health endpoint introduced in v0.5. Richer than `/health`: includ
 
 | Field | Notes |
 |---|---|
-| `status` | `"ok"` or `"degraded"` *(v0.7)*. Degraded means the process serves but a durability signal is unhealthy — currently an audit buffered-overflow backlog (entries durable on disk but not yet queryable). The HTTP code stays `200` either way so liveness probes don't flap; act on the field, not the code. |
+| `status` | `"ok"` or `"degraded"`. Degraded means the process serves but a durability signal is unhealthy — currently an audit buffered-overflow backlog (entries durable on disk but not yet queryable). The HTTP code stays `200` either way so liveness probes don't flap; act on the field, not the code. |
 | `tenant` | Echoes the resolved tenant — `"local"` on `/v1/health`, `{tenant}` from the path on the tenant-aware variant. |
 | `last_request_at` | RFC 3339 with millisecond precision; omitted (`undefined`) when no traffic since boot. |
 | `last_policy_load_at` | RFC 3339 with millisecond precision; stamped by the engine on every successful provider load. |
-| `warnings` | `"no traffic in 5m+"`, `"policy not reloaded in 24h+"`, plus metrics-derived signals *(v0.7)*: `"audit: N corrupt line(s) skipped during queries"`, `"audit: N entry(ies) in buffered overflow backlog"`, `"notify: N notification(s) dropped (queue_full)"`. The metrics-derived signals are process-wide, not per-tenant. |
+| `warnings` | `"no traffic in 5m+"`, `"policy not reloaded in 24h+"`, plus metrics-derived signals: `"audit: N corrupt line(s) skipped during queries"`, `"audit: N entry(ies) in buffered overflow backlog"`, `"notify: N notification(s) dropped (queue_full)"`. The metrics-derived signals are process-wide, not per-tenant. |
 
 ### Status codes
 
@@ -554,7 +554,7 @@ Prometheus text exposition format. Unauthenticated. Full metric catalog in [`OBS
 
 ```bash
 curl -s http://localhost:8080/metrics | head
-# HELP vanzik_checks_total Total number of policy check requests
+# HELP vanzik_checks_total Total number of /v1/check requests processed.
 # TYPE vanzik_checks_total counter
 # vanzik_checks_total 12034
 # ...
@@ -648,7 +648,7 @@ Referrer-Policy: no-referrer
 Cache-Control: no-store
 ```
 
-The dashboard JS loads `/api/stats`, `/api/pending`, `/v1/audit?order=desc&limit=200` (the newest 200 entries; before v1.2 it loaded `?limit=200`, the oldest), and subscribes to `/api/stream`. CSRF token is read from `document.cookie['vanzik_csrf']` and echoed as `X-CSRF-Token` on approve/deny.
+The dashboard JS loads `/api/stats`, `/api/pending`, `/v1/audit?order=desc&limit=200` (the newest 200 entries), and subscribes to `/api/stream`. CSRF token is read from `document.cookie['vanzik_csrf']` and echoed as `X-CSRF-Token` on approve/deny.
 
 ---
 
@@ -723,10 +723,10 @@ g = Guard("http://localhost:8080", agent_id="my-agent", tenant_id="")  # → /v1
 import { Vanzik } from "@lictorate/vanzik";
 
 // Default — legacy /v1/... URLs.
-const g = new Vanzik({ baseUrl: "http://localhost:8080", agentId: "my-agent" });
+const local = new Vanzik({ baseUrl: "http://localhost:8080", agentId: "my-agent" });
 
 // Tenant-aware — /v1/t/acme/... URLs.
-const g = new Vanzik({
+const acme = new Vanzik({
   baseUrl: "http://localhost:8080",
   agentId: "my-agent",
   tenantId: "acme",

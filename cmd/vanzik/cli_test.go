@@ -275,7 +275,7 @@ func TestServerHelp_GroupsEveryFlag(t *testing.T) {
 	var help bytes.Buffer
 	serverUsage(&help, fs)
 	// The help must not depend on the machine: --node-id defaults to the
-	// hostname, which once pushed a line past 80 columns on a CI runner.
+	// hostname, which can push a line past 80 columns.
 	if host := defaultNodeID(); strings.Contains(help.String(), "(default "+host) {
 		t.Errorf("server help prints this machine's hostname %q as a default", host)
 	}

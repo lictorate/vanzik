@@ -18,8 +18,6 @@ import (
 	"time"
 )
 
-// readFixture loads the SSE bytes for a fixture as one byte slice
-// (suitable for serving from an httptest server).
 func readFixture(t *testing.T, name string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("testdata", name))
@@ -29,9 +27,7 @@ func readFixture(t *testing.T, name string) []byte {
 	return b
 }
 
-// newStreamingTestServer builds a streaming-aware proxy in front of
-// the given upstream. The upstream's handler emits whatever fixture
-// bytes you want.
+// newStreamingTestServer builds a proxy in front of the given upstream.
 func newStreamingTestServer(
 	t *testing.T,
 	upstream *httptest.Server,
@@ -64,11 +60,8 @@ func newStreamingTestServer(
 	return httpSrv.URL, teardown
 }
 
-// TestStreamingAllowPath_ByteIdentity is the headline correctness
-// test: when PolicyCheck returns ALLOW for every tool_call (the
-// default with no hook), the bytes the client receives must be
-// byte-identical to the upstream output (modulo provenance comment
-// events which the parser keeps verbatim).
+// TestStreamingAllowPath_ByteIdentity: when every tool_call is ALLOWed,
+// the client receives the upstream bytes unchanged.
 func TestStreamingAllowPath_ByteIdentity(t *testing.T) {
 	fixture := readFixture(t, "openai_streaming_single_tool_call.txt")
 
@@ -108,18 +101,10 @@ func TestStreamingAllowPath_ByteIdentity(t *testing.T) {
 	}
 }
 
-// TestStreaming_ArgsAndFinishInSameEvent_GateRunsAndFlushes pins the
-// full-orchestrator behaviour for audit blocker B3. The fixture packs
-// the closing tool_call argument fragment and finish_reason: tool_calls
-// into a single SSE event. With PolicyCheck stubbed to ALLOW, the
-// orchestrator must:
-//   - Run the gate (observed via the policyHookSeen counter)
-//   - Receive the FULL assembled arguments {"cmd":"ls"} (not the
-//     truncated {"cmd":"l"} that the pre-fix parser would have produced)
-//   - Replay the upstream bytes byte-identical to the client.
-//
-// Without the fix the gate would never fire (Completed never returned)
-// and the buffered events would be silently dropped at EOF.
+// TestStreaming_ArgsAndFinishInSameEvent_GateRunsAndFlushes: the closing
+// argument fragment and finish_reason arrive in one event. The gate must
+// fire once, see the full {"cmd":"ls"}, and the ALLOW replay must be
+// byte-identical; otherwise the buffered events are lost at EOF.
 func TestStreaming_ArgsAndFinishInSameEvent_GateRunsAndFlushes(t *testing.T) {
 	fixture := readFixture(t, "openai_streaming_args_and_finish_in_one_event.txt")
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -208,11 +193,8 @@ func TestStreamingDenyPath_RefusesAndCloses(t *testing.T) {
 	}
 }
 
-// TestStreamingApprovalPath — REQUIRE_APPROVAL behaves like DENY
-// (the stream is interrupted with a synthetic refusal carrying the
-// approval URL). The default fallback builder doesn't include an
-// approval URL but a custom BuildRefusal does — this test wires one
-// to confirm the hook receives the decision verbatim.
+// TestStreamingApprovalPath: REQUIRE_APPROVAL refuses like DENY, and a
+// custom BuildRefusal receives the decision verbatim.
 func TestStreamingApprovalPath(t *testing.T) {
 	fixture := readFixture(t, "openai_streaming_single_tool_call.txt")
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -257,11 +239,8 @@ func TestStreamingApprovalPath(t *testing.T) {
 	}
 }
 
-// TestStreamingMixedTextAndToolCall — text deltas pass through
-// immediately; the tool_call's deltas buffer and either flush on
-// ALLOW or get refused on DENY. We test the ALLOW variant; bytes
-// must match (modulo strict byte-identity which we already cover
-// in the dedicated test).
+// TestStreamingMixedTextAndToolCall: text passes through, the tool call
+// is buffered and flushed on ALLOW.
 func TestStreamingMixedTextAndToolCall(t *testing.T) {
 	fixture := readFixture(t, "openai_streaming_mixed_text_and_tool.txt")
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -288,9 +267,8 @@ func TestStreamingMixedTextAndToolCall(t *testing.T) {
 	}
 }
 
-// TestStreamingOverflowBufferBytes — set MaxBufferBytes to 256; emit
-// a tool_call with 1 KiB arguments; assert the proxy denies with the
-// canonical buffer-overflow refusal.
+// TestStreamingOverflowBufferBytes: arguments over MaxBufferBytes get the
+// buffer-overflow refusal.
 func TestStreamingOverflowBufferBytes(t *testing.T) {
 	huge := strings.Repeat("a", 1024)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -324,11 +302,9 @@ func TestStreamingOverflowBufferBytes(t *testing.T) {
 	}
 }
 
-// TestReadSSEEvent_NewlineFreeFloodRefused — a giant blob with no
-// newline at all must still trip the per-event cap. The pre-fix
-// ReadBytes implementation buffered the entire "line" before the cap
-// check ever ran, so a newline-free upstream flood grew memory
-// unboundedly even with --max-buffer-bytes at its default.
+// TestReadSSEEvent_NewlineFreeFloodRefused: a blob with no newline must
+// trip the per-event cap within one read chunk, not after buffering the
+// whole "line".
 func TestReadSSEEvent_NewlineFreeFloodRefused(t *testing.T) {
 	src := strings.NewReader(strings.Repeat("x", 5000)) // no '\n' anywhere
 	r := bufio.NewReaderSize(src, 16)                   // small buffer => deterministic ReadSlice chunks
@@ -381,11 +357,9 @@ func TestReadSSEEvent_PartialTrailingEventEOF(t *testing.T) {
 	}
 }
 
-// TestStreamingNewlineFreeBlobRefusedAtDefaultCap is the loop-level
-// regression guard for the ReadBytes hole: with the DEFAULT
-// --max-buffer-bytes (1 MiB), a newline-free upstream blob must be
-// refused fail-closed at the 2x per-event read cap instead of being
-// buffered in its entirety.
+// TestStreamingNewlineFreeBlobRefusedAtDefaultCap: at the default
+// --max-buffer-bytes, a newline-free upstream blob is refused at the 2x
+// per-event cap instead of being buffered whole.
 func TestStreamingNewlineFreeBlobRefusedAtDefaultCap(t *testing.T) {
 	cfg := &Config{
 		Listen:            "127.0.0.1:0",
@@ -421,9 +395,8 @@ func TestStreamingNewlineFreeBlobRefusedAtDefaultCap(t *testing.T) {
 	}
 }
 
-// TestHardCappedBufferBytes pins the cap-resolution contract: any
-// positive computed cap passes through untouched (operator-configured
-// behaviour is unchanged), and <= 0 falls back to the absolute ceiling.
+// TestHardCappedBufferBytes: positive caps pass through; <= 0 becomes
+// the absolute ceiling.
 func TestHardCappedBufferBytes(t *testing.T) {
 	cases := []struct {
 		in, want int
@@ -441,17 +414,13 @@ func TestHardCappedBufferBytes(t *testing.T) {
 	}
 }
 
-// TestStreamingHardCeilingAppliesWhenCapDisabled — audit L1: with
-// MaxBufferBytes = 0 ("no operator-configured cap", only reachable by
-// building the Config directly; ParseConfig rejects 0) an upstream that
-// never terminates an SSE event previously grew the read buffer without
-// bound. The absolute hard ceiling must refuse the stream fail-closed
-// with the canonical buffer-overflow refusal instead.
+// TestStreamingHardCeilingAppliesWhenCapDisabled: with MaxBufferBytes = 0
+// (only possible on a hand-built Config), an upstream that never ends an
+// SSE event is refused at the absolute ceiling with the buffer-overflow
+// refusal.
 //
-// Drives runOpenAIStreamLoop directly rather than through a full HTTP
-// hop: with the cap at 0 readRequestBody rejects any request body
-// before streaming starts, and pushing 64 MiB through two loopback
-// servers buys no extra coverage over feeding the reader in-process.
+// Drives runOpenAIStreamLoop directly: with the cap at 0 readRequestBody
+// rejects every request body, and an HTTP hop adds no coverage.
 func TestStreamingHardCeilingAppliesWhenCapDisabled(t *testing.T) {
 	cfg := &Config{
 		Listen:            "127.0.0.1:0",
@@ -472,10 +441,8 @@ func TestStreamingHardCeilingAppliesWhenCapDisabled(t *testing.T) {
 	}
 	srv.cfg.MaxBufferBytes = 0 // bypasses Validate, as a direct Config build can
 
-	// One SSE event that never sees a blank-line terminator: 1 MiB data
-	// lines repeated until just past the absolute ceiling. If the
-	// ceiling regressed, the loop would swallow all of it and finish at
-	// EOF without a refusal (clean failure, no hang).
+	// One unterminated event just past the ceiling. Without the ceiling
+	// the loop ends at EOF with no refusal (fails cleanly, no hang).
 	line := "data: " + strings.Repeat("a", 1<<20) + "\n"
 	nLines := absoluteMaxBufferBytes/len(line) + 2
 	readers := make([]io.Reader, nLines)
@@ -493,9 +460,8 @@ func TestStreamingHardCeilingAppliesWhenCapDisabled(t *testing.T) {
 	}
 }
 
-// TestStreamingMalformedUpstream — upstream emits garbage; proxy must
-// not panic. The bad event is dropped (we don't inject our own bytes
-// into the stream); valid events that follow continue to work.
+// TestStreamingMalformedUpstream: a garbage event is dropped without a
+// panic and later events still flow.
 func TestStreamingMalformedUpstream(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -525,15 +491,11 @@ func TestStreamingMalformedUpstream(t *testing.T) {
 	}
 }
 
-// TestStreamingConcurrent_NoCrossLeak — 10 concurrent streaming
-// requests, each tagged with a distinct tool_call id. Assert each
-// client receives its own id and never another request's. This
-// exercises the per-request goroutine isolation invariant.
+// TestStreamingConcurrent_NoCrossLeak: concurrent streams with distinct
+// tool_call ids each receive only their own id.
 func TestStreamingConcurrent_NoCrossLeak(t *testing.T) {
 	const concurrency = 10
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// The client puts the desired call id in a custom header so
-		// the upstream emits a fixture with that id.
 		callID := r.Header.Get("X-Test-Call-ID")
 		if callID == "" {
 			callID = "default"
@@ -554,14 +516,8 @@ func TestStreamingConcurrent_NoCrossLeak(t *testing.T) {
 
 	var observedIDs sync.Map
 	base, teardown := newStreamingTestServer(t, upstream, func(s *Server) {
-		// PolicyCheck observes the call id and records it under the
-		// caller's tag so a leak (one request's id flowing through
-		// another's accumulator) would show up.
 		s.PolicyCheck = func(ctx context.Context, tc *ToolCallCheck) (Decision, error) {
-			// Pull the test tag from the request via meta — we can't
-			// do that without plumbing context, so we instead just
-			// record the seen ToolCallID. Cross-leak would manifest
-			// as duplicate IDs in `observedIDs`.
+			// A cross-leak shows up as duplicate ids.
 			observedIDs.LoadOrStore(tc.ToolCallID, true)
 			return Decision{Allow: true}, nil
 		}
@@ -609,8 +565,6 @@ func TestStreamingConcurrent_NoCrossLeak(t *testing.T) {
 	}
 }
 
-// TestStreamingAnthropicAllowPath — ALLOW path on Anthropic should
-// also be byte-identical.
 func TestStreamingAnthropicAllowPath(t *testing.T) {
 	fixture := readFixture(t, "anthropic_streaming_single_tool_use.txt")
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -637,8 +591,8 @@ func TestStreamingAnthropicAllowPath(t *testing.T) {
 	}
 }
 
-// TestStreamingAnthropicDenyPath — Anthropic DENY produces a refusal
-// with stop_reason rewrite to end_turn.
+// TestStreamingAnthropicDenyPath: the refusal rewrites stop_reason to
+// end_turn.
 func TestStreamingAnthropicDenyPath(t *testing.T) {
 	fixture := readFixture(t, "anthropic_streaming_single_tool_use.txt")
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -676,21 +630,11 @@ func TestStreamingAnthropicDenyPath(t *testing.T) {
 	}
 }
 
-// TestStreaming_FailMode_DenyVsClosedAudit_DistinctRules pins B4 closed.
-//
-// Drives a streaming OpenAI request twice with the central /v1/check
-// unreachable: once with --fail-mode deny, once with
-// --fail-mode fail-closed-with-audit. The two synthetic refusals MUST
-// emit distinct rule strings so operators who alert on
-// `deny:llm_api_proxy:fail_closed_audit` can differentiate central-server
-// outage events from plain fail-closed denials. The fix wires the gate's
-// failModeDecision Decision through the streaming orchestrator (or, when
-// the test shim returns a bare error without a Rule, falls back to the
-// per-fail-mode rule string via fallbackFailModeRule).
-//
-// Pre-fix: streaming.go hardcoded `deny:llm_api_proxy:policy_unreachable`
-// regardless of FailMode, making `fail-closed-with-audit` observationally
-// indistinguishable from `deny`.
+// TestStreaming_FailMode_DenyVsClosedAudit_DistinctRules: with /v1/check
+// unreachable, --fail-mode deny and fail-closed-with-audit must produce
+// distinct client-visible rule strings, so dashboards can tell
+// central-server outages from plain fail-closed denials. The gate's
+// failModeDecision passes through the streaming orchestrator.
 func TestStreaming_FailMode_DenyVsClosedAudit_DistinctRules(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -707,10 +651,7 @@ func TestStreaming_FailMode_DenyVsClosedAudit_DistinctRules(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	// Test runs against the production gate so the Rule string is
-	// constructed by HTTPPolicyClient.failModeDecision (not the streaming
-	// fallback). Use an unreachable guard URL so the gate's HTTP call
-	// fails and failModeDecision fires.
+	// The production gate builds the Rule (not the streaming fallback).
 	unreachableGuard := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hj, _ := w.(http.Hijacker)
 		conn, _, _ := hj.Hijack()
@@ -722,14 +663,8 @@ func TestStreaming_FailMode_DenyVsClosedAudit_DistinctRules(t *testing.T) {
 		t.Helper()
 		base, teardown := newStreamingTestServer(t, upstream, func(s *Server) {
 			s.cfg.FailMode = failMode
-			// Wire the rich refusal builder so the rule string lands in
-			// the client-visible refusal payload. (The default refusal
-			// builder only renders Reason; only the rich builder
-			// includes Rule.)
+			// Only the rich builder renders Rule.
 			s.BuildRefusal = BuildRefusalRich
-			// Wire the production HTTPPolicyClient against an
-			// unreachable guard so failModeDecision fires with the
-			// gate-shaped Decision (not a test-shim bare error).
 			gateCfg := &Config{
 				GuardURL: unreachableGuard.URL,
 				TenantID: "test",
@@ -778,12 +713,9 @@ func TestStreaming_FailMode_DenyVsClosedAudit_DistinctRules(t *testing.T) {
 	})
 }
 
-// TestStreaming_FailMode_BareErrorFallback_DistinctRules covers the
-// test-shim path where PolicyCheck returns a bare error without a
-// fail-mode-shaped Decision. The streaming orchestrator's
-// fallbackFailModeRule must still emit the right rule per --fail-mode
-// so dashboards stay consistent regardless of which path constructed
-// the Decision.
+// TestStreaming_FailMode_BareErrorFallback_DistinctRules: when
+// PolicyCheck returns a bare error, fallbackFailModeRule still emits the
+// per-mode rule.
 func TestStreaming_FailMode_BareErrorFallback_DistinctRules(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

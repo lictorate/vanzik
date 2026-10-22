@@ -13,7 +13,7 @@ shows up live on a dashboard you can approve / deny from.
 - **Python 3.10+** with the OpenAI SDK: `pip install "openai>=1.0"`
 - A valid `OPENAI_API_KEY` (the proxy forwards it verbatim to
   `api.openai.com`)
-- **Go 1.25+** for `go install`: <https://go.dev/dl/>
+- **Go 1.26+** for `go install`: <https://go.dev/dl/>
 
 This walkthrough uses the OpenAI SDK. The same pattern works for
 Anthropic, LangChain, and CrewAI — see [`examples/`](../examples/)
@@ -49,7 +49,7 @@ In the first terminal:
 export VANZIK_API_KEY="$(openssl rand -hex 32)"
 
 git clone https://github.com/lictorate/vanzik.git
-cd Vanzik
+cd vanzik
 
 vanzik server \
     --policy configs/default.yaml \
@@ -116,9 +116,10 @@ rules:
     # ... existing rules ...
 ```
 
-The proxy hot-reloads the policy file automatically (its own watcher —
-no flag needed; `--watch` on `vanzik server` only logs reload
-activity). Modify the prompt in `examples/openai-sdk-config.py` to ask
+`vanzik server` reloads the policy file automatically (no flag needed;
+`--watch` only logs reload activity), and the verdict comes from the
+server. The proxy reloads its own copy too, but only to refresh its
+`tool_scope_map`. Modify the prompt in `examples/openai-sdk-config.py` to ask
 the model to `rm -rf /etc` and re-run. The model emits a tool call;
 Vanzik intercepts it mid-stream and rewrites the response as a
 synthetic assistant text:

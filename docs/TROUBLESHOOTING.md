@@ -61,13 +61,13 @@ vanzik server --base-url https://guard.example.com ...
 vanzik server --policy ./my-policy.yaml --watch ...
 ```
 
-**Likely cause (b):** the file's mtime did not change. The watcher polls `os.Stat(path).ModTime()` every 2s (`pkg/policy/watcher.go` `DefaultPollInterval`). If you edited through a tool that preserves mtime, touch the file:
+**Likely cause (b):** the file's mtime did not change. The watcher reacts to fsnotify events on the file's directory, and falls back to polling `os.Stat(path).ModTime()` every 2s (`pkg/policy/watcher.go` `DefaultPollInterval`) only when fsnotify can't start. Either way a reload happens only when the mtime has advanced. If you edited through a tool that preserves mtime, touch the file:
 
 ```bash
 touch configs/default.yaml
 ```
 
-**Likely cause (c):** your edit is syntactically invalid. Parse errors are logged but do **not** halt the watcher — the old policy keeps serving. Check the server log for `WatchFile: reload failed:` and run `vanzik validate --policy configs/default.yaml` to pinpoint the error.
+**Likely cause (c):** your edit is syntactically invalid. Parse errors are logged but do **not** halt the watcher — the old policy keeps serving. Check the server log for `Policy reload failed:` and run `vanzik validate --policy configs/default.yaml` to pinpoint the error.
 
 ---
 
@@ -77,7 +77,7 @@ touch configs/default.yaml
 
 **Mitigations:**
 
-- Share state across replicas (v1.0): `--store-dsn postgres://…` plus a distinct `--node-id` per replica. Note the shared mode is bounded-overshoot — brief bursts can still exceed the cap by ≈ `reconcile-interval × peak rate` per extra replica before the nodes converge.
+- Share state across replicas: `--store-dsn postgres://…` plus a distinct `--node-id` per replica. Note the shared mode is bounded-overshoot — brief bursts can still exceed the cap by ≈ `reconcile-interval × peak rate` per extra replica before the nodes converge.
 - Divide per-scope `max_requests` by the replica count when writing the policy.
 - Pin agents to a single Vanzik instance via session affinity.
 - Keep `replicas: 1` and scale vertically.
@@ -88,7 +88,7 @@ Details: [`docs/OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments).
 
 ## Approvals disappeared after a restart
 
-**Cause:** since v0.6 the queue is persistent by default, so this should only happen if (a) you run `--persist=false` (pre-v0.6 in-memory mode), (b) the process can't write its `--data-dir` (check the startup log for store errors), or (c) the entries were created inside the final ≥1 s store-sync window before a hard crash.
+**Cause:** the queue is persistent by default, so this should only happen if (a) you run `--persist=false` (in-memory only), (b) the process can't write its `--data-dir` (check the startup log for store errors), or (c) the entries were created inside the final ≥1 s store-sync window before a hard crash.
 
 **Mitigations:**
 
@@ -100,11 +100,11 @@ Details: [`docs/OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments).
 
 ## `/metrics` or `/api/stats` are slow / inaccurate right after startup
 
-**Cause:** on boot, Vanzik replays the entire audit log through `metrics.IncDecision` to seed decision counters so `/metrics` survives restarts with accurate totals. For a multi-GB `audit.jsonl`, this scan can take seconds to minutes.
+**Cause:** on boot, Vanzik replays the audit log through `metrics.IncDecision` to seed decision counters so `/metrics` survives restarts with accurate totals. The replay resumes from a saved byte-offset checkpoint, so normally only entries written since the last checkpoint are read; the whole log is replayed only on first boot, after a reset, or when the checkpoint can't be read (the log says `replaying full log`). For a multi-GB `audit.jsonl`, that full scan can take seconds to minutes.
 
 **Fix:**
 
-- Keep rotation enabled (it is on by default since v0.5: `--audit-max-size-mb 100`, 5 backups) so the active file stays bounded.
+- Keep rotation enabled (it is on by default: `--audit-max-size-mb 100`, 5 backups) so the active file stays bounded.
 - Ship historical audit data to an external aggregator and truncate the local file during scheduled maintenance.
 
 Details: [`docs/OPERATIONS.md`](OPERATIONS.md).
@@ -123,10 +123,10 @@ curl -s http://127.0.0.1:8080/metrics | grep notify_events_dropped_total
 
 **Mitigations:**
 
-- Increase notifier timeouts in the policy file (`notifications.dispatch_timeout`).
+- Lower notifier timeouts in the policy file (`notifications.dispatch_timeout`, or a target's own `timeout`), so a slow or flaky endpoint holds a worker for less time. Longer timeouts keep workers busy and make drops more likely.
 - Reduce notifier fanout (remove unused targets).
 - Shard to multiple webhook endpoints if a single Slack channel is a bottleneck.
-- Watch `vanzik_notify_queue_depth{notifier}` — steady growth means the worker cannot drain.
+- Watch `vanzik_notify_queue_depth` (one shared queue, so it has no `notifier` label) — steady growth means the workers cannot drain.
 
 ---
 
@@ -138,8 +138,8 @@ curl -s http://127.0.0.1:8080/metrics | grep notify_events_dropped_total
 
 **Fixes:**
 
-- Point the test `Guard(base_url=...)` at a running test server, or use `httpretty` / `responses` to stub `urllib`.
-- For tests that need fail-open behavior, pass `fail_mode="allow"` explicitly (Python v0.4.1+). Do **not** flip this in production unless your threat model treats Vanzik as advisory — the `"deny"` default is what keeps agents safe when the proxy is down.
+- Point the test `Guard(base_url=...)` at a running test server, or stub the HTTP layer with the standard-library stub in [`SDK_PYTHON.md`](SDK_PYTHON.md) ("Option B"). `responses` can't intercept the SDK's calls: it only patches `requests`, and the SDK uses `urllib`.
+- For tests that need fail-open behavior, pass `fail_mode="allow"` explicitly. Do **not** flip this in production unless your threat model treats Vanzik as advisory — the `"deny"` default is what keeps agents safe when the proxy is down.
 
 ---
 
@@ -165,7 +165,7 @@ A `deny:shell:unparseable_command` verdict means the command used syntax Vanzik 
 
 ## `*.foo.com` does not match `foo.com`
 
-**Not a bug.** Vanzik uses standard glob semantics: `*.foo.com` requires at least one character before the dot. Similarly, `*` does not cross `/` boundaries unless you use `**`.
+**Not a bug.** Vanzik uses standard glob semantics: `*.foo.com` requires at least one character before the dot. Note the opposite surprise for paths: a single `*` **does** cross `/` (`api/*/users` matches `api/v1/internal/users`, and `/workspace/*` matches every file under `/workspace`), so bound path allows with `**` segments instead. See [POLICY_REFERENCE § Single-star `*` crosses `/`](POLICY_REFERENCE.md#single-star--crosses-).
 
 **Fix:** add both patterns explicitly.
 
@@ -181,7 +181,7 @@ Details: [`docs/POLICY_REFERENCE.md`](POLICY_REFERENCE.md).
 
 ## Condition has `time_window` but it is being ignored
 
-**Cause:** `time_window` without `require_prior` was a v0.4.0-compat no-op that **errors out at policy load as of v0.5.0**. `LoadFromFile` returns the validation error; the server refuses to boot until the policy is fixed. Either remove the orphan `time_window` or add a `require_prior` clause. See [`DEPRECATIONS.md`](DEPRECATIONS.md).
+**Cause:** `time_window` without `require_prior` **errors out at policy load**. `LoadFromFile` returns the validation error; the server refuses to boot until the policy is fixed. Either remove the orphan `time_window` or add a `require_prior` clause. See [`DEPRECATIONS.md`](DEPRECATIONS.md).
 
 **Confirm:** policy load fails with an error like:
 
@@ -201,19 +201,19 @@ Details: [`docs/DEPRECATIONS.md`](DEPRECATIONS.md) and [`docs/POLICY_REFERENCE.m
 
 **Fixes:**
 
-- Refresh the page. The dashboard does **not** auto-reconnect today.
+- Wait a few seconds: the dashboard reconnects by itself, and its badge shows `RECONNECTING...` meanwhile. If it stays there, the server is down or something between you and it is blocking the stream.
 - If behind nginx, set `proxy_buffering off` on `/api/stream`. See [`docs/DEPLOYMENT.md` §2c](DEPLOYMENT.md#2c-nginx-reference-config).
 
 ---
 
-## I see `503 Service Unavailable` on `/v1/approve` or `/v1/deny`
+## I see `503 Service Unavailable` on `/v1/check` or `/auth/login`
 
-**Cause:** the in-memory session store or approval queue is full.
+**Cause:** the approval queue or the dashboard session store is full. (`/v1/approve` and `/v1/deny` never return 503.)
 
-- Session store: `MaxSessions = 1024` (hardcoded in `pkg/proxy/auth.go`). Oldest-by-expiry are evicted, but under burst login load you can hit `Retry-After: 5`.
-- Approval queue: `MaxPendingApprovals = 10000`. Resolved entries are bulk-evicted when the queue fills.
+- Approval queue, on `/v1/check`: `MaxPendingApprovals = 10000` (`pkg/proxy/server.go`). When a new approval arrives at capacity, the oldest resolved entry is evicted to make room; if every entry is still pending, the check that needed approval gets 503 with `Retry-After: 30`.
+- Session store, on `/auth/login`: `MaxSessions = 1024` (hardcoded in `pkg/proxy/auth.go`). At capacity, expired sessions are swept first; live sessions are never evicted, so if all are live the login gets 503 with `Retry-After: 5`.
 
-**Mitigation:** resolve outstanding approvals faster, or rotate API keys / force logouts to shrink the session table.
+**Mitigation:** resolve outstanding approvals faster, or log out unused dashboard sessions (or wait for them to expire) to shrink the session table.
 
 ---
 
@@ -256,15 +256,17 @@ The gateway started but no `--upstream` is wired, or the upstream subprocess cra
 
 ### LLM API Proxy: SDK hangs / `unexpected end of stream`
 
-The proxy was killed mid-stream and the buffered tool-call payload was never flushed. Give it a 30 s graceful-shutdown window (`TimeoutStopSec=30s` / `terminationGracePeriodSeconds: 30`).
+The proxy was killed mid-stream and the buffered tool-call payload was never flushed. On SIGTERM the proxy drains in-flight requests for 10 s (fixed, `pkg/llmproxy/server.go`), then closes what is left. Give the host at least that long before it kills the process (`TimeoutStopSec=15s` / `terminationGracePeriodSeconds: 15`); a longer grace period doesn't extend the 10 s drain, so a stream that runs past it is still cut.
 
 ### LLM API Proxy: agent sees `502 Bad Gateway`
 
-The proxy couldn't reach `--guard-url` or the bearer token is wrong. `curl -sf <guard-url>/health` to confirm reachability, then verify `VANZIK_API_KEY` matches on both sides. With `--fail-mode=deny` (production default), in-flight calls return synthetic refusals until the server comes back.
+The proxy couldn't reach the model provider: the response body reads `upstream error: …` (for example `connection refused`). Check `--upstream-openai` / `--upstream-anthropic` and that the proxy host can reach the provider (DNS, egress firewall, corporate proxy).
+
+An unreachable Vanzik server (`--guard-url`) does **not** cause a 502. With `--fail-mode=deny` (the default) the agent gets a synthetic refusal with HTTP 200 until the server comes back; `curl -sf <guard-url>/health` confirms reachability, and `VANZIK_API_KEY` must match on both sides.
 
 ### Proxy rejects every incoming connection
 
-It bound to `127.0.0.1`. If your agent runs in a separate container or host, the loopback bind blocks it. Change to `--listen 0.0.0.0:<port>` **only on a trusted network** — proxy inbound is not authenticated.
+It bound to `127.0.0.1`. If your agent runs in a separate container or host, the loopback bind blocks it. Change to `--listen 0.0.0.0:<port>` and set `--proxy-api-key`: the proxy refuses to start on a non-loopback address without it (exit code 2), and then requires every client to send the key in the `X-Vanzik-Proxy-Auth` header. See [`LLM_API_PROXY.md`](LLM_API_PROXY.md).
 
 ### Tool calls flow through the LLM API Proxy but never reach the Vanzik server
 
@@ -275,7 +277,7 @@ The client's `OPENAI_BASE_URL` is missing the `/v1` suffix, or the request is a 
 ## Still stuck?
 
 - Run `vanzik status` — shows `/health` reachability and the pending queue.
-- Check `/metrics` on the central server AND on each proxy — counters, gauges, histograms, dispatch drops.
+- Check `/metrics` on the central server — counters, gauges, histograms, dispatch drops. The LLM API Proxy and the MCP Gateway serve no `/metrics`; their decisions show up in the central server's metrics and audit log.
 - Response headers on `/v1/check`: `X-Vanzik-Policy-Ms`, `X-Vanzik-Audit-Ms`, `X-Vanzik-Total-Ms` (timings in ms, 3 decimals).
 - Version skew: all three binaries report their version via `vanzik version` / `vanzik-mcp-gateway --version` / `vanzik-llm-proxy --version`. Mismatch is the most common ops-time bug after a partial upgrade.
 - Open an issue with: versions of all binaries, sanitized policy snippet, and the relevant log lines from both the proxy and the central server. Security-sensitive reports go to `hello@lictorate.com` — not the issue tracker.

@@ -11,8 +11,7 @@ import (
 	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
-// oldAuditSchema is audit_entries exactly as it shipped before the v1.4
-// session columns. Kept verbatim so this test fails loudly if Migrate's
+// oldAuditSchema is audit_entries without the session columns. Kept verbatim so this test fails loudly if Migrate's
 // guarded ALTERs are dropped on the assumption CREATE TABLE covers them.
 const oldAuditSchema = `
 CREATE TABLE audit_entries (
@@ -39,7 +38,7 @@ func TestMigrate_AddsSessionColumnsToAnOldAuditTable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "old.db")
 	old := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 
-	// A database written by an older build, already holding an entry.
+	// A database without the session columns, already holding an entry.
 	raw, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatalf("open raw: %v", err)
@@ -154,7 +153,7 @@ func TestPostgresStore_AuditBackendsAgree(t *testing.T) {
 func TestPostgresStore_MigrateAddsSessionColumns(t *testing.T) {
 	s := newTestPGStore(t)
 	ctx := context.Background()
-	// Put the table back in its pre-v1.4 shape, as an old build left it.
+	// Drop the session columns again, leaving the table without them.
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE audit_entries DROP COLUMN parent_session_id, DROP COLUMN subagent`); err != nil {
 		t.Fatalf("drop columns: %v", err)
 	}

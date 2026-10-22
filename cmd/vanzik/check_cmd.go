@@ -43,9 +43,8 @@ const (
 	exitError    = 3
 )
 
-// checkCmdFlags carries every flag accepted by `vanzik check`. Held in
-// a struct so executeCheck can be unit-tested without touching package
-// globals or os.Args.
+// checkCmdFlags carries every flag accepted by `vanzik check`, so
+// executeCheck can be unit-tested without os.Args.
 type checkCmdFlags struct {
 	PolicyPath string
 	TenantID   string
@@ -191,8 +190,7 @@ Exit codes:
 	return executeCheck(f, stdin, stdout, stderr)
 }
 
-// executeCheck is the pure half of the check subcommand. Accepts io.Reader
-// for stdin and io.Writers for output so tests can supply bytes.Buffer.
+// executeCheck runs the check subcommand on injected I/O.
 func executeCheck(f *checkCmdFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	if f.PolicyPath == "" {
 		fmt.Fprintln(stderr, "check: --policy is required")
@@ -393,10 +391,8 @@ func runSingle(engine *policy.Engine, req policy.ActionRequest, tenantID, output
 	res := engine.Check(req, tenantID)
 	res.SchemaVersion = schemav1.Version
 	if err := writeResult(stdout, req, res, outputFmt); err != nil {
-		// A stdout write error is rare (closed pipe, full disk). We've
-		// already evaluated policy, so the *decision* is valid; mapping
-		// the I/O failure to exitError matches the contract — the caller
-		// never received the verdict.
+		// The decision is valid, but the caller never received it
+		// (closed pipe, full disk): exitError, per the contract.
 		fmt.Fprintf(stdout, "check: write error: %v\n", err)
 		return exitError
 	}
@@ -409,14 +405,8 @@ func runSingle(engine *policy.Engine, req policy.ActionRequest, tenantID, output
 //
 // A single malformed line aborts the batch with exitError after emitting
 // any results already produced — the alternative ("skip and continue")
-// would silently mask half a CI plan.
-//
-// Note: severity ordering is NOT the numeric exit-code ordering. The
-// numeric codes are 0/1/2/3 (allow/deny/approval/error) by external
-// contract, but operationally we treat deny as MORE severe than approval
-// (a deny is a hard refusal; an approval is a "human, please look").
-// severityRank maps each exit code to its severity for the max-severity
-// reduction below.
+// would silently mask half a CI plan. Severity is not the numeric
+// exit-code order: see severityRank.
 func runBatch(engine *policy.Engine, stdin io.Reader, tenantID, outputFmt string, stdout, stderr io.Writer) int {
 	scanner := bufio.NewScanner(stdin)
 	// Lift the default 64 KiB line cap to 1 MiB so a long shell command
@@ -510,10 +500,7 @@ func writeResult(w io.Writer, req policy.ActionRequest, res policy.CheckResult, 
 }
 
 func writeResultJSON(w io.Writer, res policy.CheckResult) error {
-	// Marshal then write+newline so each batch entry is its own JSONL
-	// record. json.Encoder.Encode would also work and append \n, but
-	// Marshal lets us preserve the SchemaVersion ordering documented in
-	// pkg/proxy/schema/v1/schema.json without surprise.
+	// Marshal, then a newline: one JSONL record per entry.
 	b, err := json.Marshal(res)
 	if err != nil {
 		return err
@@ -580,10 +567,9 @@ func indexOfWatchFlag(args []string) int {
 
 // runWatch follows a JSONL file (tail -f semantics): existing lines are
 // verdicted immediately, then the file is polled for appended requests.
-// One policy load serves the whole stream, and the FilePolicyProvider's
-// watcher keeps the engine hot-reloaded on policy edits — the original
-// motivation: a CI plan or local agent harness gating N actions should
-// not pay N policy loads.
+// One policy load serves the whole stream (a CI plan or agent harness
+// gating N actions doesn't pay N policy loads), and the
+// FilePolicyProvider's watcher hot-reloads the engine on policy edits.
 //
 // Only newline-terminated lines are processed; a partial line at EOF is
 // buffered until the writer finishes it, so a torn mid-append read can't

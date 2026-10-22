@@ -1,48 +1,29 @@
 """
-Vanzik CrewAI Adapter — subclass + override.
+Vanzik CrewAI adapter.
 
-Wraps CrewAI tools so every invocation passes through Vanzik policy checks.
+``GuardedCrewTool`` subclasses CrewAI's ``BaseTool`` (CrewAI 1.x with
+pydantic 2.12 rejects virtual-subclass registration via
+``BaseTool.register``). Instead of an ``__getattr__`` allowlist, every
+entry point the framework calls is overridden and gated:
 
-Architecture
-------------
-``GuardedCrewTool`` subclasses CrewAI's ``BaseTool`` directly so
-``isinstance(thing, BaseTool)`` checks succeed natively (CrewAI 1.x +
-pydantic 2.12 reject virtual-subclass registration via
-``BaseTool.register``). To keep the gate tight without an
-``__getattr__`` allowlist, **every** entry point the framework calls is
-explicitly overridden:
+  - ``_run`` (abstract on the parent): ``BaseTool.run``, ``invoke`` and
+    ``to_structured_tool`` all read ``_run`` off the instance.
+  - ``_arun``: CrewAI's ``arun`` calls it.
+  - ``run`` / ``arun`` / ``invoke`` / ``ainvoke`` / ``__call__``: gated
+    whichever entry the runtime picks; each forwards to the wrapped
+    tool's matching method so CrewAI's usage accounting
+    (``_claim_usage``) still runs.
+  - ``to_structured_tool``: the structured tool's ``func`` is our gated
+    ``_run``, not the wrapped tool's bare one.
 
-  - ``_run`` (abstract on the parent) gates every sync dispatch path
-    CrewAI drives. CrewAI's ``BaseTool.run``, ``invoke`` (when present
-    on a subclass / wrapper), and ``to_structured_tool`` all read
-    ``_run`` off the instance, so a gated ``_run`` covers the entire
-    sync surface.
-  - ``_arun`` is overridden because CrewAI's ``arun`` calls ``_arun``.
-  - ``run`` / ``arun`` / ``invoke`` / ``ainvoke`` / ``__call__`` are
-    overridden explicitly so the gate fires regardless of which entry
-    the agent runtime picks. Each one runs the tool through the
-    underlying instance's matching method to preserve CrewAI's usage
-    accounting (``_claim_usage`` etc.).
-  - ``to_structured_tool`` is overridden so CrewAI's
-    ``to_structured_tool`` pipeline (which does ``func=self._run``)
-    ends up calling our gated ``_run``, not the wrapped tool's bare
-    ``_run``.
+The canary test ``test_at_real_crewai.py`` trips if upstream adds a
+dispatch path that bypasses these overrides. Pydantic ``PrivateAttr``
+keeps ``_tool``, ``_guard`` and ``_scope`` out of ``model_fields`` and
+``model_dump``.
 
-The defense contract: every gated method is explicitly overridden on
-this class; the canary integration test (``test_at_real_crewai.py``)
-trips if upstream adds a new dispatch path that bypasses our overrides.
-Pydantic ``PrivateAttr`` keeps internal references (``_tool``,
-``_guard``, ``_scope``) off ``model_fields`` and out of ``model_dump``
-payloads.
-
-Lazy framework import
----------------------
-We never import ``crewai`` at module top level — the SDK must remain
-``pip install vanzik``-friendly without the framework extra.
-The class definition is wrapped in a builder that resolves
-``crewai.tools.BaseTool`` on first instantiation; before that the
-``GuardedCrewTool`` symbol is a sentinel that raises a clear
-``ImportError`` when constructed.
+``crewai`` is imported on first instantiation, so ``pip install vanzik``
+works without the extra; until then ``GuardedCrewTool`` is a factory
+that raises a clear ``ImportError``.
 
 Usage
 -----
@@ -76,13 +57,9 @@ from vanzik.adapters._common import (
 
 
 # ---------------------------------------------------------------------------
-# Lazy CrewAI BaseTool resolution.
-#
-# Importing crewai is heavy (LiteLLM, OpenAI client, etc.) and we want
-# ``pip install vanzik`` to keep working without the [crewai]
-# extra. We resolve the BaseTool the first time a GuardedCrewTool is
-# constructed and cache it. A mismatched / missing CrewAI raises a clear
-# ImportError instead of a confusing AttributeError deep inside pydantic.
+# Lazy CrewAI BaseTool resolution. Importing crewai is heavy (LiteLLM, the
+# OpenAI client); a missing or mismatched CrewAI raises a clear ImportError
+# instead of an AttributeError deep inside pydantic.
 # ---------------------------------------------------------------------------
 
 _CREWAI_BASETOOL: Optional[type] = None
@@ -93,11 +70,10 @@ _GUARDED_CLASS: Optional[type] = None
 def _accepted_kwargs(cls: Any, kwargs: dict) -> dict:
     """Keep only the keyword arguments ``cls.__init__`` accepts.
 
-    CrewStructuredTool's constructor changed across CrewAI releases: 1.x is a
-    pydantic model that takes any field as a keyword, while 0.19x names its
-    parameters explicitly and has no ``cache_function``. Passing an unknown
-    keyword raises TypeError, which broke every gated tool on older CrewAI
-    (the version pip picks for ``vanzik[all]``).
+    CrewStructuredTool's constructor differs across CrewAI releases: 1.x is
+    a pydantic model that takes any field as a keyword, while 0.19x names
+    its parameters explicitly and has no ``cache_function``. An unknown
+    keyword raises TypeError.
     """
     import inspect
 
@@ -111,8 +87,8 @@ def _accepted_kwargs(cls: Any, kwargs: dict) -> dict:
 
 def _is_valid_args_schema(value: Any) -> bool:
     """Return True if ``value`` is a pydantic BaseModel subclass or a
-    JSON-schema-shaped dict. Filters MagicMock and other unusable types
-    so we never pass an invalid value into pydantic's BaseTool init."""
+    JSON-schema-shaped dict, i.e. something BaseTool init accepts (not a
+    MagicMock)."""
     if isinstance(value, dict):
         return True
     try:
@@ -149,10 +125,7 @@ def _require_supported_crewai() -> None:
 
 
 def _resolve_crewai_basetool() -> type:
-    """Return ``crewai.tools.BaseTool`` or raise a clear ImportError.
-
-    Cached so subsequent constructions do not re-walk the import paths.
-    """
+    """Return ``crewai.tools.BaseTool`` (cached) or raise a clear ImportError."""
     global _CREWAI_BASETOOL
     if _CREWAI_BASETOOL is not None:
         return _CREWAI_BASETOOL
@@ -179,37 +152,22 @@ def _resolve_crewai_basetool() -> type:
 
 
 def _build_guarded_class() -> type:
-    """Build the GuardedCrewTool class that subclasses CrewAI's BaseTool.
-
-    The class is constructed once and cached. Re-imports of this module
-    return the same class object so isinstance checks remain stable.
-    """
+    """Build the GuardedCrewTool class once and cache it, so isinstance
+    checks stay stable."""
     global _GUARDED_CLASS
     if _GUARDED_CLASS is not None:
         return _GUARDED_CLASS
 
     BaseTool = _resolve_crewai_basetool()
-    # pydantic v2 PrivateAttr — these fields are not part of model_fields,
-    # not validated, and not emitted by model_dump(). Imported here so the
-    # SDK does not require pydantic at module load time.
+    # Imported here so the SDK does not need pydantic at module load time.
     from pydantic import PrivateAttr  # type: ignore[import-not-found]
 
     class GuardedCrewTool(BaseTool):  # type: ignore[misc, valid-type]
-        """Hybrid subclass-and-override wrapper around a CrewAI ``BaseTool``.
+        """A CrewAI ``BaseTool`` that gates every entry point through
+        :meth:`Guard.check` before forwarding to the wrapped tool."""
 
-        Subclasses ``BaseTool`` so framework-side ``isinstance`` checks
-        succeed natively (pydantic 2.12 / CrewAI 1.x reject virtual-
-        subclass registration). Every entry point the framework calls
-        is explicitly overridden to gate via :meth:`Guard.check` before
-        forwarding.
-        """
-
-        # Pydantic private attributes — held on the instance but not part
-        # of the validated model (no ``model_fields`` entry) and not
-        # emitted by ``model_dump`` / ``model_dump_json``. The ``PrivateAttr``
-        # default is set per-instance via ``model_post_init`` because the
-        # underlying tool / guard reference is not knowable at class-build
-        # time.
+        # Private attrs: not validated, not in model_fields or model_dump.
+        # Set per instance in __init__.
         _tool: Any = PrivateAttr(default=None)
         _guard: Any = PrivateAttr(default=None)
         _scope: str = PrivateAttr(default="shell")
@@ -227,12 +185,9 @@ def _build_guarded_class() -> type:
             scope: str = "shell",
             **_extra: Any,
         ) -> None:
-            # Initialise the pydantic side from the wrapped tool's metadata.
-            # CrewAI's BaseTool requires ``name`` and ``description`` —
-            # pull them from the wrapped instance so the agent registers
-            # the tool under the right surface. ``args_schema`` is forwarded
-            # only when it is a real pydantic class / dict (filtering
-            # MagicMock and other unusable values defensively).
+            # BaseTool requires str name/description: take them from the
+            # wrapped tool (coercing mocks). args_schema is forwarded only
+            # when BaseTool would accept it.
             name_attr = getattr(tool, "name", type(tool).__name__)
             desc_attr = getattr(tool, "description", "")
             init_kwargs: dict = {
@@ -245,9 +200,7 @@ def _build_guarded_class() -> type:
             if args_schema is not None and _is_valid_args_schema(args_schema):
                 init_kwargs["args_schema"] = args_schema
             super().__init__(**init_kwargs)
-            # Pydantic v2 lets us set private attrs after super().__init__.
-            # Use object.__setattr__ to be defensive against any pydantic
-            # __setattr__ override that intercepts non-private fields.
+            # object.__setattr__ bypasses any pydantic __setattr__ override.
             object.__setattr__(self, "_tool", tool)
             object.__setattr__(
                 self,
@@ -318,16 +271,12 @@ def _build_guarded_class() -> type:
             return ""
 
         # ----------------------------------------------------------
-        # Synchronous entry points — every CrewAI / LangChain modern path
+        # Synchronous entry points
         # ----------------------------------------------------------
 
         def _run(self, *args: Any, **kwargs: Any) -> Any:
-            """Internal CrewAI sync entry. Implements the parent's abstract
-            ``_run``. Every CrewAI sync path eventually flows through here
-            (``run`` -> ``_run``, ``invoke`` -> ``_run`` via the structured
-            tool conversion, ``to_structured_tool`` copies ``self._run`` as
-            its ``func``).
-            """
+            """Internal CrewAI sync entry (the parent's abstract ``_run``);
+            ``to_structured_tool`` uses it as ``func``."""
             tool_input = self._normalize_tool_input(args, kwargs)
             self._check_or_raise(tool_input)
             inner = self._tool
@@ -340,13 +289,9 @@ def _build_guarded_class() -> type:
             )
 
         def run(self, *args: Any, **kwargs: Any) -> Any:
-            """Public sync entry. Gated.
-
-            CrewAI's BaseTool.run normally dispatches to ``_run`` after
-            ``_claim_usage`` accounting; we override it so the gate fires
-            BEFORE the parent's accounting (a denied call must not consume
-            a usage slot). On ALLOW we call the wrapped tool's ``run`` so
-            its own accounting runs.
+            """Public sync entry. Gated before CrewAI's ``_claim_usage``
+            accounting, so a denied call does not consume a usage slot; on
+            ALLOW the wrapped tool's ``run`` does its own accounting.
             """
             tool_input = self._normalize_tool_input(args, kwargs)
             self._check_or_raise(tool_input)
@@ -365,13 +310,8 @@ def _build_guarded_class() -> type:
             config: Any = None,
             **kwargs: Any,
         ) -> Any:
-            """Modern Runnable entry. Gated.
-
-            CrewAI tools that don't define ``invoke`` inherit a parent
-            implementation (or none — CrewAI 1.x's BaseTool currently has
-            no ``invoke``); either way we provide a gated one. The agent
-            runtime calls ``tool.invoke(input=..., config=...)``.
-            """
+            """Modern Runnable entry (``tool.invoke(input=..., config=...)``).
+            Gated, whether or not the parent defines ``invoke``."""
             self._check_or_raise(input)
             inner = self._tool
             if hasattr(inner, "invoke"):
@@ -393,9 +333,8 @@ def _build_guarded_class() -> type:
                 try:
                     return inner(*args, **kwargs)
                 except TypeError:
-                    # Pydantic BaseModel instances are technically callable
-                    # in some versions but reject positional args — fall
-                    # through to invoke / _run.
+                    # Some pydantic versions make BaseModel instances
+                    # callable but reject positional args: fall through.
                     pass
             if hasattr(inner, "invoke"):
                 return inner.invoke(args[0] if args else kwargs)
@@ -414,11 +353,9 @@ def _build_guarded_class() -> type:
         async def _arun(self, *args: Any, **kwargs: Any) -> Any:
             """Internal async entry. Gated.
 
-            CrewAI's ``BaseTool._arun`` raises NotImplementedError unless
-            the subclass overrides it. We override here so the async path
-            is gated without forcing every wrapped tool to define _arun.
-            On ALLOW we try the wrapped tool's ``_arun`` first, then
-            ``arun``, then fall through to a thread-executor sync path.
+            CrewAI's ``BaseTool._arun`` raises NotImplementedError, so on
+            ALLOW this tries the wrapped tool's ``_arun``, then ``arun``,
+            then its sync path in a thread executor.
             """
             tool_input = self._normalize_tool_input(args, kwargs)
             self._check_or_raise(tool_input)
@@ -516,19 +453,12 @@ def _build_guarded_class() -> type:
             )
 
         # ----------------------------------------------------------
-        # to_structured_tool override.
-        #
-        # CrewAI's BaseTool.to_structured_tool builds a CrewStructuredTool
-        # with ``func=self._run``. Because our _run is gated, the resulting
-        # CrewStructuredTool also calls into the gate when invoked. We
-        # override so the structured tool gets our gated _run, not the
-        # wrapped tool's bare _run.
+        # to_structured_tool override
         # ----------------------------------------------------------
 
         def to_structured_tool(self) -> Any:
             """Convert to a CrewStructuredTool whose ``func`` is our
-            gated ``_run``. Override of the parent so structured-tool
-            conversion does not bypass the gate.
+            gated ``_run``, so the conversion does not bypass the gate.
             """
             from crewai.tools.structured_tool import CrewStructuredTool  # type: ignore
 
@@ -548,18 +478,12 @@ def _build_guarded_class() -> type:
             return structured_tool
 
         # ----------------------------------------------------------
-        # model_dump / model_dump_json: hide private gating fields.
-        #
-        # PrivateAttr fields are not in model_fields by default, so they
-        # are already excluded from model_dump output. We override anyway
-        # to be explicit and to filter any future audit-tooling that might
-        # walk __dict__.
+        # model_dump: hide private gating fields. PrivateAttr already
+        # excludes them; this is belt and braces.
         # ----------------------------------------------------------
 
         def model_dump(self, *args: Any, **kwargs: Any) -> dict:  # type: ignore[override]
             data = super().model_dump(*args, **kwargs)
-            # Defensive: strip our private attrs if pydantic ever starts
-            # leaking them.
             for k in ("_tool", "_guard", "_scope"):
                 data.pop(k, None)
             return data
@@ -569,31 +493,16 @@ def _build_guarded_class() -> type:
 
 
 # ---------------------------------------------------------------------------
-# Module-level GuardedCrewTool symbol.
-#
-# We expose a callable factory so `from vanzik.adapters.crewai import
-# GuardedCrewTool; GuardedCrewTool(my_tool)` works without a top-level
-# crewai import. The factory builds (and caches) the real class on first
-# call and constructs an instance.
+# Public GuardedCrewTool symbol: a factory, so importing it needs no crewai.
 # ---------------------------------------------------------------------------
 
 
 class _GuardedCrewToolFactory:
-    """Factory whose ``__call__`` returns a GuardedCrewTool instance.
+    """Factory whose ``__call__`` builds (once) and instantiates the real
+    GuardedCrewTool class.
 
-    Behaves like a class for ``isinstance`` and ``issubclass`` checks via
-    delegation to the real class once it is built. This means user code
-    that does::
-
-        isinstance(t, GuardedCrewTool)
-
-    works regardless of whether the underlying class has been built yet —
-    the first construction triggers the build, and the assertion uses the
-    real class going forward.
-
-    Module-level constant naming convention: this factory IS the public
-    ``GuardedCrewTool`` symbol. The real class object is reachable via
-    :func:`_build_guarded_class`.
+    ``isinstance`` / ``issubclass`` delegate to the real class once built
+    (False before that). The real class is :func:`_build_guarded_class`.
     """
 
     def __call__(self, tool: Any, *args: Any, **kwargs: Any) -> Any:
@@ -634,8 +543,7 @@ def guard_crew_tools(
         default_scope: Default policy scope.
 
     Returns:
-        List of guarded tool instances. Each instance shares a single
-        :class:`Guard` so they batch under one agent_id.
+        List of guarded tool instances sharing one :class:`Guard`.
     """
     cls = _build_guarded_class()
     guard = Guard(guard_url, agent_id=agent_id)

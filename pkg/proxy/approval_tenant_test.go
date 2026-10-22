@@ -1,6 +1,6 @@
 package proxy
 
-// White-box tests for v0.6 approval-queue tenant isolation: Lookup/Resolve/List
+// White-box tests for approval-queue tenant isolation: Lookup/Resolve/List
 // must be scoped to the owning tenant (no cross-tenant oracle or resolve), the
 // local tenant is stored as "" for wire byte-identity, and SSE events route
 // only to same-tenant subscribers.

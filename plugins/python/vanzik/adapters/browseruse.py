@@ -27,26 +27,21 @@ Usage:
 
 Design notes
 ------------
-- **Composition over subclassing.** Playwright's Page class is a runtime-
-  generated proxy with no stable subclass contract; subclassing leaks
-  implementation details and breaks across Playwright minor versions.
-  GuardedPage holds the underlying Page as ``self._page`` and exposes only
-  the methods listed in :data:`_GATED_METHODS` plus a small allowlist of
-  read-only properties via :data:`_ALLOWED_PASSTHROUGH`.
-- **Default deny on attribute access.** Anything not on the allowlist
-  raises ``AttributeError`` with a security explanation. A permissive
-  ``__getattr__`` would silently fall through to
-  ``self._page.click(...)`` and leave every action method un-gated, so
-  the wrapper never adds one.
-- **Form values are redacted before transmission.** ``check_form_input``
-  passes the field NAME through (operators need it for audit context)
-  but rewrites long values to ``<redacted; len=N>`` so audit logs do not
-  accumulate raw PII / credentials. Short values are still scrubbed
-  through :func:`vanzik.adapters.mcp._redact` for the standard secret
-  patterns (Bearer tokens, AWS keys, ``secret=...`` pairs, etc.).
+- **Composition over subclassing.** Playwright's Page is a runtime-
+  generated proxy with no stable subclass contract; subclassing breaks
+  across Playwright minor versions. GuardedPage holds the Page as
+  ``self._page`` and exposes only its own gated methods plus the
+  read-only properties in :data:`_ALLOWED_PASSTHROUGH`.
+- **Default deny on attribute access.** Anything else raises
+  ``AttributeError``. A permissive ``__getattr__`` would fall through to
+  the raw Page and leave every action un-gated.
+- **Form values are redacted before transmission.** The field name is
+  sent as is; values over ``_FORM_VALUE_MAX_LEN`` become
+  ``<redacted; len=N>`` and shorter ones are scrubbed of the standard
+  secret patterns by :func:`vanzik.adapters.mcp._redact`.
 
-The data-scope contract is pinned by pkg/policy/engine_data_test.go
-on the engine side.
+The engine side of the data-scope contract is pinned by
+pkg/policy/engine_data_test.go.
 """
 
 from typing import Any, Optional
@@ -55,22 +50,15 @@ from urllib.parse import urlparse
 from vanzik import Guard, CheckResult, DEFAULT_BASE_URL
 from vanzik.adapters.mcp import _redact
 
-# Maximum length of a raw form value passed through to the policy check.
-# Above this, the value is replaced with a `<redacted; len=N>` placeholder
-# so audit logs do not accumulate large blobs of potentially-PII text.
-# Tuned to be just past common form values (passwords, names, emails) but
-# short of textarea / paste-buffer abuse.
+# Longer form values are sent as `<redacted; len=N>` so audit logs don't
+# collect large blobs of possible PII. Just past common form values
+# (passwords, names, emails), short of textarea / paste-buffer sizes.
 _FORM_VALUE_MAX_LEN = 256
 
-# Read-only Playwright Page properties that GuardedPage forwards directly.
-# Adding a new entry here is a deliberate choice: each one is something the
-# user code legitimately reads after a check has happened (e.g. assert the
-# final URL after goto). Anything NOT on this list raises AttributeError.
-#
-# `context` is included because customers need it to read cookies,
-# storage state, and browser-level config; gating it makes the adapter
-# useless for any non-trivial workflow. Treat the surface as advisory:
-# a user determined to bypass can always reach into self._page directly.
+# Read-only Page properties GuardedPage forwards; anything else raises
+# AttributeError. Add entries deliberately. `context` is here because
+# callers need cookies, storage state and browser config. The surface is
+# advisory: code can always reach self._page directly.
 _ALLOWED_PASSTHROUGH = frozenset({
     "url",
     "title",
@@ -85,10 +73,8 @@ _ALLOWED_PASSTHROUGH = frozenset({
 class GuardedBrowser:
     """Policy-enforced wrapper for browser-use automation.
 
-    browser-use exposes a Browser/BrowserContext that agents drive. This class
-    provides guard methods that should be called before performing browser actions.
-    It can also wrap a browser-use Browser / Playwright Page instance to
-    intercept calls automatically via :meth:`wrap_page`.
+    Call its ``check_*`` methods before browser actions, or use
+    :meth:`wrap_page` to gate a Playwright Page automatically.
     """
 
     def __init__(
@@ -129,27 +115,17 @@ class GuardedBrowser:
     def check_form_input(self, url: str, field_name: str, value: str) -> CheckResult:
         """Check if typing into a form field is allowed.
 
-        Routes through the ``data`` scope so PII / credential rules can fire
-        independently of the broader ``browser`` scope. The field NAME is
-        passed through verbatim — operators need it to write meaningful
-        deny rules ("never submit a value to a field named 'password'").
-        The VALUE is redacted before transmission:
+        Uses the ``data`` scope so PII / credential rules fire separately
+        from ``browser``. The field name goes verbatim into ``meta.field``
+        so operators can write name-based rules. The value becomes the
+        command, redacted:
 
         - Empty / whitespace values are passed through unchanged.
         - Values longer than :data:`_FORM_VALUE_MAX_LEN` (256 chars) are
-          replaced with ``<redacted; len=N>`` so audit logs cannot
-          accumulate paste-buffer-sized PII.
+          replaced with ``<redacted; len=N>``.
         - Shorter values run through :func:`vanzik.adapters.mcp._redact`
           to scrub the standard secret patterns (Bearer tokens, AWS keys,
-          ``secret=...`` pairs, ``ghp_...``, ``xox?-...``) before the
-          string lands in the policy command field.
-
-        Why pass the field name through but redact the value? Operators
-        write rules like ``deny: pattern: "*ssn:*"`` against the value and
-        ``meta.field`` filters against the name. The name is stable
-        metadata; the value is unbounded user data. Conflating the two
-        makes audit logs both noisy (full values in every entry) and
-        un-targetable (no way to write a name-based rule).
+          ``secret=...`` pairs, ``ghp_...``, ``xox?-...``).
         """
         domain = ""
         try:
@@ -195,11 +171,7 @@ def _domain_from_url(url: str) -> str:
 
 
 def _enforce(result: CheckResult, action_label: str) -> None:
-    """Raise PermissionError when a check did not return ALLOW.
-
-    Centralised so every gated method shares the same message format and
-    REQUIRE_APPROVAL surfaces the approval URL consistently.
-    """
+    """Raise PermissionError when a check did not return ALLOW."""
     if result.allowed:
         return
     if result.needs_approval:
@@ -213,23 +185,12 @@ def _enforce(result: CheckResult, action_label: str) -> None:
 class GuardedPage:
     """Wraps a Playwright Page to enforce policies on every action.
 
-    Gated methods are explicit attributes on this class (see the bodies
-    below). Anything else is rejected via ``__getattr__`` against
-    :data:`_ALLOWED_PASSTHROUGH`. A permissive ``__getattr__`` that
-    proxied every attribute access would let ``page.click(...)``,
-    ``page.fill(...)``, ``page.evaluate(...)`` flow through to the raw
-    Page without ever consulting the policy — so we never add one.
-
-    Read-only properties listed in :data:`_ALLOWED_PASSTHROUGH` (url,
-    title, content, viewport_size, is_closed, main_frame, context) are
-    forwarded so callers can read final state after a gated call. Frame
-    accessors return :class:`GuardedFrame` instances.
+    Gated methods are explicit attributes; ``__getattr__`` forwards only
+    the read-only properties in :data:`_ALLOWED_PASSTHROUGH` and rejects
+    everything else. Frame accessors return :class:`GuardedFrame`.
     """
 
     def __init__(self, page: Any, guard: Guard):
-        # Use object.__setattr__ to avoid triggering our own __setattr__
-        # contract checks (we don't override __setattr__, but this is
-        # defensive in case a subclass adds one later).
         self._page = page
         self._guard = guard
 
@@ -264,18 +225,15 @@ class GuardedPage:
         return await self._page.click(selector, **kwargs)
 
     async def fill(self, selector: str, value: str, **kwargs: Any) -> Any:
-        """Fill a form field — uses the data scope so PII rules fire.
-
-        Routes through :meth:`GuardedBrowser.check_form_input` so the
-        redaction contract applies. ``selector`` becomes the field name in
-        the audit ``meta.field``.
+        """Fill a form field (scope=data), with the redaction of
+        :meth:`GuardedBrowser.check_form_input`. ``selector`` becomes
+        ``meta.field``.
         """
         url = ""
         try:
             url = self._page.url or ""
         except Exception:
             pass
-        # Re-use the form-input redaction contract.
         domain = _domain_from_url(url)
         if value is None:
             value = ""
@@ -322,8 +280,8 @@ class GuardedPage:
     async def press(self, selector: str, key: str, **kwargs: Any) -> Any:
         """Press a key on an element after policy check (scope=browser).
 
-        Key presses do not carry user-typed payload — they are control
-        signals. Gated under browser, not data.
+        Key presses are control signals, not user-typed payload, hence
+        browser rather than data.
         """
         result = self._guard.check(
             "browser",
@@ -374,10 +332,8 @@ class GuardedPage:
     async def evaluate(self, expression: str, *args: Any, **kwargs: Any) -> Any:
         """Run JS in the page after policy check (scope=browser).
 
-        The full expression is redacted before transmission — script
-        bodies frequently embed tokens or selectors that overlap secret
-        patterns. Long expressions are also truncated to keep audit
-        entries bounded.
+        The expression is redacted like a form value: script bodies often
+        embed tokens, and long ones would bloat audit entries.
         """
         snippet = expression
         if snippet is None:
@@ -420,10 +376,9 @@ class GuardedPage:
     async def set_extra_http_headers(self, headers: dict) -> Any:
         """Set extra HTTP headers after policy check (scope=browser).
 
-        ``meta.headers`` carries only the header NAMES — values are NOT
-        forwarded because Authorization, Cookie, and similar fields
-        commonly contain bearer tokens and session secrets that should
-        not land in the audit log.
+        Only header names are sent (``meta.header_names``): values such as
+        Authorization and Cookie carry secrets that must not reach the
+        audit log.
         """
         names = sorted(headers.keys()) if isinstance(headers, dict) else []
         result = self._guard.check(
@@ -438,9 +393,9 @@ class GuardedPage:
     async def route(self, url_pattern: Any, handler: Any, **kwargs: Any) -> Any:
         """Install a network route handler after policy check.
 
-        The URL pattern is gated under the ``network`` scope because the
-        intercept will affect every matching request — operators may want
-        to allowlist/denylist that surface separately from page actions.
+        Gated under ``network``: the intercept affects every matching
+        request, a surface operators may police separately from page
+        actions.
         """
         pattern_str = str(url_pattern)
         result = self._guard.check(
@@ -460,9 +415,8 @@ class GuardedPage:
     async def expose_function(self, name: str, callback: Any) -> Any:
         """Expose a Python callable to page-side JS (scope=browser).
 
-        Highly privileged: any code in the page can now invoke ``callback``
-        with attacker-controlled arguments. Gated under browser/expose_function
-        so policies can deny it entirely for low-privilege agents.
+        Highly privileged: any page code can invoke ``callback`` with
+        attacker-controlled arguments, so policies may deny it outright.
         """
         result = self._guard.check(
             "browser",
@@ -476,9 +430,8 @@ class GuardedPage:
     async def add_init_script(self, script: Any = None, **kwargs: Any) -> Any:
         """Inject JS that runs on every navigation (scope=browser).
 
-        The script body is redacted/truncated like :meth:`evaluate`.
-        Path-based injection (the ``path=`` kwarg) is forwarded but the
-        path is included in the meta for audit visibility.
+        The script body is redacted like :meth:`evaluate`; a ``path=``
+        kwarg is forwarded and recorded in ``meta.path``.
         """
         snippet = ""
         if isinstance(script, str):
@@ -526,12 +479,9 @@ class GuardedPage:
     def __getattr__(self, name: str) -> Any:
         """Expose only the names in :data:`_ALLOWED_PASSTHROUGH`.
 
-        Anything else raises ``AttributeError`` with a security
-        explanation. The default-deny posture is intentional: silently
-        proxying unknown attributes to ``self._page`` would let modern
-        Playwright APIs (route, expose_function, ...) skip every gate.
-        Adding a new method to the gated surface is preferable to
-        widening the allowlist.
+        Anything else raises ``AttributeError``: proxying unknown names to
+        ``self._page`` would let Page APIs skip every gate. Prefer adding a
+        gated method to widening the allowlist.
         """
         # Avoid infinite recursion when our own internals are accessed
         # before __init__ completes.
@@ -555,11 +505,9 @@ class GuardedPage:
 class GuardedFrame:
     """Wraps a Playwright Frame to gate its action methods.
 
-    Mirrors the GuardedPage surface for the subset that Frames support
-    (Frames don't expose route, expose_function, set_extra_http_headers,
-    or add_init_script — those are page-level only). Read-only
-    properties on Frames are forwarded directly via __getattr__'s
-    allowlist.
+    Mirrors the GuardedPage surface that Frames support (route,
+    expose_function, set_extra_http_headers and add_init_script are
+    page-level only), with the same allowlisted ``__getattr__``.
     """
 
     _ALLOWED_FRAME_PASSTHROUGH = frozenset({

@@ -16,8 +16,8 @@ const (
 	MaxBuckets = 10000
 
 	// sweepInterval bounds how often the O(n) stale scan may run. Without it
-	// the scan fired on EVERY Allow once the map was full, turning a ~70ns
-	// 0-alloc hot path into a ~130us locked scan that serialized every
+	// the scan would fire on EVERY Allow once the map is full, turning a
+	// ~70ns 0-alloc hot path into a ~130us locked scan that serializes every
 	// rate-limit check process-wide.
 	sweepInterval = time.Second
 
@@ -122,8 +122,8 @@ func (l *Limiter) Restore(snaps []BucketSnapshot) {
 // applyChunk bounds how many BucketDelta entries ApplyDeltas processes under a
 // single lock acquisition. The reconcile syncer may hand ApplyDeltas thousands
 // of deltas; holding l.mu for the whole O(n) pass would serialize every
-// concurrent Allow behind reconcile and blow the hot-path latency budget
-// (CLAUDE.md §1). Instead we acquire, apply K, release, and repeat — so a hot
+// concurrent Allow behind reconcile and blow the hot-path latency budget.
+// Instead we acquire, apply K, release, and repeat — so a hot
 // Allow waits at most K map operations, never the full batch.
 const applyChunk = 128
 
@@ -142,7 +142,7 @@ type BucketDelta struct {
 // reconciliation and is called ONLY from the background syncer goroutine — never
 // on the /v1/check hot path, so it cannot itself add hot-path latency.
 //
-// Semantics (CLAUDE.md §1/§4 safe):
+// Semantics:
 //   - Existing keys only. A delta whose key is not currently tracked is skipped;
 //     ApplyDeltas never synthesizes a bucket (it lacks max/window and doing so
 //     would let reconcile invent limits).
@@ -229,8 +229,7 @@ func (l *Limiter) Allow(key string, maxRequests int, window time.Duration) error
 
 	// MISS -- the only path that can grow the map, and therefore the only
 	// place capacity needs checking. Hits (the overwhelming majority of real
-	// traffic) now pay nothing for reclamation; previously every call ran the
-	// capacity check and, at capacity, a full O(n) scan.
+	// traffic) pay nothing for reclamation.
 	if len(l.buckets) >= MaxBuckets {
 		l.reclaimLocked(now)
 	}
@@ -305,9 +304,8 @@ func (l *Limiter) evictStaleLocked(now time.Time) {
 }
 
 // scopeFromKey extracts the scope prefix from a limiter key. The proxy keys
-// buckets as "scope:tenant:agent_id"; scope is kept
-// first precisely so this extractor stays a single IndexByte with no parser
-// change. Unknown formats return "unknown" so the counter stays well-labeled.
+// buckets as "scope:tenant:agent_id"; scope is kept first so this extractor
+// stays a single IndexByte. Unknown formats return "unknown" so the counter stays well-labeled.
 // The scope is the only bounded-cardinality piece of the key, which is why the
 // tenant and agent_id fields are discarded (millions of tenant/agent IDs would
 // blow up Prometheus series).

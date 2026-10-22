@@ -51,7 +51,7 @@ func TestApplyCostDeltas_AddsAndClamps(t *testing.T) {
 	}
 }
 
-// TestApplyCostDeltas_TenantIsolation is the zero-trust core (CLAUDE.md §3):
+// TestApplyCostDeltas_TenantIsolation is the zero-trust core:
 // two tenants reusing the SAME session id keep independent budgets — a delta for
 // tenant A never moves tenant B's accumulator.
 func TestApplyCostDeltas_TenantIsolation(t *testing.T) {

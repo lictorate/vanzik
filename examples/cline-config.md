@@ -54,33 +54,19 @@ The Cline-specific keys:
 
 ## Setup
 
-The example config starts three downstream MCP servers, each with its own
-launcher:
+Install the launchers (`npx`, `uvx`, `docker`) for the upstreams you keep;
+see [Downstream servers](README.md#downstream-servers).
 
-| Upstream | Launcher | Install |
-|---|---|---|
-| `fs` — filesystem server | `npx` | [Node.js](https://nodejs.org/) 20+ |
-| `fetch` — fetch server | `uvx` | [uv](https://docs.astral.sh/uv/getting-started/installation/) |
-| `github` — [GitHub's MCP server](https://github.com/github/github-mcp-server) | `docker` | [Docker](https://docs.docker.com/get-started/get-docker/) |
-
-Install the launchers for the upstreams you keep and delete the
-`--upstream` entries you don't need. A missing launcher disables only
-that namespace: the gateway logs
-`info mcpgw: startup: upstream "fetch" failed to spawn: …` and serves the
-others. The GitHub server reads `GITHUB_PERSONAL_ACCESS_TOKEN` from the
-config's `env` block; the gateway passes its environment to every
-upstream, and `docker run -e GITHUB_PERSONAL_ACCESS_TOKEN` forwards it
-into the container.
-
-1. **Install binaries** (Go 1.25+):
+1. **Install binaries** (Go 1.26+):
 
    ```bash
    go install lictorate.com/vanzik/v2/cmd/vanzik@latest
    go install lictorate.com/vanzik/v2/cmd/vanzik-mcp-gateway@latest
    ```
 
-2. **Pick a policy file** and update `--policy` in the JSON. `configs/default.yaml`
-   from this repo is a sensible starting point.
+2. **Pick a policy.** The config points `--policy` at
+   `/etc/vanzik/default.yaml`; for a user install or a `go install`
+   setup, see [Policy file](README.md#policy-file).
 
 3. **Export the API key** in the shell that launches VS Code:
 
@@ -88,7 +74,7 @@ into the container.
    export VANZIK_API_KEY="$(openssl rand -hex 32)"
    ```
 
-   On macOS, VS Code launched from Finder/Spotlight does not see your
+   On macOS, VS Code launched from Finder/Spotlight may not see your
    `~/.zshrc` exports. Either launch VS Code from a terminal (`code .`) or
    put `VANZIK_API_KEY` in your VS Code `terminal.integrated.env.*`
    settings, then mirror it into the `env` block of the config above.
@@ -97,7 +83,7 @@ into the container.
 
    ```bash
    vanzik server \
-     --policy /etc/vanzik/policy.yaml \
+     --policy /etc/vanzik/default.yaml \
      --dashboard \
      --watch \
      --api-key "$VANZIK_API_KEY"
@@ -121,31 +107,16 @@ Open the Cline chat in VS Code and ask:
 
 ## API key handling
 
-Do **not** pass `--api-key "$VANZIK_API_KEY"` as an `args` entry.
-Cline (like Claude Desktop) does **not** shell-expand `$VAR`
-references inside JSON `args` — the gateway would receive the literal
-string `$VANZIK_API_KEY` and authentication would fail. Instead,
-use the `env` block above to inject the key as an environment
-variable; the gateway picks up `VANZIK_API_KEY` automatically
-when the `--api-key` flag is absent.
+Cline does not shell-expand `$VAR` inside JSON `args`: put the key in
+the `env` block and omit `--api-key`. See
+[API key handling](README.md#api-key-handling).
 
 ## Tenant ID
 
-`--tenant-id` picks the tenant whose policy evaluates the gateway's
-calls (they go to `/v1/t/<tenant>/check`). Keep `local` — the policy
-the server loads with `--policy` — unless you've registered another
-tenant on the central server with
-`vanzik tenant put <id> --policy <file.yaml>`. A tenant the server
-doesn't know answers `404`, which the gateway
-treats like an unreachable server: `--fail-mode` decides, so with `deny`
-every call is refused.
+Keep `--tenant-id local` unless you've registered another tenant; see
+[Tenant ID](README.md#tenant-id).
 
 ## Notes
 
-- If your VS Code window doesn't have the Vanzik API key in its
-  environment, the gateway still works (it falls back to whatever is in
-  the JSON's `env` block). Don't paste raw keys — pull from a secret
-  manager instead.
-- Cline auto-approves tools in `alwaysAllow` at its own layer, but
-  Vanzik's policy still gates them. The two layers compose: Cline
-  trusts the tool, Vanzik verifies the call against the policy.
+- `alwaysAllow` and Vanzik's policy compose: Cline skips its own prompt
+  for the tool, Vanzik still checks every call against the policy.

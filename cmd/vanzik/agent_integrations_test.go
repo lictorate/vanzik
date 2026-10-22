@@ -258,8 +258,8 @@ func TestPolicyBlocksMirrorTheClaudeCodeBlock(t *testing.T) {
 
 // TestAddEveryAgentsRulesToOneCRLFPolicy adds the blocks of all the agents,
 // one after another, to a policy with Windows line endings. Each insert
-// must land under the one agents: key; Windows CI caught the second insert
-// adding a duplicate agents: key that made the policy fail to load.
+// must land under the one agents: key; a second insert that added a
+// duplicate agents: key would make the policy fail to load.
 func TestAddEveryAgentsRulesToOneCRLFPolicy(t *testing.T) {
 	for _, nl := range []string{"\n", "\r\n"} {
 		policyText := strings.ReplaceAll("version: \"1\"\nname: t\nrules:\n  - scope: shell\n    allow:\n      - pattern: \"ls *\"\nagents:\n  research-bot:\n    override:\n      - scope: network\n        allow:\n          - domain: \"arxiv.org\"\n", "\n", nl)

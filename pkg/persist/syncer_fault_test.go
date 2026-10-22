@@ -1,9 +1,8 @@
 package persist
 
-// Fault-injection tests for the write-behind Syncer (review item C1 + M4).
+// Fault-injection tests for the write-behind Syncer.
 //
-// The dual-tier design promises that
-// memory is authoritative and a store outage is survivable: a failed flush must
+// The dual-tier design promises that memory is authoritative and a store outage is survivable: a failed flush must
 // surface its error, leave the in-memory accumulators untouched, NOT kill the
 // background loop, and retry on the next tick once the store recovers. The
 // happy-path tests in syncer_test.go never exercise a failing store, so these
@@ -145,7 +144,7 @@ func TestSyncer_FlushLoopSurvivesStoreOutage(t *testing.T) {
 	}, "the flush loop to recover and persist after the outage clears")
 }
 
-// TestSyncer_CloseDuringOutageDoesNotPanicOrHang documents the M4 boundary: when
+// TestSyncer_CloseDuringOutageDoesNotPanicOrHang documents the boundary: when
 // the store is down at shutdown, Close's final flush fails but Close must still
 // return promptly without panicking. The honest consequence — there is no spool
 // for the syncer, so the last interval's state is NOT durable across a

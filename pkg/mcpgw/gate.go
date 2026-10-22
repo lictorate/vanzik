@@ -14,7 +14,9 @@ package mcpgw
 //     2. If (1) ALLOWs and the tool name maps to an existing scope per
 //        Policy.MapToolScope, Engine.Check against the mapped scope
 //        (path/url/domain/command extracted from arguments per scope).
-//     3. If either DENYs or REQUIRE_APPROVALs, that wins.
+//        A filesystem call with a `paths` array gets one mapped check
+//        per path, and every one must ALLOW.
+//     3. If any check DENYs or REQUIRE_APPROVALs, the first one wins.
 //
 //   --policy-mode fast:
 //     Only step (1). The mapped scope is informational only; operators
@@ -155,8 +157,7 @@ func (c *HTTPPolicyClient) Check(ctx context.Context, req *ToolsCallRequest) (De
 	// /v1/check body. The central server's handleCheck consults the
 	// approval queue first when this is set; resolved entries short-
 	// circuit the policy evaluation entirely so a human's approve/deny
-	// is honored across the model's retry. (A19b — closes
-	// #mcp-approval-roundtrip.)
+	// is honored across the model's retry.
 	mcpAR := policy.ActionRequest{
 		Scope:      "mcp_tool",
 		AgentID:    req.AgentID,
@@ -189,18 +190,19 @@ func (c *HTTPPolicyClient) Check(ctx context.Context, req *ToolsCallRequest) (De
 		return decMCP, nil
 	}
 
-	mappedAR := buildMappedActionRequest(req, mappedScope)
-	decMapped, err := c.callV1Check(ctx, mappedAR)
-	if err != nil {
-		return c.failModeDecision(mappedAR, err), nil
-	}
-	if !decMapped.Allow {
-		// The denying rule wins. Stamp the secondary scope on the
-		// reason so operators can see which check produced the verdict.
-		if !decMapped.RequiresApproval {
-			decMapped.Reason = fmt.Sprintf("%s (mapped scope=%s)", decMapped.Reason, mappedScope)
+	for _, mappedAR := range mappedActionRequests(req, mappedScope) {
+		decMapped, err := c.callV1Check(ctx, mappedAR)
+		if err != nil {
+			return c.failModeDecision(mappedAR, err), nil
 		}
-		return decMapped, nil
+		if !decMapped.Allow {
+			// The denying rule wins. Stamp the secondary scope on the
+			// reason so operators can see which check produced the verdict.
+			if !decMapped.RequiresApproval {
+				decMapped.Reason = fmt.Sprintf("%s (mapped scope=%s)", decMapped.Reason, mappedScope)
+			}
+			return decMapped, nil
+		}
 	}
 
 	// Both checks ALLOWed. Return the mcp_tool decision (the more
@@ -319,6 +321,42 @@ func buildMappedActionRequest(req *ToolsCallRequest, mappedScope string) policy.
 	}
 
 	return ar
+}
+
+// mappedActionRequests returns the mapped-scope checks for one call. A
+// filesystem call that names its files in a `paths` array (the MCP
+// filesystem server's read_multiple_files) gets one check per entry, plus
+// one for a single path argument if it has one, so a denied file can't
+// ride along with allowed ones. A non-string entry is checked with an
+// empty path. Every other call gets the one buildMappedActionRequest check.
+func mappedActionRequests(req *ToolsCallRequest, mappedScope string) []policy.ActionRequest {
+	base := buildMappedActionRequest(req, mappedScope)
+	if mappedScope != "filesystem" {
+		return []policy.ActionRequest{base}
+	}
+	var paths []string
+	switch v := req.Arguments["paths"].(type) {
+	case []interface{}:
+		for _, p := range v {
+			s, _ := p.(string)
+			paths = append(paths, s)
+		}
+	case []string:
+		paths = v
+	}
+	if len(paths) == 0 {
+		return []policy.ActionRequest{base}
+	}
+	var out []policy.ActionRequest
+	if base.Path != "" {
+		out = append(out, base)
+	}
+	for _, p := range paths {
+		ar := base
+		ar.Path = p
+		out = append(out, ar)
+	}
+	return out
 }
 
 // mappedDomain is the host a network or browser tool call will contact. With

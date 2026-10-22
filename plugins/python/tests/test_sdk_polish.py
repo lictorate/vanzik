@@ -1,16 +1,13 @@
-"""SDK polish tests added in v0.5 (worker A15).
+"""Focused regression tests for SDK hardening:
 
-Closes the audit's R5 SDK-quality findings:
+- content-type / status-shape validation in ``Guard.check``.
+- jitter on the ``wait_for_approval`` polling loop.
+- rejecting unknown ``**check_kwargs`` in ``@guarded``.
+- distinguishing HTTP 401/403 (``VanzikAuthError``) from an
+  approval-poll timeout (``VanzikApprovalTimeout``).
 
-- E8 / S13 — content-type / status-shape validation in ``Guard.check``.
-- E14   — jitter on the ``wait_for_approval`` polling loop.
-- E15   — reject unknown ``**check_kwargs`` in ``@guarded``.
-- P9    — distinguish HTTP 401/403 (``VanzikAuthError``) from
-          approval-poll timeout (``VanzikApprovalTimeout``).
-
-These are small, surgical regression coupons. The full Guard / decorator
-behavior tests live in test_guard.py and test_decorator.py; this file
-locks the v0.5 polish so a future refactor cannot silently regress it.
+The full Guard / decorator behavior tests live in test_guard.py and
+test_decorator.py.
 """
 
 import io
@@ -37,16 +34,15 @@ from tests.conftest import MockVanzikHandler
 
 
 # ---------------------------------------------------------------------------
-# Content-type / status-shape validation in Guard.check (R5 E8 / S13)
+# Content-type / status-shape validation in Guard.check
 # ---------------------------------------------------------------------------
 
 
 class _CustomHandler(BaseHTTPRequestHandler):
     """Per-test BaseHTTPRequestHandler with class-level response config.
 
-    Exists separately from MockVanzikHandler so each test can set up
-    a precise set of Content-Type / body / status combinations without
-    interfering with the shared mock.
+    Separate from MockVanzikHandler so tests can set exact Content-Type /
+    body / status combinations without touching the shared mock.
     """
     status_code = 200
     content_type = "application/json"
@@ -154,7 +150,7 @@ class TestCheckContentTypeValidation:
 
 
 # ---------------------------------------------------------------------------
-# @guarded(**check_kwargs) unknown-kwarg rejection (R5 E15)
+# @guarded(**check_kwargs) unknown-kwarg rejection
 # ---------------------------------------------------------------------------
 
 
@@ -194,16 +190,13 @@ class TestGuardedUnknownKwargs:
 
 
 # ---------------------------------------------------------------------------
-# wait_for_approval jitter (R5 E14)
+# wait_for_approval jitter
 # ---------------------------------------------------------------------------
 
 
 class TestWaitForApprovalJitter:
     def test_sleep_is_jittered_around_poll_interval(self, mock_server):
-        """Lock the contract that sleep durations vary inside the
-        documented 80%..120% band. We capture every time.sleep() the
-        polling loop issues; the spread proves jitter is active.
-        """
+        """Every sleep the polling loop issues lies in the 80%..120% band."""
         # Always-pending response so the loop runs a handful of iterations.
         MockVanzikHandler.status_response = {"id": "ap_x", "status": "pending"}
 
@@ -212,23 +205,19 @@ class TestWaitForApprovalJitter:
 
         def capturing_sleep(s):
             sleeps.append(s)
-            # Don't actually sleep — keep the test fast.
             real_sleep(0)
 
         g = Guard(mock_server, api_key="k")
         with patch("vanzik.time.sleep", side_effect=capturing_sleep):
             r = g.wait_for_approval("ap_x", timeout=0.05, poll_interval=0.5)
-        # The deadline elapsed; we get the synthetic timeout DENY.
         assert r.denied
         assert "timed out" in r.reason.lower()
-        # Each sleep must lie inside [0.8, 1.2] * poll_interval.
         for s in sleeps:
             assert 0.4 <= s <= 0.6, f"sleep {s} outside jitter band"
 
     def test_sleep_durations_are_not_all_equal(self, mock_server):
-        """Locks 'jitter is actually random' — three samples drawn from a
-        20%-wide band must not collapse to a single value (probability of
-        collision is astronomical for a real RNG)."""
+        """Jitter is actually random: samples from the band must not
+        collapse to one value."""
         MockVanzikHandler.status_response = {"id": "ap_x", "status": "pending"}
         sleeps: list[float] = []
         real_sleep = time.sleep
@@ -251,7 +240,7 @@ class TestWaitForApprovalJitter:
 
 
 # ---------------------------------------------------------------------------
-# VanzikAuthError on 401/403 from /v1/status (R5 P9)
+# VanzikAuthError on 401/403 from /v1/status
 # ---------------------------------------------------------------------------
 
 
@@ -306,14 +295,11 @@ class TestVanzikAuthError:
         assert isinstance(e, VanzikError)
 
     def test_timeout_alias_is_approval_timeout(self):
-        # VanzikTimeoutError is just an alias for VanzikApprovalTimeout.
         assert VanzikTimeoutError is VanzikApprovalTimeout
 
     def test_500_keeps_polling_until_timeout(self, mock_server):
-        """Other HTTP errors (transient 5xx) must NOT abort the poll
-        — the contract is 'auth-failure is fatal, everything else is
-        transient'. We use the existing mock with a 'pending' status so
-        the loop runs to its natural deadline."""
+        """Only auth failures are fatal: anything else (e.g. a transient
+        5xx, or 'pending' here) polls until the natural deadline."""
         MockVanzikHandler.status_response = {"id": "ap_x", "status": "pending"}
         g = Guard(mock_server, api_key="k")
         r = g.wait_for_approval("ap_x", timeout=0.02, poll_interval=0.005)

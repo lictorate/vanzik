@@ -130,8 +130,8 @@ func TestTenantRouting_LegacyAndV1TEquivalent(t *testing.T) {
 }
 
 // TestTenantRouting_UnknownTenant404 — /v1/t/nosuchtenant/check returns
-// 404 with a structured error body. v0.5's PolicyProvider rejects every
-// tenant other than "local" with ErrTenantNotFound.
+// 404 with a structured error body. The file-backed PolicyProvider rejects
+// every tenant other than "local" with ErrTenantNotFound.
 func TestTenantRouting_UnknownTenant404(t *testing.T) {
 	_, ts, _ := newTenantRoutingServer(t, "")
 
@@ -159,8 +159,8 @@ func TestTenantRouting_UnknownTenant404(t *testing.T) {
 
 // TestTenantRouting_ApproveDenyWorkInBothFamilies — request approval via
 // the legacy URL, approve via the tenant-aware URL, status via the legacy
-// URL. Demonstrates approval state is shared (single-tenant queue in
-// v0.5; v0.6 will shard by tenant).
+// URL. Demonstrates approval state is shared across URL families for the
+// same ("local") tenant.
 func TestTenantRouting_ApproveDenyWorkInBothFamilies(t *testing.T) {
 	_, ts, _ := newTenantRoutingServer(t, "")
 

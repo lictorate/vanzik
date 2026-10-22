@@ -79,11 +79,11 @@ func TestLimiter_WindowRefill(t *testing.T) {
 //       capacity -- it is reclaimable.
 //   C3. Reclamation is attributed to the scope that owned the bucket.
 //   C4. Allow stays allocation-free at capacity, not merely when the map is
-//       small (CLAUDE.md hot-path invariant).
+//       small (hot-path invariant).
 //
 // Deliberately NOT asserted: how many buckets a single reclamation frees, when
 // reclamation runs, or which victim is chosen. Those are implementation
-// choices; pinning them is what let an unbounded map ship green.
+// choices; pinning them instead of the contract lets an unbounded map pass.
 // ---------------------------------------------------------------------------
 
 // C2: a fully-elapsed bucket must not permanently occupy capacity.

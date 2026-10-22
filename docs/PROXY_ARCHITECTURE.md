@@ -31,9 +31,6 @@ direct callers: code paths that talk to Vanzik via `Guard.check`
 remain a first-class integration, but they are not the only way to
 get coverage.
 
-This positioning — and the wire-level honesty caveat below — ties back to
-the README's threat-model section.
-
 ### 1.1 What "wire-level" does and does not mean
 
 The two proxies are wire-level **for the configured base URL or the
@@ -44,10 +41,8 @@ gateway subprocess**. An agent can still bypass either path by:
 - launching an MCP server with no Vanzik gateway in front of it,
 - using a tool the SDK doesn't know about.
 
-The README's "Limitations & Threat Model" section already documents the
-fundamental opt-in property; this doc inherits that caveat. Vanzik
-is a **defensive guardrail for cooperating agents**, not a mandatory
-syscall interceptor.
+Vanzik is a **defensive guardrail for cooperating agents**, not a
+mandatory syscall interceptor (README, "Limitations & Threat Model").
 
 ---
 
@@ -57,27 +52,49 @@ The two proxies do **not** duplicate the policy engine, audit logger,
 approval queue, or SSE bus. They both consume primitives provided by
 the central server packages.
 
-### 2.1 Policy via `pkg/policy.PolicyProvider`
+### 2.1 Policy: every decision comes from the central server
 
-Both proxies hold a `*policy.Engine` constructed from a
-`policy.PolicyProvider`. Vanzik wires `FilePolicyProvider`; since
-v0.6 the store-backed multi-tenant provider drops in via the same
-interface (`Get` / `Watch` / `Validate` / `Close`, see
-`pkg/policy/provider.go`).
+Neither proxy holds a `*policy.Engine`. Every decision is an HTTP
+`POST` to the central server's `/v1/t/<tenant>/check`, where `<tenant>`
+is the proxy's `--tenant-id` (default `local`), made through the shared
+client in `pkg/internal/gateclient` (§ 2.6). The central server runs
+`Engine.Check` against its own copy of the policy.
 
-Each tool/API call resolves to **one** `Engine.Check(req, tenantID)` call.
-The `tenantID` defaults to `"local"` (the proxies' `--tenant-id` flag);
-the proxies plumb it via the existing `pkg/proxy/tenant.go`
-`WithTenantID` / `TenantIDFromContext` contract.
+Each proxy also loads the policy YAML given by `--policy` through a
+`policy.FilePolicyProvider`, but only to read `tool_scope_map` (which
+scope a tool name maps to). The provider's `Watch` swaps that snapshot
+when the file changes. The verdict still comes from the central
+server's policy, so point both at the same file. The MCP gateway
+requires `--policy` in its default strict mode; the LLM API proxy
+falls back to its bundled tool map without it.
 
-### 2.2 Audit via `pkg/audit.BufferedAsyncLogger`
+How many checks one call makes:
 
-Both proxies write through `BufferedAsyncLogger` so audit I/O does not
-block the data path. The wrapper handles disk-overflow and worker-pool
-draining; the proxies just call `Logger.Log(entry)`.
+- LLM API proxy: one `/v1/check` per tool call in the model's
+  response, against the tool's mapped scope.
+- MCP gateway, `--policy-mode strict` (default): an `mcp_tool` check,
+  then, if it allows and the tool maps to a scope, a check against the
+  mapped scope (one per path when the arguments carry a `paths` array).
+  A mapped call therefore makes two checks. `--policy-mode fast` makes
+  only the `mcp_tool` check. See `MCP_GATEWAY.md` § 4.4.
 
-The `audit.Entry` includes `Scope`, `Decision`, `Rule`, `Reason`,
-`Meta`, and `Transport` — see § 3.
+### 2.2 Audit: written by the central server
+
+Neither proxy writes an audit log. The central server audits each
+`/v1/check` it answers, like any other check; the proxy stamps
+`meta.transport` on the request so the entry carries the right
+`transport` (§ 3). An MCP gateway call in strict mode that maps to a
+scope therefore leaves two entries, one per check.
+
+Two exceptions write elsewhere:
+
+- `--fail-mode fail-closed-with-audit`: while the central server is
+  unreachable, each fail-closed denial is appended to the local
+  `--fail-audit-log` JSONL file, in the `audit.Entry` shape (both
+  proxies).
+- When the LLM API proxy refuses a malformed tool call itself, it posts
+  the DENY it sent to the client to the central server's
+  `POST /v1/t/<tenant>/audit`, which appends it as is.
 
 ### 2.3 Approval queue and SSE bus via `pkg/proxy.ApprovalQueue`
 
@@ -140,20 +157,14 @@ sees the response.
 
 ---
 
-### 2.5 Gate client via `pkg/internal/gateclient`
+### 2.6 Gate client via `pkg/internal/gateclient`
 
-The wire-level `/v1/check` contract is implemented **once** in
-`pkg/internal/gateclient` and consumed by both proxies: the HTTP call
-shape (tenant-scoped URL, schema_version stamping, bearer auth, 64 KiB
-response cap), the fail-mode translation, the shared `Decision` type
-(re-exported by each proxy via type alias), and the shared CLI flag
-set + validation (`--guard-url`, `--api-key`, `--tenant-id`,
-`--fail-mode`, `--log-level`, `--policy`, with the VANZIK_API_KEY
-and VANZIK_URL env fallbacks, and the check that rejects stray
-positional arguments). Each proxy keeps only its own scope-mapping and
-argument-projection logic. The package is internal — it is substrate,
-not public API; the per-binary synthetic Rule strings remain each
-proxy's stable contract.
+The `/v1/check` client (tenant-scoped URL, `schema_version`, bearer
+auth, 64 KiB response cap), the fail-mode translation and the shared
+flags (§ 7) are implemented **once** in `pkg/internal/gateclient` and
+used by both proxies; each keeps only its own scope mapping and argument
+projection. The package is internal, not public API; each proxy's
+synthetic rule strings remain its own stable contract.
 
 ## 3. Audit transport tag
 
@@ -186,14 +197,13 @@ coding-agent hook ([`CODING_AGENTS.md`](CODING_AGENTS.md)):
 - Bump audit `schema_version` from `2` to `3`. Rejected because the
   field is **purely additive**: existing readers ignore unknown
   top-level keys; existing writers continue to emit v2 entries with no
-  `transport` field, which the v0.5 reader treats as `"sdk"` by default.
+  `transport` field, which readers treat as `"sdk"`.
 
 ### 3.2 Reader rules
 
-- New entries (v0.5+ writers) **MUST** include `"transport"`.
-- Pre-v0.5 entries (no `"transport"` key) **default to `"sdk"`** at read
-  time — this matches the only writer path that existed before the
-  proxies shipped.
+- New entries **MUST** include `"transport"`.
+- Entries with no `"transport"` key **default to `"sdk"`** at read
+  time — the SDK path was the only writer before the proxies existed.
 - `Logger.Query` accepts `Transport string` in the filter; matches by
   exact equality. Empty filter value matches all.
 
@@ -202,8 +212,9 @@ coding-agent hook ([`CODING_AGENTS.md`](CODING_AGENTS.md)):
 `pkg/proxy/schema/v1/schema.json` — the cross-language contract that
 governs `/v1/check` request and response — is **not** affected. The
 `transport` tag is an audit-side concern. The proxy that calls
-`/v1/check` knows its own transport and stamps the audit entry locally;
-it does not negotiate this with the central server.
+`/v1/check` knows its own transport and stamps it on the request as
+`meta.transport`; the central server reads it from there when it
+writes the entry. Nothing is negotiated.
 
 The `CheckResult` schema stays at `schema_version: "v1"`. No bump.
 
@@ -231,9 +242,9 @@ cmd/vanzik-llm-proxy/main.go
 ```
 
 Each `cmd/vanzik-*/main.go` is a **thin entry point**. Real logic
-lives in `pkg/mcpgw/` and `pkg/llmproxy/`, consuming the existing
-`pkg/policy`, `pkg/audit`, `pkg/proxy`, `pkg/notify`, and `pkg/metrics`
-packages.
+lives in `pkg/mcpgw/` and `pkg/llmproxy/`. Neither imports `pkg/proxy`:
+the server, approval queue and audit pipeline stay in the central
+binary.
 
 ### 4.2 Why not subcommands of `vanzik`?
 
@@ -252,13 +263,15 @@ sed-replaces the version string across `cmd/vanzik/main.go`,
 `cmd/vanzik-mcp-gateway/main.go`, `cmd/vanzik-llm-proxy/main.go`,
 and the SDK manifests.
 
-`vanzik-mcp-gateway version` and `vanzik-llm-proxy version`
-emit the same `version` / `commit` triplet as `vanzik version`.
+`vanzik-mcp-gateway --version` and `vanzik-llm-proxy --version`
+print the binary's name, version and commit in the same form as
+`vanzik version`, e.g. `vanzik-mcp-gateway 2.0.0 (0d2852e)`. The wire
+binaries take the `--version` flag, not a `version` subcommand.
 
 ### 4.4 Same `pkg/` codebase
 
 Critical: there is **one** policy engine, **one** audit format, **one**
-approval queue type. The two new binaries import the same packages and
+approval queue type. The two proxy binaries import the same packages and
 configure them differently. Implementation drift between the proxies
 fails CI because the `pkg/` tests run for all callers.
 
@@ -272,7 +285,7 @@ All three binaries on `127.0.0.1`. Everything chats over loopback.
 
 ```
 vanzik server --port 8080 --dashboard --policy configs/default.yaml
-vanzik-mcp-gateway --guard-url http://127.0.0.1:8080 --upstream "fs:npx -y @modelcontextprotocol/server-filesystem /tmp"
+vanzik-mcp-gateway --guard-url http://127.0.0.1:8080 --policy configs/default.yaml --upstream "fs:npx -y @modelcontextprotocol/server-filesystem /tmp"
 vanzik-llm-proxy --listen 127.0.0.1:8081 --guard-url http://127.0.0.1:8080
 ```
 
@@ -301,11 +314,11 @@ server and pass it to every gateway/proxy via `--api-key`.
 
 ### 5.3 Multi-tenant (shipped in v0.6)
 
-Multi-tenancy is supported on a single central server since v0.6:
+A single central server serves many tenants:
 
 - per-tenant policies live in the durable store, managed via
   `vanzik tenant put/list/rm` (see [`CLI.md`](CLI.md#vanzik-tenant-v06)),
-- tenant URL routing (`/v1/t/{tenant}/…`) is live in `pkg/proxy/tenant.go`,
+- requests reach a tenant through `/v1/t/{tenant}/…`,
 - the approval queue, rate limiter, cost accounting, and audit query are
   all sharded by tenant ID,
 - the proxies stamp their tenant via `--tenant-id` (default `local`).
@@ -317,8 +330,8 @@ approvals, rate-limit and cost consumption — by pointing `--store-dsn` at
 one PostgreSQL and giving each replica a `--node-id`. Each node's memory
 stays authoritative for its own `/v1/check` decisions (the hot path never
 performs a synchronous database call); a background reconciler merges the
-other nodes' state in every `--reconcile-interval` (default 2s). The
-consequences of that design are documented, not hidden: distributed
+other nodes' state in every `--reconcile-interval` (default 2s). As a
+consequence, distributed
 rate/cost limiting is bounded-overshoot rather than globally strict, and
 cross-node approval visibility lags by at most one interval. See
 [`OPERATIONS.md`](OPERATIONS.md#multi-instance-deployments) and
@@ -340,7 +353,7 @@ Both proxies adopt the **same** flag for parity:
 | value                       | behavior on `/v1/check` failure                           |
 |-----------------------------|-----------------------------------------------------------|
 | `deny`                      | synthesise `DENY` with `Rule="deny:<gateway>:fail_closed"` (LLM proxy emits `deny:llm_api_proxy:fail_closed`; MCP gateway emits `deny:gateway:fail_closed`). The agent sees a deny. **Default.** |
-| `allow`                     | synthesise `ALLOW` with `Rule="allow:<gateway>:fail_open"`. **Use only in trusted dev environments.** Logged as WARN at startup. |
+| `allow`                     | synthesise `ALLOW` with `Rule="allow:<gateway>:fail_open"`. **Use only in trusted dev environments.** An explicit opt-in: neither proxy logs the mode at startup. |
 | `fail-closed-with-audit`    | synthesise `DENY` with a **distinct** `Rule="deny:<gateway>:fail_closed_audit"` so dashboards can break out central-server-outage events from plain fail-closed denials, **and append the denial to a local fallback audit file** (`--fail-audit-log`, default `vanzik-fail-audit.jsonl`, canonical `audit.Entry` JSONL) so the outage window stays reconstructable without the central server. |
 
 Independent of `--fail-mode`: when `/v1/check` answers 2xx but with an
@@ -350,27 +363,30 @@ invalid_response` / `deny:gateway:invalid_response`) so a misbehaving
 or version-skewed central server is visible on dashboards instead of
 silently passing through.
 
-The Python SDK (fail-closed **by default**, overridable with the `fail_mode`
-constructor argument — `"deny"` or `"allow"`) and the TypeScript SDK
-(configurable `failMode`) keep their existing behaviour — the new flag just
-brings the proxies into line. Both SDKs default to denying when Vanzik is
-unreachable; `"allow"` is an explicit opt-out for callers whose threat model
-treats the firewall as best-effort.
+The SDKs offer the same choice: Python's `fail_mode` constructor argument
+and TypeScript's `failMode` (`"deny"`, the default, or `"allow"`, an
+explicit opt-out for callers whose threat model treats the firewall as
+best-effort).
 
 ### 6.2 MCP gateway: downstream subprocess crashes
 
 Reconnect with capped backoff (1s → 2s → 5s → 30s → 60s, cap 60s). The
 namespace is marked degraded; `tools/list` excludes its tools while the
-flag is set; `tools/call` returns JSON-RPC `-32603 Internal error`.
+flag is set; `tools/call` returns the JSON-RPC error `-32002`
+(`tools/call: upstream "<ns>" unavailable`, data `{"namespace": "<ns>"}`).
 Detail in `MCP_GATEWAY.md` § 7.
 
 ### 6.3 LLM API proxy: upstream OpenAI/Anthropic returns 5xx or times out
 
-Pass-through: forward the upstream's status code and body verbatim.
-Write one audit entry tagged `transport: "llm_api_proxy"` with the
-upstream status in `Meta["upstream_status"]`. Do not transform errors
-into Vanzik-shaped JSON — the agent's own retry/error-handling path
-gets to see the real upstream response.
+Pass-through: a 5xx is forwarded with the upstream's status code and
+body verbatim. Errors are not transformed into Vanzik-shaped JSON —
+the agent's own retry/error-handling path gets to see the real
+upstream response. When the upstream can't be reached or times out,
+the proxy answers `502` with an `upstream error` JSON body.
+
+No audit entry is written in either case. The proxy audits only
+through the `/v1/check` calls it makes for tool calls (§ 2.2), and a
+failed upstream response carries no tool calls to check.
 
 ### 6.4 Proxy itself crashes
 
@@ -396,7 +412,7 @@ Both binaries share these flags:
 | `--tenant-id`         | tenant header value                                | `local`                |
 | `--fail-mode`         | `deny` / `allow` / `fail-closed-with-audit`        | `deny`                 |
 | `--log-level`         | `info` / `debug`                                   | `info`                 |
-| `--version`           | print `version commit date` and exit               | —                      |
+| `--version`           | print `<name> <version> (<commit>)` and exit       | —                      |
 
 Proxy-specific flags (upstreams, listen address, etc.) live in the
 respective doc.
@@ -439,12 +455,13 @@ Per-request gating metrics are emitted on the **central server's**
 | `vanzik_llmproxy_buffer_overflow_total`                  | LLM API Proxy (process-local)     |
 | `vanzik_llmproxy_streams_active`                         | LLM API Proxy (process-local)     |
 
-Process-local LLM-proxy series (`vanzik_llmproxy_*`) are recorded in
-the proxy's in-process registry but are **not exported anywhere yet** —
-no `/metrics` endpoint, no periodic log dump. Until an export path
-ships, treat them as internal counters; observable proxy behaviour
-(denials, overflows surfacing as denials) lands in the central server's
-audit stream and metrics.
+The `vanzik_llmproxy_*` series are counted in the proxy's own process,
+which serves no `/metrics` endpoint. Because `pkg/metrics` is one
+shared registry, the central server's `/metrics` does list all six
+series, but always at 0: nothing in the server process increments
+them. Don't alert on them. Observable proxy behaviour (denials,
+overflows surfacing as denials) lands in the central server's audit
+stream and its other metrics.
 
 The MCP gateway has no scrape surface; its decisions surface in the
 central server's audit stream via `Entry.Transport == "mcp_gateway"`.
@@ -463,7 +480,7 @@ the proxy-specific docs cover the full detail.
 
 2. **LLM proxy buffer bound on tool-call accumulation** is 1 MiB per
    content block (`--max-buffer-bytes 1048576`). Anything larger
-   triggers a synthetic refusal. See `LLM_API_PROXY.md` § 6.
+   triggers a synthetic refusal. See `LLM_API_PROXY.md` § 5.6.
 
 3. **Approval re-submission for the MCP gateway.** When a tool call
    returns `REQUIRE_APPROVAL` and the operator approves, the client

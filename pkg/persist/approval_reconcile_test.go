@@ -1,6 +1,6 @@
 package persist
 
-// Multi-node approval cross-node visibility (v1.0, sub-task 1-A). These tests
+// Multi-node approval cross-node visibility. These tests
 // wire N in-proc nodes — each its own ApprovalQueue + Syncer + SQLiteStore handle
 // onto ONE shared database file (the multi-node / shared-Postgres analog) — and
 // drive the unexported reconcileApprovals() pass directly for determinism. They

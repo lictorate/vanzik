@@ -1,8 +1,6 @@
-"""Core Vanzik SDK: the :class:`Guard` HTTP client, the
-:class:`CheckResult` decision shape, the typed exceptions, and the
-wire-level constants. Import from the ``vanzik`` package root —
-this module is an implementation detail; the package ``__init__``
-re-exports the public surface.
+"""The :class:`Guard` HTTP client, :class:`CheckResult`, the typed
+exceptions and the wire-level constants. Import them from the ``vanzik``
+package root; this module is an implementation detail.
 """
 
 import json
@@ -16,10 +14,8 @@ from urllib import request, error
 from urllib.parse import quote as urlquote
 
 
-# Module-level logger. Used for non-fatal warnings (HTTP shape mismatches,
-# unexpected content types) where the SDK still returns a CheckResult per
-# the configured fail-mode but operators want visibility into the underlying
-# transport oddity. Callers who want quiet behavior add a NullHandler.
+# Warns about transport oddities (bad status, content type, body) that the
+# SDK answered via fail_mode. Add a NullHandler to silence it.
 log = logging.getLogger("vanzik")
 
 # --- Defaults and constants ---
@@ -33,26 +29,18 @@ DECISION_ALLOW = "ALLOW"
 DECISION_DENY = "DENY"
 DECISION_REQUIRE_APPROVAL = "REQUIRE_APPROVAL"
 
-# API endpoint paths. The leading "/v1" is added by Guard._url so a single
-# code path handles both the legacy /v1/<suffix> URLs and the tenant-aware
-# /v1/t/<tenant>/<suffix> form.
+# Endpoint suffixes; Guard._url prepends "/v1" or "/v1/t/<tenant>".
 ENDPOINT_CHECK = "/check"
 ENDPOINT_APPROVE = "/approve/"
 ENDPOINT_DENY = "/deny/"
 ENDPOINT_STATUS = "/status/"
 
-# Default tenant when the SDK caller did not pass tenant_id and
-# VANZIK_TENANT_ID is unset. "local" is also the literal alias the Go
-# proxy maps onto its single-tenant code path; passing it explicitly is
-# equivalent to omitting the field. Any other value triggers the
-# /v1/t/{tenant_id}/... URL family.
+# The single-tenant alias: passing "local" equals omitting tenant_id. Any
+# other value selects the /v1/t/{tenant_id}/... URL family.
 LOCAL_TENANT_ID = "local"
 
-# Fail-mode values for the Guard() constructor. "deny" fails closed when the
-# Vanzik proxy is unreachable (the default). "allow" fails open —
-# permitted as an explicit opt-in for agents whose threat model treats
-# Vanzik as best-effort; the caller is responsible for any resulting
-# safety implications.
+# Guard(fail_mode=...) when the proxy is unreachable: "deny" (default) fails
+# closed; "allow" fails open, an explicit opt-in for best-effort setups.
 FAIL_MODE_DENY = "deny"
 FAIL_MODE_ALLOW = "allow"
 _VALID_FAIL_MODES = (FAIL_MODE_DENY, FAIL_MODE_ALLOW)
@@ -104,10 +92,9 @@ class CheckResult:
 
 # --- Typed exceptions raised by the @guarded decorator ---
 #
-# All three extend PermissionError so callers that already catch
-# PermissionError keep working. New callers can catch the specific
-# subclass and read structured fields (result, approval_id,
-# approval_url) instead of parsing error strings.
+# All extend PermissionError, so ``except PermissionError`` still catches
+# them; the subclasses carry structured fields (result, approval_id,
+# approval_url).
 
 class VanzikError(PermissionError):
     """Base class for Vanzik-raised permission failures.
@@ -165,10 +152,7 @@ class VanzikAuthError(VanzikError):
     auth-gated endpoint (``/v1/approve``, ``/v1/deny``, ``/v1/status``,
     ``/v1/audit``).
 
-    Distinguishes "API key wrong / expired" from "approval poll timed
-    out" so callers can surface the right operator-facing error.
-    Extends :class:`VanzikError` so existing
-    ``except PermissionError:`` handlers still catch it.
+    Distinguishes a wrong or expired API key from an approval timeout.
     """
 
     def __init__(
@@ -181,9 +165,7 @@ class VanzikAuthError(VanzikError):
         self.status = status
 
 
-# VanzikTimeoutError is an alias for VanzikApprovalTimeout
-# kept for backwards compatibility — `except VanzikApprovalTimeout:`
-# handlers still match.
+# Back-compat alias; ``except VanzikApprovalTimeout:`` matches it too.
 VanzikTimeoutError = VanzikApprovalTimeout
 
 
@@ -246,10 +228,8 @@ class Guard:
         self.timeout = timeout
         self.api_key = api_key or _from_env("API_KEY")
         self.fail_mode = fail_mode
-        # tenant_id resolution priority: explicit kwarg → VANZIK_TENANT_ID
-        # env → empty string. An explicit empty string from the caller is
-        # honored (env lookup is skipped) so callers can disable an
-        # accidentally-set environment variable in scoped tests.
+        # Explicit kwarg, then VANZIK_TENANT_ID. An explicit "" skips the env
+        # lookup, so scoped tests can ignore a stray variable.
         if tenant_id is None:
             tenant_id = _from_env("TENANT_ID")
         self.tenant_id = tenant_id
@@ -350,25 +330,12 @@ class Guard:
 
         try:
             with request.urlopen(req, timeout=self.timeout) as resp:
-                # --- Honest response validation ---
-                # A misconfigured reverse proxy serving an HTML error
-                # page or a chunked plaintext body would silently produce
-                # a JSONDecodeError that we *do* catch — but 200-OK plus
-                # a non-JSON body that happened to start with `{` would
-                # slip through. We positively assert:
-                #   1. status in 2xx
-                #   2. Content-Type is application/json (charset suffix ok)
-                #   3. body is a dict carrying a `decision` field
-                # Any failure logs at WARNING and falls through to
-                # _failmode_result so we surface a CheckResult consistent
-                # with fail_mode rather than raising into the caller.
-                #
-                # Implementation note: ``urllib`` responses expose status
-                # via either ``.status`` (3.9+) or ``.getcode()`` (older);
-                # tests sometimes use minimal fakes that lack both. We
-                # treat "no status attribute" as "trust the response"
-                # for back-compat with legacy test fakes, and only enforce
-                # status/header checks when the attributes are present.
+                # Positively assert 2xx, an application/json Content-Type
+                # and a dict body with `decision`: a misconfigured reverse
+                # proxy can return 200 with a non-JSON body that parses.
+                # Any failure logs a warning and returns the fail_mode
+                # result instead of raising. Minimal test fakes without a
+                # status or headers attribute skip those two checks.
                 status_attr = getattr(resp, "status", None)
                 if status_attr is None and hasattr(resp, "getcode"):
                     try:
@@ -390,10 +357,6 @@ class Guard:
                         ctype = (hdrs.get("Content-Type") or "").lower()
                     except Exception:  # noqa: BLE001
                         ctype = ""
-                    # Accept "application/json" and "application/json; charset=...".
-                    # A response object with headers must announce JSON; an
-                    # object without headers is presumed to be a test fake
-                    # and not subject to this check.
                     if ctype and not ctype.startswith("application/json"):
                         log.warning(
                             "vanzik: /v1/check returned unexpected Content-Type "
@@ -421,33 +384,19 @@ class Guard:
                     approval_url=body.get("approval_url", ""),
                 )
         except (error.URLError, OSError, json.JSONDecodeError) as e:
-            # Transport failure. fail_mode picks the default: "deny"
-            # fails closed; "allow" is an opt-in for callers whose
-            # threat model treats Vanzik as advisory.
-            #
-            # We catch three classes here:
-            #   - URLError: urlopen() connection-phase failures (connect
-            #     refused, DNS, SSL).
-            #   - OSError: post-connect transport failures raised from
-            #     resp.read() — ConnectionResetError, BrokenPipeError,
-            #     socket.timeout under heavy concurrency. These are NOT
-            #     URLError subclasses, so before this catch they would
-            #     propagate to the caller and (in threaded callers like
-            #     the MCP adapter) silently kill the worker.
-            #   - JSONDecodeError: a truncated/garbage response body is
-            #     an unreachable-proxy symptom from the caller's point
-            #     of view; fail_mode is the right knob.
+            # Transport failure, resolved by fail_mode. URLError covers
+            # connect-phase failures; OSError covers post-connect ones from
+            # resp.read() (ConnectionResetError, BrokenPipeError,
+            # socket.timeout), which are not URLErrors and would otherwise
+            # kill threaded callers such as the MCP adapter's workers; a
+            # truncated or garbage body (JSONDecodeError) counts as
+            # unreachable too.
             return self._failmode_result(
                 f"Vanzik unreachable ({self.fail_mode}): {e}"
             )
 
     def _failmode_result(self, reason: str) -> CheckResult:
-        """Build a CheckResult honoring ``self.fail_mode``.
-
-        Centralizes the fail-mode dispatch so transport failures and HTTP
-        contract violations (bad status, wrong content type, malformed
-        body) all flow through one decision point.
-        """
+        """Build a CheckResult honoring ``self.fail_mode``."""
         decision = DECISION_ALLOW if self.fail_mode == FAIL_MODE_ALLOW else DECISION_DENY
         return CheckResult(decision=decision, reason=reason)
 
@@ -491,24 +440,15 @@ class Guard:
     ) -> CheckResult:
         """Block until a pending action is approved or denied (or timeout).
 
-        Sends the API key on every poll because /v1/status is now auth-gated
-        on servers configured with --api-key.
-
-        Behavior:
-        - Polling is jittered to ``[0.8, 1.2] * poll_interval`` to avoid
-          synchronized retries from many clients waiting on the same
-          approval bursting the proxy at exact ``poll_interval`` boundaries.
-        - HTTP 401 / 403 from the status endpoint raise
-          :class:`VanzikAuthError` immediately. Continuing to poll
-          would just spin until ``timeout`` elapsed and return a
-          synthetic "Approval timed out" DENY, masking the real cause
-          (wrong/expired API key). Other HTTPErrors and URLErrors are
-          swallowed and retried so transient network blips do not abort
-          a long-running approval wait.
+        Sends the API key on every poll (/v1/status is auth-gated on
+        servers run with --api-key). Polls are jittered to
+        ``[0.8, 1.2] * poll_interval`` so many waiting clients don't poll in
+        lockstep. HTTP 401/403 raise :class:`VanzikAuthError` at once rather
+        than end in a timeout DENY that hides the bad key; other HTTP,
+        transport and body errors are retried until the deadline.
         """
         deadline = time.time() + timeout
         while time.time() < deadline:
-            # Poll the status endpoint for resolution
             req = request.Request(
                 self._url(f"{ENDPOINT_STATUS}{approval_id}"),
                 headers=self._auth_headers(),
@@ -526,8 +466,6 @@ class Guard:
                             reason=body.get("reason", "resolved"),
                         )
             except error.HTTPError as e:
-                # 401/403: auth is broken. Fail fast — looping until
-                # `timeout` would just hide the real error from the operator.
                 if e.code in (401, 403):
                     raise VanzikAuthError(
                         f"Vanzik rejected status poll for "
@@ -537,14 +475,11 @@ class Guard:
                     )
                 # Other HTTPErrors (5xx, transient): keep polling.
             except (error.URLError, OSError, ValueError):
-                # Connection-level error (DNS, refused, TLS), a post-connect
-                # transport failure, or a body that is not JSON (a middlebox
-                # error page served with a 200). Keep polling — the proxy may
-                # come back before the deadline, and a malformed poll body
-                # must never raise out of the waiting agent.
+                # Transport error or a non-JSON body (a middlebox page served
+                # with 200): keep polling; a malformed poll body must never
+                # raise out of the waiting agent.
                 pass
-            # Jittered sleep: 80%..120% of poll_interval. random.random() is
-            # OK for jitter — non-cryptographic, just spreading retries.
+            # Non-cryptographic jitter is fine here.
             actual_sleep = poll_interval * (0.8 + 0.4 * random.random())
             time.sleep(actual_sleep)
 

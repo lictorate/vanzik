@@ -1,7 +1,7 @@
 package proxy
 
 // Unit + hot-path tests for ApprovalQueue.ApplyRemote — the write half of
-// multi-node approval cross-node visibility (v1.0, sub-task 1-A). These prove
+// multi-node approval cross-node visibility. These prove
 // the per-key MERGE rules (the security crux) directly against the queue, plus
 // that the hot-path Lookup is unmoved while ApplyRemote hammers concurrently.
 
@@ -166,7 +166,7 @@ func TestApplyRemote_ConsumptionNeverClearedAndAdoptionCarriesActor(t *testing.T
 }
 
 // tenant isolation: a remote row for tenant-a must never mutate a tenant-b entry
-// that happens to share the same raw ID (CLAUDE.md §3).
+// that happens to share the same raw ID.
 func TestApplyRemote_TenantIsolation(t *testing.T) {
 	q := newTenantTestQueue()
 	q.Restore([]*PendingAction{apPending("ap_shared", "tenant-b")}) // tenant-b pending

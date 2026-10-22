@@ -111,14 +111,9 @@ class TestLangChainExtended:
         assert body["action"] == "write"
 
     def test_attribute_proxy_blocked(self, mock_server):
-        """v0.5.0: arbitrary attribute access is blocked.
-
-        v0.5.0 used a composition wrapper with a custom ``__getattr__``
-        allowlist that raised AttributeError with a "bypass" message.
-        v0.5.0 switches to subclassing ``langchain_core.tools.BaseTool``,
-        so unknown attributes raise pydantic's standard "no such field"
-        AttributeError instead. The security property is unchanged: the
-        wrapper does not proxy arbitrary attributes to the wrapped tool.
+        """Arbitrary attribute access is blocked: the wrapper does not proxy
+        unknown attributes to the wrapped tool (pydantic raises "no such
+        field").
         """
         from vanzik.adapters.langchain import GuardedTool
 
@@ -129,11 +124,9 @@ class TestLangChainExtended:
         tool.custom_attr = "proxied-value"
         gt = GuardedTool(tool, guard, scope="shell")
 
-        # Metadata is exposed:
         assert gt.name == "t"
         assert gt.description == "d"
 
-        # Arbitrary attributes raise AttributeError (no bypass).
         with pytest.raises(AttributeError):
             _ = gt.custom_attr
 
@@ -147,7 +140,6 @@ class TestLangChainExtended:
         tool.description = ""
         gt = GuardedTool(tool, guard, scope="shell")
         gt.run({"url": "not://a//valid::url"})
-        # Should not have thrown.
         assert MockVanzikHandler.last_request_body is not None
 
 
@@ -158,10 +150,8 @@ class TestLangChainExtended:
 class _FakeCrewTool:
     """Minimal CrewAI-tool-shaped stand-in used by the extended tests.
 
-    Real classes (not MagicMock) are required by the v0.5 wrapper,
-    which has a strict attribute allowlist — MagicMock auto-generates
-    arbitrary attributes that would interact unpredictably with the
-    allowlist's AttributeError contract.
+    A real class, not MagicMock, so only the attributes defined here
+    exist.
     """
 
     def __init__(self, name="x", description=""):
@@ -191,11 +181,10 @@ class TestCrewAIExtended:
         gt = GuardedCrewTool(inner, guard=guard, scope="shell")
         out = gt._run("hello")
         assert out == "done"
-        # The wrapper's _run dispatched to the inner's _run.
         assert any(c[0] == "_run" for c in inner.calls)
 
     def test_approval_response(self, mock_server):
-        """v0.5: REQUIRE_APPROVAL raises PermissionError (typed)."""
+        """REQUIRE_APPROVAL raises PermissionError (typed)."""
         from vanzik.adapters.crewai import GuardedCrewTool
         from vanzik import VanzikApprovalRequired
 
@@ -213,7 +202,6 @@ class TestCrewAIExtended:
         assert isinstance(ei.value, VanzikApprovalRequired)
         assert "approval" in str(ei.value).lower()
         assert "http://approve/x" in str(ei.value)
-        # Underlying never called.
         assert inner.calls == []
 
     def test_extract_params_malformed_url_no_domain(self, mock_server):
@@ -352,12 +340,9 @@ class TestBrowserUseExtended:
         inner.goto.assert_not_called()
 
     def test_guarded_page_attribute_proxy_is_now_default_deny(self, mock_server):
-        # v0.5: GuardedPage no longer proxies arbitrary attributes — the
-        # v0.4.x __getattr__ fall-through was the bypass closed by audit
-        # finding R5 E4. Read-only properties on the allowlist still
-        # forward; everything else raises AttributeError. This test pins
-        # the new contract so a regression that re-introduces the proxy
-        # is caught.
+        # GuardedPage must not proxy arbitrary attributes (a __getattr__
+        # fall-through would bypass every gate): allowlisted read-only
+        # properties forward, everything else raises AttributeError.
         from vanzik.adapters.browseruse import GuardedBrowser
 
         browser = GuardedBrowser(guard_url=mock_server)
@@ -366,7 +351,6 @@ class TestBrowserUseExtended:
         inner.url = "https://example.com"
         page = browser.wrap_page(inner)
 
-        # Allowlisted read-only property still forwards.
         assert page.url == "https://example.com"
 
         # Non-allowlisted attribute is rejected with a security message.

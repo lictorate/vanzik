@@ -44,8 +44,8 @@ function Install-Vanzik {
 # v1.2.0 installer; they are checked only when the installer under test has
 # them (this checkout's always does; a published one from v1.2.0 does not).
 # GitHub serves release assets as application/octet-stream, for which
-# Invoke-WebRequest's .Content is a byte[]: -match on it never matched, so the
-# published-mode run skipped every check gated on $newer (found on v1.3.0).
+# Invoke-WebRequest's .Content is a byte[]; -match on a byte[] never matches,
+# so without decoding it published mode would skip every check gated on $newer.
 $source = if ($Mode -eq 'published') {
     $content = (Invoke-WebRequest -UseBasicParsing $Url).Content
     if ($content -is [byte[]]) { [Text.Encoding]::UTF8.GetString($content) } else { $content }

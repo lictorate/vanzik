@@ -37,7 +37,7 @@ func (p *panicLogger) count() int {
 	return len(p.entries)
 }
 
-// TestBufferedAsync_WorkerRecoversUnderlyingPanic verifies M1: a panic inside
+// TestBufferedAsync_WorkerRecoversUnderlyingPanic: a panic inside
 // underlying.Log is recovered by the worker rather than aborting the whole
 // process. The panicking entry must land in the overflow drop accounting
 // (durable on disk), not vanish silently, and a subsequent normal entry must

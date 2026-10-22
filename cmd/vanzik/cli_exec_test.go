@@ -171,8 +171,8 @@ func TestCLI_ClientHelpShowsAliasOnce(t *testing.T) {
 	}
 }
 
-// `version -h` failed with "unexpected argument" and `help version` printed
-// the whole command list.
+// `version -h` and `help version` print version's own help, not an
+// "unexpected argument" error or the whole command list.
 func TestCLI_VersionAndHelpHaveTheirOwnHelp(t *testing.T) {
 	dir := t.TempDir()
 	vanzik(t, dir, nil, "version", "-h").expect(t, 0, "Usage: vanzik version", "")
@@ -216,8 +216,8 @@ func TestCLI_VersionSpellings(t *testing.T) {
 	}
 }
 
-// A flag after the approval ID used to be dropped without a word, so this
-// approved on http://localhost:8080 instead of the named server.
+// A flag after the approval ID applies: dropping it would approve on
+// http://localhost:8080 instead of the named server.
 func TestCLI_ApproveFlagsAfterID(t *testing.T) {
 	srv := newFakeServer(t, http.StatusOK, `{"status":"approved","id":"ap_1"}`)
 	vanzik(t, t.TempDir(), nil, "approve", "ap_1", "--url", srv.URL, "--api-key", "k").expect(t, 0, "Approved ap_1", "")
@@ -247,7 +247,7 @@ func TestCLI_ArgumentMistakes(t *testing.T) {
 	vanzik(t, dir, nil, "hook", "windsurf").expect(t, 2, "", `unknown agent "windsurf"`)
 
 	// A mistyped tenant subcommand is caught before the store is opened, so
-	// it no longer leaves an empty vanzik.db behind.
+	// it leaves no empty vanzik.db behind.
 	vanzik(t, dir, nil, "tenant", "lst").expect(t, 2, "", "Did you mean 'vanzik tenant list'?")
 	if _, err := os.Stat(filepath.Join(dir, "vanzik.db")); err == nil {
 		t.Error("tenant typo created vanzik.db")
@@ -260,8 +260,8 @@ func TestCLI_ValidateFileArgument(t *testing.T) {
 	if err := os.WriteFile(broken, []byte("rules: [\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// The file argument used to be ignored and the default policy validated
-	// instead, printing VALID for a broken file.
+	// The file argument is what gets validated, not the default policy (which
+	// would print VALID for a broken file).
 	vanzik(t, dir, nil, "validate", broken).expect(t, 1, "", "INVALID")
 	vanzik(t, dir, nil, "validate", "a.yaml", "--policy", "b.yaml").expect(t, 2, "", "not both")
 

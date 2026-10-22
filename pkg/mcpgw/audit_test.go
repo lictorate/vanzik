@@ -5,15 +5,10 @@ import (
 )
 
 // TestGatewayLevelAuditDeferred locks in the decision to leave
-// gateway-level audit/SSE wiring nil by default. If a future PR wires
-// bridge.AuditEmit / bridge.SSEEmit by default, this test will need to
-// be replaced — but the deletion should be deliberate.
-//
-// What we assert: NewBridge returns a Bridge whose AuditEmit and
-// SSEEmit hooks are nil. Tool-call-level audit + SSE go through the
-// central server's /v1/check flow.
-//
-// See pkg/mcpgw/audit.go for the rationale and the follow-up TODO.
+// gateway-level audit/SSE wiring nil by default: NewBridge returns a
+// Bridge whose AuditEmit and SSEEmit hooks are nil. Wiring them by
+// default must be a deliberate change that replaces this test. See
+// pkg/mcpgw/audit.go for the rationale.
 func TestGatewayLevelAuditDeferred(t *testing.T) {
 	cfg := &Config{
 		PolicyMode:                "fast",

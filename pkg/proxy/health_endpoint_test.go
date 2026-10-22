@@ -356,8 +356,8 @@ func TestHealthV1_TenantPath_UnknownTenant404(t *testing.T) {
 	}
 }
 
-// TestHealthV1_LegacyHealthUnchanged — confirm /health still returns
-// the v0.4.x shape so existing operators do not see a behavior change.
+// TestHealthV1_LegacyHealthUnchanged — /health keeps its minimal
+// {status, version} shape for existing probes.
 func TestHealthV1_LegacyHealthUnchanged(t *testing.T) {
 	_, ts := newHealthTestServer(t)
 

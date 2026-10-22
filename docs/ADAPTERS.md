@@ -20,6 +20,7 @@ The version pins live in [`plugins/python/pyproject.toml`](../plugins/python/pyp
 
 | Vanzik | LangChain | CrewAI | browser-use | MCP | OpenAI Agents SDK |
 |---|---|---|---|---|---|
+| 2.0.x | `langchain >=0.3,<2.0`, `langchain-core >=0.3,<2.0` | `crewai >=1.0,<2.0` | `browser-use >=0.4,<1.0`, `playwright >=1.40` | `mcp >=0.9,<3.0` | `openai-agents >=0.3.3,<1.0` |
 | 1.4.x | `langchain >=0.3,<2.0`, `langchain-core >=0.3,<2.0` | `crewai >=1.0,<2.0` | `browser-use >=0.4,<1.0`, `playwright >=1.40` | `mcp >=0.9,<3.0` | `openai-agents >=0.3.3,<1.0` |
 | 1.2.x – 1.3.x | `langchain >=0.3,<2.0`, `langchain-core >=0.3,<2.0` | `crewai >=1.0,<2.0` | `browser-use >=0.4,<1.0`, `playwright >=1.40` | `mcp >=0.9,<3.0` | — |
 | 0.5.x – 1.1.x | `langchain >=0.3,<2.0`, `langchain-core >=0.3,<2.0` | `crewai >=0.80,<2.0` | `browser-use >=0.4,<1.0`, `playwright >=1.40` | `mcp >=0.9,<2.0` | — |
@@ -31,12 +32,12 @@ The floors cover the API surface Vanzik's adapters were built and hardened again
 
 ### Pinning rationale
 
-The 0.5 line introduces upper bounds because the prior `>=0.1` floor allowed silent rot when frameworks renamed methods or added new bypass paths. Specifically:
+Upper bounds exist because a bare `>=0.1` floor allows silent rot when frameworks rename methods or add new bypass paths. Specifically:
 
 - **LangChain** moved from a single `langchain` package on 0.1 to a split `langchain-core` (Runnable protocol) + `langchain` (agents / chains) on 0.3. LangChain has since reached 1.x, which the `<2.0` ceiling already admits and CI installs today; 2.0 gets re-verified before the ceiling moves.
-- **CrewAI** moved its `BaseTool` to inherit from `langchain_core.runnables.Runnable` around 0.80, exposing the modern `invoke` / `ainvoke` / `stream` / `batch` surface. The floor is **1.0** since v1.2.0: on 0.19x a crew kickoff dispatched agent tool calls through a path the adapter does not wrap (the tool ran with no `/v1/check` call), so the adapter now refuses CrewAI below 1.0 with an `ImportError` instead of returning tools that look gated but aren't. (Before 1.2.0 the floor was 0.80, and `[all]` could resolve to crewai 0.193, where wrapping a tool failed with a `cache_function` TypeError.)
+- **CrewAI** moved its `BaseTool` to inherit from `langchain_core.runnables.Runnable` around 0.80, exposing the modern `invoke` / `ainvoke` / `stream` / `batch` surface. The floor is **1.0**: on 0.19x a crew kickoff dispatches agent tool calls through a path the adapter does not wrap (the tool runs with no `/v1/check` call), so the adapter refuses CrewAI below 1.0 with an `ImportError` instead of returning tools that look gated but aren't.
 - **browser-use** 0.4 is the first release where the `Browser` / `Page` API stabilised enough that we could write a strict allowlist against it. Earlier versions reshape the page proxy across minor releases.
-- **MCP** Python SDK (`mcp` on PyPI): the ceiling is `<3.0` since v1.2.0, after the adapter's suite and the gateway end-to-end suite passed on mcp 2.2.0 (and 2.1.1). 1.x stays supported.
+- **MCP** Python SDK (`mcp` on PyPI): the ceiling is `<3.0`; the adapter's suite and the gateway end-to-end suite pass on mcp 2.2.0 (and 2.1.1). 1.x stays supported.
 - **OpenAI Agents SDK** (`openai-agents` on PyPI, import name `agents`): the floor is **0.3.3**, the first release with tool input guardrails and `ToolContext.tool_arguments`; the adapter refuses older releases with an `ImportError`. The unit and integration suites pass on 0.3.3 and on 0.23.1 (the newest release when the adapter landed). The package is pre-1.0, so the ceiling follows the browser-use rule: `<1.0`, not the next minor. The adapter only touches `FunctionTool.on_invoke_tool` and the public guardrail API, and the weekly integration run catches a breaking 0.x minor.
 
 ### Bumping the upper bound
@@ -49,7 +50,7 @@ The 0.5 line introduces upper bounds because the prior `>=0.1` floor allowed sil
 
 ### Which integration-tests legs block CI
 
-Since v1.0.0, the LangChain and CrewAI legs are required: a red leg fails CI (and, since v1.2.0, the MCP leg; since v1.4.0, the OpenAI Agents SDK leg). The browser-use leg is advisory (`continue-on-error`) for two reasons. Its `playwright install` step downloads about 200 MB of Chromium from a CDN and is the known flake. And like every leg, it tests against live upstream releases, so a red browser-use leg usually means upstream drift, not a Vanzik regression. A red advisory leg still shows in the run, and the weekly cron run surfaces upstream breakage even when no PR is open. (Before v1.0.0 the whole job was non-blocking.)
+The LangChain, CrewAI, MCP and OpenAI Agents SDK legs are required: a red leg fails CI. The browser-use leg is advisory (`continue-on-error`) for two reasons. Its `playwright install` step downloads about 200 MB of Chromium from a CDN and is the known flake. And like every leg, it tests against live upstream releases, so a red browser-use leg usually means upstream drift, not a Vanzik regression. A red advisory leg still shows in the run, and the weekly cron run surfaces upstream breakage even when no PR is open.
 
 Authors of adapter changes are still expected to drive the integration job to green locally before merging: from `plugins/python`, run `pytest -v -m integration tests/integration/test_real_<framework>.py` (the same invocation CI uses).
 
@@ -65,7 +66,7 @@ Source: `plugins/python/vanzik/adapters/langchain.py`.
 
 ```python
 from vanzik.adapters.langchain import GuardedToolkit
-from langchain.tools import Tool
+from langchain_core.tools import Tool
 
 tools = [
     Tool(name="http_get", description="Fetch a URL", func=requests.get),
@@ -158,19 +159,19 @@ guarded = guard_crew_tools(
 agent = Agent(role="Researcher", tools=guarded, ...)
 ```
 
-### Why `run` *and* `_run` are both hooked
+### Why `run` *and* `_run` are both gated
 
-CrewAI's `BaseTool` exposes a public `run(tool_input)` method for direct invocation and a protected `_run(...)` that its executor calls internally during agent orchestration. The wrapper overrides **both**:
+CrewAI's `BaseTool` exposes a public `run(...)` method for direct invocation and a protected `_run(...)` that its executor calls internally during agent orchestration (`invoke` and `to_structured_tool` reach it too). The wrapper gates **each** of them:
 
 ```python
-def run(self, tool_input="", **kwargs):
-    # policy check, then self._tool._run(...)
+def run(self, *args, **kwargs):
+    # policy check, then self._tool.run(...)
 
 def _run(self, *args, **kwargs):
-    return self.run(*args, **kwargs)
+    # policy check, then self._tool._run(...)
 ```
 
-If we hooked only `run`, a CrewAI agent orchestrating tools would bypass the policy by calling `_run` directly. The redirect ensures there is no back door.
+If we gated only `run`, a CrewAI agent orchestrating tools would bypass the policy by calling `_run` directly. Neither method calls the other, so each call is checked once. `run` forwards to the wrapped tool's own `run`, so CrewAI's usage accounting still runs on `ALLOW`, and the check fires first, so a denied call doesn't consume a usage slot.
 
 ### Scope inference differences from LangChain
 
@@ -283,14 +284,26 @@ else:
     print(f"Blocked: {nav.reason}")
 ```
 
-**2. Wrap the page.** `wrap_page(page)` returns a `GuardedPage` whose async `goto()` raises `PermissionError` on deny/approval and otherwise forwards to the real page:
+**2. Wrap the page.** `wrap_page(page)` returns a `GuardedPage`. Each of its action methods checks policy first, raises `PermissionError` on deny/approval, and otherwise forwards to the real page:
 
 ```python
 guarded_page = browser.wrap_page(page)
 await guarded_page.goto("https://example.com")  # may raise PermissionError
 ```
 
-All other `page` attributes pass through `__getattr__`, so `guarded_page.click(...)`, `guarded_page.title()`, etc., work unchanged. Only `goto` is intercepted today — extend the class if you want to guard clicks/types programmatically.
+`GuardedPage` gates these 14 methods:
+
+| Methods | Scope sent | `action` sent |
+|---|---|---|
+| `goto` | `browser` | `goto` |
+| `click`, `press`, `select_option`, `check`, `uncheck` | `browser` | the method name |
+| `fill`, `type` | **`data`** | `form_input` (same payload as `check_form_input`, below) |
+| `evaluate`, `evaluate_handle`, `add_init_script` | `browser` | the method name; the script is redacted, and replaced with `<redacted; len=N>` past 256 characters |
+| `set_extra_http_headers` | `browser` | `set_headers`; only the header names are sent |
+| `expose_function` | `browser` | `expose_function` |
+| `route` | `network` | `route` |
+
+Only the read-only attributes `url`, `title`, `content`, `viewport_size`, `is_closed`, `main_frame` and `context` pass through to the real page. Any other attribute raises `AttributeError` rather than reach the page ungated; to cover a new Page method, add a gated wrapper to `GuardedPage`. `guarded_page.frame(...)` and `guarded_page.frames` return `GuardedFrame` objects, which gate `goto`, `click`, `fill`, `type` and `evaluate` the same way (the `action` gets a `frame.` prefix, except `fill` / `type`, which send `form_input` with `meta.frame: "true"`).
 
 ### Methods
 
@@ -300,7 +313,7 @@ All other `page` attributes pass through `__getattr__`, so `guarded_page.click(.
 | `check_action(action, target, meta=...)` | `browser` | Clicks, screenshots, etc. Sends `command: "<action> <target>"`. |
 | `check_form_input(url, field_name, value)` | **`data`** | Typing into a form field. Uses the `data` scope so policy can distinguish content-egress from navigation. |
 
-`check_form_input` is the only method that uses the `data` scope — it is designed for preventing PII/credential leakage into web forms. A `data`-scope rule can match on `command: "input:<field_name>"` or on `domain`. The value itself is **not** sent to the policy engine (it would end up in the audit log); only the field name and destination domain are evaluated.
+`check_form_input`, and the `fill` / `type` methods of `GuardedPage` and `GuardedFrame`, use the `data` scope, which is designed for preventing PII/credential leakage into web forms. They send `action: "form_input"`, the page `url` and its `domain`, `meta.field` = the field name (the selector, for `fill` / `type`), and `command` = the value, redacted: a value longer than 256 characters becomes `<redacted; len=N>`, and a shorter one has the standard secret patterns (Bearer tokens, AWS keys, `secret=…` pairs, `ghp_…`, `xox?-…`) scrubbed. A `data`-scope rule can match on that `command` (for example `pattern: "*ssn:*"`) or on `domain`. The redacted value is what the audit log records. See [Data scope](POLICY_REFERENCE.md#data-scope) for the request fields.
 
 ### Why `goto` raises instead of returning a string
 
@@ -417,7 +430,7 @@ binary:
 
 #### Empty-server mode (back-compat)
 
-Running the entry point without `--upstream` keeps the v0.4.x behaviour: a server that registers no tools. Useful for programmatic embedding via `GuardedMCPServer.add_tool(...)` in custom code; useless when wired to Claude Desktop verbatim. The adapter logs a stderr WARN at startup so an operator following the docs literally sees the misconfiguration immediately:
+Running the entry point without `--upstream` starts a server that registers no tools. Useful for programmatic embedding via `GuardedMCPServer.add_tool(...)` in custom code; useless when wired to Claude Desktop verbatim. The adapter logs a stderr WARN at startup so an operator following the docs literally sees the misconfiguration immediately:
 
 ```bash
 python -m vanzik.adapters.mcp --guard-url http://localhost:8080

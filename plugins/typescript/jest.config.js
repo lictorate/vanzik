@@ -1,9 +1,9 @@
 /**
  * Jest configuration for the Vanzik TypeScript SDK.
  *
- * ts-jest compiles the TS sources on demand so we don't maintain a
- * separate tsc pipeline for tests. Tests live under src/__tests__/ and
- * are intentionally excluded from the production build via tsconfig.json.
+ * ts-jest compiles the TS sources on demand. Tests live under
+ * src/__tests__/ and are excluded from the production build via
+ * tsconfig.json.
  */
 module.exports = {
   preset: "ts-jest",
@@ -15,9 +15,7 @@ module.exports = {
   transform: {
     "^.+\\.ts$": ["ts-jest", { tsconfig: { rootDir: "./src" } }],
   },
-  // waitForApproval polls via setTimeout; under a short deadline a pending
-  // timer can briefly outlive the test. forceExit avoids a CI hang without
-  // masking real async leaks — the detectOpenHandles path is still
-  // available on demand via `npx jest --detectOpenHandles`.
+  // A pending waitForApproval timer can briefly outlive a test; forceExit
+  // avoids a CI hang. Use `npx jest --detectOpenHandles` to hunt real leaks.
   forceExit: true,
 };

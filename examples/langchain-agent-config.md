@@ -11,9 +11,11 @@ var).
 >   (verified 2026-05-05). The langchain-openai 1.x signature uses
 >   `base_url=` directly. The legacy `openai_api_base=` parameter is
 >   still accepted but `base_url=` is the documented form.
-> - langchain==1.2.x and langchain-core==1.3.x match the floors
->   pinned in [`plugins/python/pyproject.toml`](../plugins/python/pyproject.toml)
->   for the `langchain` extra.
+> - The `langchain` extra in
+>   [`plugins/python/pyproject.toml`](../plugins/python/pyproject.toml)
+>   pins `langchain>=0.3,<2.0` and `langchain-core>=0.3,<2.0`;
+>   langchain 1.2.x and langchain-core 1.3.x were the current releases
+>   when this example was verified.
 
 ## Prerequisites
 
@@ -135,8 +137,14 @@ With the mapping and the allow rule above in place:
   with `Vanzik denied this action.`, followed by the reason and
   rule.
 - **REQUIRE_APPROVAL:** put the same pattern under `require_approval:`
-  instead. The refusal text contains the approval ID; approve it on
-  the dashboard and re-run.
+  instead. The refusal text contains the approval ID.
+  To resume after approval: (1) copy the id from the refusal's
+  `Approval ID: ap_…` line; (2) approve it on the dashboard or with
+  `POST /v1/approve/<id>`; (3) send the same request again with the
+  `X-Vanzik-Approval-ID` header, e.g. `ChatOpenAI(..., default_headers={"X-Vanzik-Approval-ID": approval_id})`. When the model repeats the
+  same tool call it comes back ALLOWed. The id works once, for that
+  action only; a retry without the header gets a new approval. See
+  [`docs/LLM_API_PROXY.md`](../docs/LLM_API_PROXY.md) § 11.3.
 
 Without any `tool_scope_map` entry, the proxy reports
 `scope: unmapped` and the engine's fall-through default-deny applies —

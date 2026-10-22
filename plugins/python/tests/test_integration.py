@@ -66,7 +66,6 @@ class TestApproveFlow:
         assert result.needs_approval
         assert result.approval_id == "ap_test_456"
 
-        # Approve the action
         assert guard.approve("ap_test_456") is True
 
 

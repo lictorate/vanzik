@@ -110,9 +110,9 @@ func (f *GateFlags) ApplyEnv() error {
 }
 
 // RejectArgs returns an error for the first positional argument in args
-// (fs.Args() after parsing). The gate binaries take flags only; a stray
-// word used to be ignored silently, so `vanzik-llm-proxy version`
-// started the proxy and an unquoted --upstream command lost its arguments.
+// (fs.Args() after parsing). The gate binaries take flags only: ignoring
+// a stray word would start the proxy on `vanzik-llm-proxy version` and
+// drop the arguments of an unquoted --upstream command.
 // hint says what the argument might have been meant as; it may be empty.
 func RejectArgs(args []string, hint string) error {
 	if len(args) == 0 {

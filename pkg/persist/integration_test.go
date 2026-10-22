@@ -71,7 +71,7 @@ func newITServer(t *testing.T, st store.Store, overflowDir string) *itServer {
 		Engine: eng, Logger: buflog, DashboardEnabled: true, Notifier: disp,
 		APIKey: itAPIKey, BaseURL: "http://127.0.0.1:0", Version: "it",
 	})
-	// Reconciliation ARMED (v1.0): NodeID + a fast ReconcileInterval so the
+	// Reconciliation ARMED: NodeID + a fast ReconcileInterval so the
 	// background reconcile loop runs during the hot-path latency test and proves
 	// it stays off the /v1/check path (the p99<3ms gate below). Single node =>
 	// others=0 => behavioral no-op, but the loop still does its Snapshot-diff +

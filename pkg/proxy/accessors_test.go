@@ -8,7 +8,7 @@ import (
 	"lictorate.com/vanzik/v2/pkg/policy"
 )
 
-// TestServerAccessors covers the v0.6 Server.Limiter() / Server.ApprovalQueue()
+// TestServerAccessors covers the Server.Limiter() / Server.ApprovalQueue()
 // accessors used by the persistence syncer — they must return the server's LIVE
 // in-memory structures, not copies.
 func TestServerAccessors(t *testing.T) {

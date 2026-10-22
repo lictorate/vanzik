@@ -164,7 +164,7 @@ func VerifyChain(livePath string, opts VerifyOptions) (*VerifyReport, error) {
 	}
 	// Entries but none sealed: a seal declared only after every entry (a
 	// _meta line appended at the end) protects nothing. With a key this is
-	// a break; it used to verify as intact, with 0 sealed entries.
+	// a break, not an intact log with 0 sealed entries.
 	unprotected := rep.Entries == 0 && rep.PrunedBefore == 0 && rep.Unsealed > 0
 	if rep.Break == nil && len(opts.Keys) > 0 && unprotected {
 		rep.Break = &VerifyBreak{Reason: fmt.Sprintf("no entry is sealed: all %d entries come before the seal, so nothing in the log is tied to your key", rep.Unsealed)}

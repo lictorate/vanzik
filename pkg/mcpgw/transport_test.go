@@ -48,9 +48,7 @@ func stubBinary(t *testing.T) string {
 			return
 		}
 		stubBinPath = out
-		// Schedule a global cleanup. We use TempDir's auto-cleanup
-		// implicitly here by creating MkdirTemp; explicit
-		// os.RemoveAll happens at process exit.
+		// dir is never removed: the binary serves the whole test process.
 	})
 	if stubBinErr != nil {
 		t.Fatalf("stub binary unavailable: %v", stubBinErr)
@@ -263,7 +261,7 @@ func TestStdioUpstream_Reconnect(t *testing.T) {
 
 // TestStdioUpstream_RoutesNotificationsToSink: unsolicited notification
 // frames from the upstream reach OnNotification instead of being
-// dropped (the #mcp-list-changed seam).
+// dropped.
 func TestStdioUpstream_RoutesNotificationsToSink(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skip in short mode")
@@ -313,8 +311,8 @@ func TestStdioUpstream_RoutesNotificationsToSink(t *testing.T) {
 	}
 }
 
-// TestReadLoop_ServerInitiatedRequestLogLevel pins the (1) log-level
-// bump: a server-initiated REQUEST (id + method, no matching pending
+// TestReadLoop_ServerInitiatedRequestLogLevel pins the log levels: a
+// server-initiated REQUEST (id + method, no matching pending
 // entry) is dropped and surfaced at Info, while a stray response
 // (id, no method) stays at Debug. The logger is configured at "info"
 // level so Debug output is suppressed — presence in the buffer is the

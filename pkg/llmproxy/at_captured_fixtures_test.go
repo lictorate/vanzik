@@ -1,17 +1,8 @@
 package llmproxy
 
-// at_captured_fixtures_test.go is the AT-added captured-fixture
-// cross-check. The v0.5 plan AT brief asks for "real SSE responses
-// captured from OpenAI and Anthropic API ... Replay through parser,
-// assert tool_calls extracted correctly."
-//
-// A22 noted the bundled fixtures in pkg/llmproxy/testdata/ are
-// SYNTHESIZED from spec — at design time the OpenAI docs page
-// returned 403 and there were no captured traces in the repo. The
-// synthesized fixtures are exercised by openai_parser_test.go and
-// anthropic_parser_test.go and pin the spec semantics; a captured
-// fixture would tighten the regression coupon further by catching any
-// drift between spec and real upstream behavior.
+// Replays captured provider SSE traces through the parsers. The bundled
+// testdata/ fixtures are synthesized from the spec; real captures would
+// also catch drift between spec and real upstream behavior.
 //
 // To add a captured fixture:
 //   1. Capture the SSE response of a real /v1/chat/completions
@@ -36,21 +27,16 @@ import (
 	"testing"
 )
 
-// TestAT_CapturedFixtures_OpenAI replays every captured OpenAI streaming
-// fixture through OpenAIToolCallAccumulator and asserts at least one
-// ToolCallCheck reassembles. When no real captures are committed yet, it falls
-// back to the committed synthesized fixtures so the capture→replay→reassemble
-// pipeline still runs in CI instead of skipping silently; real captures dropped
-// under testdata/captured/ take precedence.
+// TestAT_CapturedFixtures_OpenAI replays every OpenAI capture and asserts
+// a tool call reassembles. Without captures it uses the synthesized
+// fixtures, so the pipeline runs in CI instead of skipping.
 func TestAT_CapturedFixtures_OpenAI(t *testing.T) {
 	files, err := filepath.Glob("testdata/captured/openai_streaming_*.txt")
 	if err != nil {
 		t.Fatalf("glob: %v", err)
 	}
 	if len(files) == 0 {
-		// Fall back to the committed synthesized fixtures (honestly labelled as
-		// synthesized via their provenance header) so the replay path is
-		// exercised on every run. See TODO(v0.7, #llm-real-captured-fixtures).
+		// See TODO(v0.7, #llm-real-captured-fixtures).
 		files, err = filepath.Glob("testdata/openai_streaming_*.txt")
 		if err != nil {
 			t.Fatalf("glob synthesized fallback: %v", err)
@@ -75,10 +61,8 @@ func TestAT_CapturedFixtures_OpenAI(t *testing.T) {
 				if len(ev) > 0 {
 					res, ferr := acc.FeedEvent(ev)
 					if ferr != nil {
-						// Real captures may include events the spec
-						// hadn't documented; log + continue but do
-						// not fail. The reassembly assertion below is
-						// the load-bearing one.
+						// Real captures may carry undocumented events;
+						// only reassembly is asserted.
 						t.Logf("event-feed err: %v", ferr)
 					}
 					if res.Completed {
@@ -93,11 +77,8 @@ func TestAT_CapturedFixtures_OpenAI(t *testing.T) {
 				}
 			}
 			if len(completed) == 0 {
-				// A real captured fixture that contains a tool_call
-				// MUST reassemble at least one. If we get a
-				// pass-through-only stream (e.g. the user captured a
-				// non-tool-using prompt) the file should be named
-				// without the tool_call hint; we fail loudly.
+				// A fixture whose name mentions "tool" must
+				// reassemble at least one call.
 				if strings.Contains(strings.ToLower(filepath.Base(f)), "tool") {
 					t.Errorf("captured fixture %s claims to contain a tool_call but parser produced 0 completions", f)
 				}
@@ -106,17 +87,14 @@ func TestAT_CapturedFixtures_OpenAI(t *testing.T) {
 	}
 }
 
-// TestAT_CapturedFixtures_Anthropic mirrors the OpenAI variant for captured
-// Anthropic /v1/messages streaming traces, with the same synthesized-fixture
-// fallback so the replay path runs in CI rather than skipping silently.
+// TestAT_CapturedFixtures_Anthropic mirrors the OpenAI variant.
 func TestAT_CapturedFixtures_Anthropic(t *testing.T) {
 	files, err := filepath.Glob("testdata/captured/anthropic_streaming_*.txt")
 	if err != nil {
 		t.Fatalf("glob: %v", err)
 	}
 	if len(files) == 0 {
-		// Fall back to the committed synthesized fixtures so the replay path is
-		// exercised on every run. See TODO(v0.7, #llm-real-captured-fixtures).
+		// See TODO(v0.7, #llm-real-captured-fixtures).
 		files, err = filepath.Glob("testdata/anthropic_streaming_*.txt")
 		if err != nil {
 			t.Fatalf("glob synthesized fallback: %v", err)
@@ -163,13 +141,9 @@ func TestAT_CapturedFixtures_Anthropic(t *testing.T) {
 	}
 }
 
-// TestAT_SynthesizedFixturesHaveProvenanceHeader documents the
-// bundled-fixture provenance contract: every fixture in
-// testdata/*_streaming_*.txt must begin with an SSE comment line (`:`
-// prefix) recording its synthesis date and source spec section. The
-// streaming parser drops these comment events transparently so they
-// don't affect parser behavior, but they are load-bearing for the
-// audit trail when an operator wonders why a fixture matches.
+// TestAT_SynthesizedFixturesHaveProvenanceHeader: every
+// testdata/*_streaming_*.txt fixture starts with an SSE comment recording
+// its synthesis date and source spec section.
 func TestAT_SynthesizedFixturesHaveProvenanceHeader(t *testing.T) {
 	files, err := filepath.Glob("testdata/*_streaming_*.txt")
 	if err != nil {

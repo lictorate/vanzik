@@ -1,6 +1,6 @@
 package proxy
 
-// End-to-end wiring for the require_prior index (audit B27 + B1).
+// End-to-end wiring for the require_prior index.
 //
 // pkg/policy proves the index's LOGIC. This file proves the SERVER actually
 // wires it: that NewServer installs it on the engine, that logAndRespond feeds
@@ -100,7 +100,7 @@ func TestPriorIndex_DeniedActionIsNotRecorded(t *testing.T) {
 
 // TestPriorIndex_TenantScopedThroughRoutes drives the real handler and asserts
 // the recorded history is scoped to the tenant the request was evaluated
-// under — B27 at the HTTP boundary rather than the engine boundary.
+// under — tenant scoping at the HTTP boundary rather than the engine boundary.
 func TestPriorIndex_TenantScopedThroughRoutes(t *testing.T) {
 	srv := newGatedServer(t)
 

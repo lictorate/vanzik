@@ -9,11 +9,6 @@ For cross-cutting concerns (binary structure, audit transport tag,
 deployment topologies, fail-mode flag) see
 [`docs/PROXY_ARCHITECTURE.md`](./PROXY_ARCHITECTURE.md).
 
-The core technical idea — pause/resume of an LLM SSE stream when a
-tool call needs gating — has direct parallels to mid-stream rewrites
-in HTTP-mitm tools (go-mitmproxy's stream addons) but is novel in the
-LLM-proxy space.
-
 ---
 
 ## 1. Architecture
@@ -107,16 +102,17 @@ is the proxy's credential for the central server's `/v1/check`.
 The proxy is **dumb on auth**: it forwards `Authorization`,
 `x-api-key` (Anthropic), `OpenAI-Organization`, `OpenAI-Project`, and
 all other request headers to the upstream **verbatim** — except
-hop-by-hop headers and the proxy's own `X-Vanzik-Proxy-Auth` (§ 8.1),
-which are dropped. The proxy
+hop-by-hop headers, the proxy's own `X-Vanzik-Proxy-Auth` (§ 8.1) and
+`X-Vanzik-Approval-ID` (§ 11.3), which are dropped. The proxy
 never reads the user's bearer token; the upstream is responsible for
 auth. The `Authorization` header for the **central guard server** is a
 separate concern (see § 3.2) — the proxy adds it on the
 `/v1/check` side channel only, never on the upstream-forwarded request.
 
-`User-Agent` is rewritten to include a `vanzik-llm-proxy/<version>`
-suffix so server-side logs at OpenAI/Anthropic can identify
-proxied traffic. Spec-compliant: `User-Agent` is mutable per RFC 7231.
+`User-Agent` is rewritten to start with `vanzik-llm-proxy/<version>`,
+followed by the client's original User-Agent when it sent one
+(`vanzik-llm-proxy/2.0.0 openai-python/1.x`), so server-side logs at
+OpenAI/Anthropic can identify proxied traffic. Spec-compliant: `User-Agent` is mutable per RFC 7231.
 
 The `Host` header is rewritten to the upstream's authority. Cookie
 headers (rare for LLM APIs) are forwarded unchanged.
@@ -129,7 +125,7 @@ like any other header):
 |---|---|---|
 | `X-Agent-ID` | `agent_id` | `llm-proxy` when absent. |
 | `X-Session-ID` | `session_id` | Keys `cost.max_per_session` and the audit's sessions. |
-| `X-Vanzik-Parent-Session` | `parent_session_id` | **(v1.4)** The session that started this one, e.g. the orchestrator's session when a sub-agent calls the model. Not used by policy; [`GET /v1/sessions`](API.md#get-v1sessions--tenant-aware-mirror) and the dashboard's Sessions view use it to link the two. Omitted when the header is absent. |
+| `X-Vanzik-Parent-Session` | `parent_session_id` | The session that started this one, e.g. the orchestrator's session when a sub-agent calls the model. Not used by policy; [`GET /v1/sessions`](API.md#get-v1sessions--tenant-aware-mirror) and the dashboard's Sessions view use it to link the two. Omitted when the header is absent. |
 
 ### 3.2 Body handling
 
@@ -161,9 +157,9 @@ Two paths:
 
 ### 3.3 Pass-through endpoints
 
-`/v1/embeddings` and `/v1/models` are forwarded with one audit entry
-(`scope: "network"`, `transport: "llm_api_proxy"`) but **no policy
-check** — there are no tool calls in the response. This is honest
+`/v1/embeddings` and `/v1/models` are forwarded as-is, with **no
+policy check and no audit entry** — there are no tool calls in the
+response, so nothing reaches `/v1/check`. This is honest
 about coverage: the proxy is for tool-call gating, not for blocking
 the agent from talking to the model.
 
@@ -177,29 +173,30 @@ policy YAML, mirroring the MCP gateway approach (§ 4.4 of
 
 ### 4.1 Built-in defaults
 
-```go
-var defaultLLMToolScopeMap = []toolScopePattern{
-    // exact / glob name              scope         path-arg          url-arg     action
-    {"bash",                          "shell",      "",               "",         ""},
-    {"run_command",                   "shell",      "",               "",         ""},
-    {"execute_command",               "shell",      "",               "",         ""},
-    {"shell",                         "shell",      "",               "",         ""},
-    {"read_file",                     "filesystem", "path,file_path", "",         "read"},
-    {"write_file",                    "filesystem", "path,file_path", "",         "write"},
-    {"edit_file",                     "filesystem", "path,file_path", "",         "write"},
-    {"delete_file",                   "filesystem", "path,file_path", "",         "delete"},
-    {"list_directory",                "filesystem", "path,file_path", "",         "read"},
-    {"glob",                          "filesystem", "path",           "",         "read"},
-    {"grep",                          "filesystem", "path",           "",         "read"},
-    {"web_search",                    "network",    "",               "url,query","search"},
-    {"fetch_url",                     "network",    "",               "url",      "fetch"},
-    {"http_request",                  "network",    "",               "url",      ""},
-    {"playwright_*",                  "browser",    "",               "url",      ""},
-    {"browser_*",                     "browser",    "",               "url",      ""},
-    {"navigate",                      "browser",    "",               "url",      "navigate"},
-    {"click",                         "browser",    "",               "",         "click"},
-}
-```
+`DefaultLLMToolScopeMap` in
+[`pkg/llmproxy/scope_map.go`](../pkg/llmproxy/scope_map.go) is a
+`[]policy.ToolScopeMapping{Pattern, Scope}` list: a tool name (exact,
+case-sensitive, or a `prefix_*` glob) and the scope it gates under.
+It has 47 entries:
+
+| Scope | Patterns |
+|---|---|
+| `shell` | `Bash`, `PowerShell`, `bash`, `sh`, `shell`, `run_command`, `execute_command`, `cmd`, `system`, `exec` |
+| `filesystem` | `Read`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `Glob`, `Grep`, `read_file`, `write_file`, `list_directory`, `list_files`, `file_read`, `file_write`, `edit_file`, `delete_file`, `create_directory`, `ls`, `cat`, `find`, `glob` |
+| `network` | `WebFetch`, `web_search`, `fetch_url`, `http_request`, `http_get`, `http_post`, `search`, `fetch`, `url_request` |
+| `browser` | `playwright_*`, `browser_*`, `chrome_*`, `firefox_*`, `selenium_*`, `navigate`, `click`, `screenshot` |
+
+The capitalised names are Claude Code's built-in tools. A mapping
+carries no argument names: which arguments feed the check is fixed per
+scope (`pkg/llmproxy/gate.go`):
+
+| Scope | `command` | Other fields |
+|---|---|---|
+| `shell` | the `command` / `cmd` / `script` / `code` argument; else the tool name | — |
+| `filesystem` | `<tool_name> <path>` | `path` from `path`, `file_path`, `notebook_path`, `filepath`, `target`, `target_path`, `filename`, `file`, `destination`, `src` or `dst`; `action` inferred from the tool name (read / write / delete …) |
+| `network` | `<tool_name> <url>` | `url` from `url`, `uri`, `endpoint` or `target_url`; `domain` from that URL's host, else a `domain` / `host` / `hostname` argument |
+| `browser` | `<tool_name> <url>` | `url` and `domain` as for `network`; `action` is the tool name |
+| `unmapped` | the tool name | — |
 
 ### 4.2 Policy-YAML override
 
@@ -221,8 +218,8 @@ semantics as the MCP gateway.
 ### 4.3 Unmapped tools
 
 A tool name that matches **no** built-in or policy entry is dispatched
-as `scope: "unmapped"` with the tool name in `command` and the
-arguments in `meta["arguments_json"]` (redacted).
+as `scope: "unmapped"` with the tool name in `command` and each
+top-level argument as a redacted `meta["arg_<key>"]` entry.
 
 Operators MUST configure an `unmapped` scope rule to control behaviour:
 
@@ -236,29 +233,15 @@ If no `unmapped` rule exists, the engine's standard fall-through
 default-deny applies — fail-closed by design. A tool the policy
 author has not seen is, by Vanzik's policy contract, denied.
 
-### 4.4 Multiple-arg scope upgrades
-
-Some tools take both `path` and `url` (e.g., a `download_to_file`
-tool). The mapping resolves to the **most-specific scope inferred from
-arguments** at check time:
-
-- `path` present → `filesystem`,
-- `url` present → `network`,
-- both present → **two checks** dispatched (filesystem AND network); both
-  must allow.
-
-This mirrors the MCP gateway's dual-check pattern but applied to a
-single tool definition rather than a wrapping `mcp_tool` scope.
-
 ---
 
 ## 5. Streaming pause / resume / rewrite — the hard one
 
-This is the core technical innovation. When the response is streaming
-and the model is calling tools, the proxy must:
+When the response is streaming and the model is calling tools, the
+proxy must:
 
 1. Read the SSE stream from upstream chunk by chunk.
-2. Parse tool-call deltas (different shape per provider — see § 5.0
+2. Parse tool-call deltas (different shape per provider — see § 5.1
    and § 5.2).
 3. **Accumulate** until a tool call is complete.
 4. **Pause** the stream to the client (do not flush partial deltas
@@ -372,22 +355,9 @@ Critical observations:
 
 ### 5.3 Pause/resume mechanism (both providers)
 
-Per-request state held in a `streamGater` struct:
-
-```go
-type streamGater struct {
-    provider       string                       // "openai" | "anthropic"
-    accumulator    map[int]*toolCallAccumulator // keyed by index
-    bufferedBytes  []byte                       // raw upstream SSE bytes pending flush
-    bufferedSize   int64                        // running size, capped by --max-buffer-bytes
-    flushedHeader  bool                         // have we sent the SSE response headers downstream
-    clientWriter   http.ResponseWriter
-    flusher        http.Flusher
-    upstreamReader io.ReadCloser
-    guard          *guardClient                 // /v1/check side channel
-    auditTransport string                       // "llm_api_proxy"
-}
-```
+Per request, the proxy holds the tool call being assembled and the raw
+upstream events held back until it is gated, capped by
+`--max-buffer-bytes`. The pseudocode below shows the logic, not the code.
 
 Algorithm (OpenAI):
 
@@ -454,15 +424,22 @@ required.
 For REQUIRE_APPROVAL the content is:
 
 ```
-[Vanzik] Tool call requires approval.
+Vanzik paused this action pending human approval.
+
 Reason: <reason>
-Approval ID: ap_<hex>
-Approve at: <approval_url>
+Rule: <rule>
+
+Approval URL: <approval_url>
+Approval ID: ap_<hex> (send it in the X-Vanzik-Approval-ID header on retry to resume after approval)
+
+Wait for human approval, then retry the same call.
 ```
 
-> **Design note on `tool` role injection.** An earlier draft proposed
-> injecting a synthetic `role: "tool"` message with a fake
-> `tool_call_id`. That has two problems: (a) `role: "tool"` messages
+§ 11.3 covers the retry.
+
+> **Design note on `tool` role injection.** Injecting a synthetic
+> `role: "tool"` message with a fake `tool_call_id` instead has two
+> problems: (a) `role: "tool"` messages
 > are valid in **request** turns, not response deltas — the OpenAI
 > response schema only emits `role: "assistant"`; (b) the agent's SDK
 > would expect a paired `tool_calls[*].id` it had already buffered,
@@ -486,13 +463,23 @@ data: { "type": "content_block_delta", "index": <same>,
 
 event: content_block_stop
 data: { "type": "content_block_stop", "index": <same> }
+
+event: message_delta
+data: { "type": "message_delta", "delta": { "stop_reason": "end_turn" },
+        "usage": { "output_tokens": 0 } }
+
+event: message_stop
+data: { "type": "message_stop" }
 ```
 
 Anthropic's content_block index is reusable — emitting a `text` block
 at the same index that the `tool_use` block was buffered for is wire-
-legal. The downstream `message_delta { stop_reason }` field is
-rewritten from `tool_use` to `end_turn` to prevent the agent from
-expecting a tool result it's not getting.
+legal. The proxy stops reading the upstream there and closes the
+message itself: its `message_delta` sets `stop_reason` to `end_turn`
+(not `tool_use`) so the agent doesn't expect a tool result it's not
+getting, and carries `usage`, which the Anthropic SDKs'
+`messages.stream()` reads on every `message_delta` (without it they
+raise `AttributeError`).
 
 #### Malformed tool calls fail closed (v1.0)
 
@@ -504,43 +491,42 @@ refusal is recorded in the central audit trail with the exact DENY the
 client received (see **Audit fidelity** below), the buffered malformed
 bytes are discarded (never forwarded), and the accumulator is reset so
 any *later* valid tool call in the same stream is still gated. Malformed
-**non-completion** deltas are unchanged: dropped silently, because
-corruption that matters resurfaces at completion, where it now denies.
-(Before v1.0 a malformed completion was silently dropped — no refusal, no
-audit entry, and the stream went dark for the rest of the connection.)
+**non-completion** deltas are dropped silently, because corruption that
+matters resurfaces at completion, where it denies.
 
 #### Undecodable non-streaming bodies that carry a tool call fail closed
 
 A **non-streaming** response is gated by decoding it into the typed
 response struct and inspecting the tool calls it contains. A body that
 fails that decode is forwarded verbatim — Vanzik never rewrites an
-already-corrupt wire — with one exception, added after audit finding B6.
+already-corrupt wire — with one exception.
 
 Go's decoder is stricter than a client SDK's in one specific way: it
 aborts on a **type-mismatched** field the struct declares, such as
 `"created": "1730000000"` where the spec says integer. A Python or
 TypeScript SDK parsing the same bytes ignores the odd field and executes
-the `tool_calls` sitting beside it. So "Vanzik cannot decode it" did
-not imply "the client cannot use it", and the gap forwarded a tool call
-the firewall never evaluated.
+the `tool_calls` sitting beside it. So "Vanzik cannot decode it" does
+not imply "the client cannot use it".
 
-Before falling back to passthrough the proxy now asks the narrower
+Before falling back to passthrough the proxy asks the narrower
 question — does this body carry a tool call at all? — using a probe that
 constrains only the path to `tool_calls` / `tool_use` and nothing else.
 If one is present the response is refused under the fixed rule
 `deny:llm_api_proxy:undecodable_tool_call`. If none is present the body
-passes through exactly as before.
+passes through unchanged.
 
 **Where to see it.** The refusal is recorded in the **central audit
 trail** with the DENY the client actually received, via the same
 `/v1/audit` ingest path the malformed-tool-call refusal uses — so it
 arrives tagged `transport: llm_api_proxy` under that stable rule string,
 which is the signal to alert on. The proxy also increments
-`vanzik_llmproxy_undecodable_tool_call_total{provider}`, but that
-lives in the proxy's process-local registry and **has no scrape
-endpoint** (see [`OBSERVABILITY.md`](OBSERVABILITY.md)), so it is useful
-only to in-process embedders today. Alert on the audit rule, not the
-counter.
+`vanzik_llmproxy_undecodable_tool_call_total{provider}`, but it counts
+in the proxy process, which **serves no `/metrics`** (see
+[`OBSERVABILITY.md`](OBSERVABILITY.md)). The central server's
+`/metrics` does list all six `vanzik_llmproxy_*` series (the two
+binaries share one metrics registry), but nothing there increments
+them, so they always read 0. Don't alert on any of them; alert on the
+audit rule.
 
 Two details worth knowing:
 
@@ -583,13 +569,10 @@ for one oversized SSE event and for cumulative arguments past
 `--max-buffer-bytes`). Each entry carries the rule, tenant, agent and
 provider, plus whatever tool identity the parser observed before
 refusing — often none, since a stream refused because its bytes cannot
-be bound to a call is by definition one where no call assembled. Before
-v1.1.0 these refusals reached the client and left no trace an operator
-could see: the gate never ran, so nothing was written, and the only
-signal was a process-local counter with no scrape endpoint.
+be bound to a call is by definition one where no call assembled.
 
-`n > 1` with tool calls is the only capability this costs, and it did not
-previously work correctly — the merged arguments were already wrong.
+`n > 1` with tool calls is the only capability this costs, and it can't
+be gated correctly anyway — the merged arguments would be wrong.
 Every mainstream agent framework sends `n = 1`, which is untouched.
 
 #### A stream that ends mid-tool-call is gated, not dropped
@@ -603,12 +586,11 @@ still buffered, the cycle is **completed**, not abandoned:
   `deny:llm_api_proxy:malformed_tool_call` above: denied and audited.
 
 The buffered bytes are never flushed unexamined — that would hand the
-client the ungated call this whole mechanism exists to gate. Before
-v1.0 they were silently discarded instead, which left the client with
-an empty `200`, the gate un-run and no audit entry: the firewall went
-dark exactly where a truncated tool call was in flight. `[DONE]` is
-treated as the end of stream in its own right, so a gateway that holds
-the connection open after it no longer delays the verdict.
+client the ungated call this whole mechanism exists to gate, and
+discarding them would leave the client an empty `200` with no audit
+entry. `[DONE]` is treated as the end of stream in its own right, so a
+gateway that holds the connection open after it does not delay the
+verdict.
 
 ##### Audit fidelity
 
@@ -622,7 +604,7 @@ the proxy POSTs the client-visible DENY to the central server's
 `POST /v1/audit` is auth-gated. **If the central server runs with
 `--api-key`, give this proxy `--api-key` too** — otherwise the audit POST
 returns 401. On any `/v1/audit` failure the proxy does **not** drop the
-entry: it best-effort falls back to the pre-v1.0 `/v1/check` audit path,
+entry: it best-effort falls back to the `/v1/check` audit path,
 which still writes a transport-tagged entry (carrying the *engine* verdict,
 not the DENY). So fidelity degrades to the lower-fidelity path without
 `--api-key`, but audit **coverage never does** — a forced refusal is always
@@ -638,9 +620,8 @@ whitespace, or change Unicode escape forms — any of which can break
 client SDKs that rely on byte-level invariants (some agents hash the
 delta stream for reproducibility).
 
-This invariant is testable: capture an upstream stream once, replay it
-through the proxy with an ALLOW policy, byte-diff the output. The CI
-suite asserts the diff is empty.
+CI replays captured upstream streams through the proxy with an ALLOW
+policy and asserts the byte diff is empty.
 
 ### 5.6 Pause/resume mechanism — buffer bound
 
@@ -650,10 +631,15 @@ gating a single tool call. Rationale:
 - Typical tool argument JSON is 50–500 bytes.
 - Pathological cases (large file contents passed as a tool argument,
   e.g., a `write_file` with a multi-megabyte payload) hit this cap.
-- Above the cap, the proxy emits a synthetic refusal: "tool call too
-  large to gate (> N bytes); rejected by Vanzik". Operators see a
-  metric (`vanzik_llmproxy_buffer_overflow_total`) and can raise the
-  limit if their use case needs it.
+- Above the cap, the proxy emits a synthetic refusal under the rule
+  `deny:llm_api_proxy:buffer_overflow`. Its text starts "Vanzik refused
+  this tool call: its accumulated arguments exceeded the gating buffer
+  cap.", gives the reason "tool call arguments exceed gating buffer",
+  and names the `--max-buffer-bytes` flag. The proxy counts it in
+  `vanzik_llmproxy_buffer_overflow_total` (process-local, like every
+  `vanzik_llmproxy_*` series; see *Undecodable non-streaming bodies*
+  in § 5.4); operators can raise the limit if their use case
+  needs it.
 
 Why 1 MiB:
 
@@ -666,25 +652,13 @@ Why 1 MiB:
 
 ## 6. Concurrency model
 
-- Standard Go `http.Handler` per-request goroutine isolation.
-- Each request gets its own `streamGater` struct → its own buffer,
-  parser state, and accumulator. **No shared mutable state** between
-  requests.
-- The upstream HTTP client is shared (with a per-host connection pool
-  via `http.Transport`), but per-request response readers are independent.
-- The `/v1/check` HTTP client is shared. It uses a small connection
-  pool; the central guard server's `MaxRequestBodySize` of 1 MiB is
-  far above the per-tool-call check payload size so we never hit body
-  limits for the side channel.
-- Cancellation: when the client closes the connection
-  (`r.Context().Done()` fires), the proxy cancels both the upstream
-  read and any in-flight `/v1/check` call, then drops buffers.
-
-`bufio.Scanner` is **not** used for SSE parsing because SSE events
-don't have a hard line bound (and Go's scanner has a 64 KiB default
-that's awkward to raise for streams). Instead, the proxy uses a
-hand-rolled `bufio.Reader` loop that reads up to `\n\n` (SSE event
-delimiter), bounded by `--max-buffer-bytes`.
+- Each request has its own buffer and parser state; **no mutable state
+  is shared** between requests. The upstream and `/v1/check` HTTP
+  clients (and their connection pools) are shared.
+- When the client closes the connection, the proxy cancels both the
+  upstream read and any in-flight `/v1/check` call, then drops buffers.
+- An SSE event is read up to its `\n\n` delimiter with no fixed line
+  limit other than `--max-buffer-bytes`.
 
 ---
 
@@ -697,21 +671,23 @@ One audit entry per **tool call** (not per stream, not per delta).
   "schema_version": "v1",
   "transport": "llm_api_proxy",
   "timestamp": "2026-05-06T12:34:56.789Z",
-  "session_id": "<derived from x-session-id header or chatcmpl id>",
+  "session_id": "<from x-session-id header; empty when absent>",
   "agent_id": "<from x-agent-id header, or 'llm-proxy'>",
   "request": {
     "scope": "filesystem",
     "parent_session_id": "<from x-vanzik-parent-session header; omitted when absent>",
-    "command": "read_file",
+    "command": "read_file /tmp/x",
     "path": "/tmp/x",
     "action": "read",
     "meta": {
-      "arguments_json": "{\"path\":\"/tmp/x\"}",
-      "tool_call_id": "call_abc",
+      "arg_path": "/tmp/x",
+      "mapped_scope": "filesystem",
       "model": "gpt-4",
       "provider": "openai",
       "stream": "true",
-      "upstream_status": "200"
+      "tool_call_id": "call_abc",
+      "tool_name": "read_file",
+      "transport": "llm_api_proxy"
     }
   },
   "result": {
@@ -723,11 +699,15 @@ One audit entry per **tool call** (not per stream, not per delta).
 }
 ```
 
-`Meta["arguments_json"]` is redacted via `pkg/notify.DefaultRedactor`.
+Each top-level tool argument becomes a `meta["arg_<key>"]` entry,
+redacted via `pkg/notify.DefaultRedactor`; `command` is redacted the
+same way. `stream` is present only for streaming responses, and
+`approval_id` is added when the request carried
+`X-Vanzik-Approval-ID`.
 
 For an unmapped scope: `request.scope = "unmapped"`,
-`request.command = "<tool_name>"`, `meta["arguments_json"]` carries
-the raw (redacted) arguments.
+`request.command = "<tool_name>"`, and the arguments are the same
+redacted `arg_<key>` entries.
 
 Dashboard chip: `transport: "llm_api_proxy"` (color: purple — distinct
 from `mcp_gateway` blue and `sdk` green).
@@ -779,24 +759,9 @@ stream. Operators can tune the limits in policy YAML
 
 ## 9. Test strategy
 
-| layer                              | tests                                                                                                |
-|------------------------------------|------------------------------------------------------------------------------------------------------|
-| Header passthrough                 | Authorization, x-api-key, OpenAI-Organization survive round trip                                     |
-| Body passthrough (non-streaming)   | byte-diff request body upstream-side                                                                 |
-| OpenAI tool-call accumulator       | single tool, multiple tools (interleaved indices), `name` whole vs split, `arguments` 1 byte at a time |
-| OpenAI gate trigger                | `finish_reason="tool_calls"` triggers; absent triggers don't                                          |
-| Anthropic tool-block accumulator   | single block, multiple text+tool_use blocks, partial_json across N events                             |
-| Anthropic gate trigger             | `content_block_stop` for a `tool_use` block triggers; for `text` doesn't                              |
-| ALLOW byte-identity                | replay-and-diff captured upstream stream                                                              |
-| DENY synthetic refusal (OpenAI)    | client receives valid SSE with `[DONE]` terminator; SDK parses without error                          |
-| DENY synthetic refusal (Anthropic) | client receives `text` block + `message_stop`; SDK parses                                             |
-| REQUIRE_APPROVAL                   | approval URL embedded in synthetic content; retry not auto-handled (operator approves, agent re-prompts) |
-| Buffer-overflow                    | synthetic refusal at `--max-buffer-bytes`; metric increments                                          |
-| Concurrency                        | 100 concurrent streams, no cross-request state leakage                                                |
-| Cancellation                       | client disconnect cancels upstream + /v1/check                                                        |
-| Pass-through endpoints             | /v1/embeddings, /v1/models forwarded with one audit entry                                             |
-| Unmapped tool                      | `scope: "unmapped"`; default-deny when no rule configured                                             |
-| Real upstream                      | OpenAI dev key + tiny model, run a multi-tool agent loop end-to-end                                   |
+The tests use scripted fake upstreams (Go `httptest` in `pkg/llmproxy`,
+with captured streams in `pkg/llmproxy/testdata`; Python mocks in
+`plugins/python/tests/integration`), so CI needs no provider key.
 
 ---
 
@@ -826,6 +791,9 @@ LangChain (`langchain-openai`), and CrewAI (LiteLLM under the hood).
 Each example is a runnable Python script with a paired `.md`
 walkthrough. The fastest end-to-end is
 [`docs/QUICKSTART_LLM_PROXY.md`](./QUICKSTART_LLM_PROXY.md).
+The examples need Vanzik 2.0 or later: older proxies lack the approval
+retry header (`X-Vanzik-Approval-ID`, § 11.3), and their Anthropic
+refusal streams crash `messages.stream()`.
 
 | SDK | Example | Path convention |
 |---|---|---|
@@ -839,7 +807,7 @@ walkthrough. The fastest end-to-end is
 | SDK | Constructor parameter | Env var | Path convention | Verified version |
 |---|---|---|---|---|
 | OpenAI Python | `base_url=` | `OPENAI_BASE_URL` | `/v1` suffix | openai==2.35.1 (2026-05-05) |
-| Anthropic Python | `base_url=` | `ANTHROPIC_BASE_URL` | no `/v1` | anthropic==0.100.0 (2026-05-05) |
+| Anthropic Python | `base_url=` | `ANTHROPIC_BASE_URL` | no `/v1` | anthropic==1.17.0, `messages.stream()` incl. refusals (2026-10-21) |
 | LangChain `ChatOpenAI` | `base_url=` | (inherits OpenAI SDK) | `/v1` suffix | langchain-openai 1.x (2026-05-05) |
 | LangChain `ChatAnthropic` | `base_url=` | (inherits Anthropic SDK) | no `/v1` | langchain-anthropic 1.x (2026-05-05) |
 | CrewAI `LLM` | `base_url=` | `OPENAI_API_BASE` / `OPENAI_BASE_URL` | `/v1` suffix (OpenAI-shape) | crewai 1.14.x (2026-05-05) |
@@ -862,9 +830,9 @@ Once the proxy is running and your code points at it:
    `configs/default.yaml`, ask the model to `ls /tmp` via a
    `bash`-named tool. The dashboard logs `ALLOW`; the SDK receives
    the original streamed tool-call deltas byte-identically.
-4. **A DENY rule rewrites the stream.** Add a `deny` rule for
-   `rm -rf *` under `scope: shell` (or use the bundled one). Prompt
-   the model to `rm -rf /etc`. The dashboard logs `DENY`; your code
+4. **A DENY rule rewrites the stream.** The bundled policy denies
+   `dd if=/dev/*` under `scope: shell`. Prompt the model to run
+   `dd if=/dev/zero of=/dev/sda`. The dashboard logs `DENY`; your code
    receives a synthetic assistant text starting with
    `Vanzik denied this action.` instead of any tool-call deltas.
 
@@ -892,22 +860,28 @@ and § 8.1.
 double-prefixed paths and 404s. This is the most common
 configuration mistake; double-check the env var when debugging.
 
-**Approval-id round-trip is opt-in.** When Vanzik returns
-`REQUIRE_APPROVAL`, the proxy emits a synthetic refusal with the
-approval ID embedded. The SDK or end user needs to:
+**Resuming after an approval takes the `X-Vanzik-Approval-ID`
+header.** When Vanzik returns `REQUIRE_APPROVAL`, the proxy emits a
+synthetic refusal with the approval ID and URL embedded (§ 5.4). To
+resume:
 
-1. Click approve on the dashboard (or via `vanzik approve <id>`).
-2. Re-prompt the model with the same intent.
-3. Pass `meta.approval_id` to the proxy's `/v1/check` (handled
-   automatically when retrying through the proxy and your harness
-   sets `_meta.dev.vanzik/approval_id` — see the MCP Gateway's
-   approval-id round-trip in [`docs/APPROVAL_WORKFLOW.md`](./APPROVAL_WORKFLOW.md)).
+1. Approve it on the dashboard (or `POST /v1/approve/<id>`).
+2. Send the request again with the header
+   `X-Vanzik-Approval-ID: <id>` — for the Python SDKs,
+   `extra_headers={"X-Vanzik-Approval-ID": approval_id}`.
+3. When the model emits the same tool call, the proxy passes the id to
+   `/v1/check` as `approval_id`, Vanzik honors the approval, and the
+   tool call reaches your code as `ALLOW`.
 
-The OpenAI / Anthropic SDKs do **not** carry `_meta` round-trip
-state automatically; for one-shot CLI agents the typical flow is:
-operator clicks approve, user re-prompts, model emits the tool call
-again, Vanzik sees the approved id and short-circuits to
-`ALLOW`.
+The server's replay checks still apply: the id unlocks only the action
+that was approved (same agent, scope, command, path, domain, URL and
+action), only once, and only within the approval-validity window.
+Anything else in the retried response is evaluated fresh, so a
+different command is paused or denied as usual. Without the header a
+retry gets a new `REQUIRE_APPROVAL` with a new id. The proxy reads the
+header for `/v1/check` only and does not forward it upstream. (The MCP
+Gateway carries the same id in `_meta.dev.vanzik/approval_id`; see
+[`docs/APPROVAL_WORKFLOW.md`](./APPROVAL_WORKFLOW.md).)
 
 **Streaming vs non-streaming both work.** Streaming goes through the
 pause/resume/rewrite gater (§ 5); non-streaming responses are buffered
@@ -915,7 +889,7 @@ in full (capped by `--max-buffer-bytes`) and gated before forwarding.
 Concurrent calls are safe — per-request parser state is isolated (§ 6).
 
 **Custom tool names need a `tool_scope_map:` entry.** Vanzik
-ships a default mapping for ~17 common tool names (see
+ships a default mapping for 47 common tool names (§ 4.1; see
 [`pkg/llmproxy/scope_map.go`](../pkg/llmproxy/scope_map.go)).
 Anything else dispatches as `scope: unmapped`, which the engine
 treats as default-deny unless an `unmapped` rule exists. For custom

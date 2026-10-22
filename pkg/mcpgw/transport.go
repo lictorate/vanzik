@@ -133,7 +133,6 @@ type StdioUpstream struct {
 	// a fresh goroutine by the stdout reader.
 	onNotification func(method string)
 
-	// Lifecycle channels.
 	closeOnce sync.Once
 	done      chan struct{} // closed by Close to signal supervisor exit
 
@@ -153,7 +152,7 @@ type StdioUpstream struct {
 	cachedClientInfo    ClientInfo
 	initializeCompleted bool
 
-	// Backoff schedule (overridable in tests for fast iteration).
+	// Backoff schedule (tests shorten it).
 	backoff []time.Duration
 
 	// Subprocess factory. Production uses execCommand (a thin wrapper
@@ -294,11 +293,8 @@ func (u *StdioUpstream) spawnLocked(ctx context.Context) error {
 	u.procExited = procExited
 	u.procExitedMu.Unlock()
 
-	// Reader goroutine: parse newline-delimited JSON-RPC from stdout,
-	// route responses to pending[id] channels, log notifications to
-	// stderr. The bridge does not forward upstream-side notifications
-	// today except for cancellation, which is initiated by the host
-	// not the upstream.
+	// Reader goroutine: routes responses to pending[id] channels and
+	// notifications to onNotification (see readLoop).
 	go u.readLoop(stdoutPipe)
 	// Stderr drain: copy upstream stderr to the gateway's logger so
 	// downstream warnings are visible to the operator without
@@ -326,11 +322,10 @@ func (u *StdioUpstream) readLoop(r io.Reader) {
 		line, _, err := readFrame(reader, MaxStdoutLineBytes)
 		if errors.Is(err, errFrameTooLong) {
 			// An upstream line past the cap is ordinary MCP output -- a large
-			// file read, a screenshot, a dataset dump. It used to kill the
-			// reader outright while the subprocess kept running, wedging the
-			// upstream behind an OK status. Drop the frame and
-			// keep reading; the pending request it belonged to still times
-			// out on its own deadline, which is a bounded, visible failure.
+			// file read, a screenshot, a dataset dump. Drop the frame and keep
+			// reading rather than kill the reader (which would wedge the
+			// upstream behind an OK status); the pending request it belonged
+			// to times out on its own deadline, a bounded, visible failure.
 			u.logger.Infof("upstream %q: dropping oversized stdout frame (cap %d bytes)",
 				u.spec.Namespace, MaxStdoutLineBytes)
 			continue
@@ -367,8 +362,7 @@ func (u *StdioUpstream) readLoop(r io.Reader) {
 				// id + method that matches no pending request = an
 				// unsupported server-initiated REQUEST (see the
 				// doc-comment above). Surface at Info, not Debug, so the
-				// dropped capability is visible in production logs. The
-				// drop behaviour itself is unchanged.
+				// dropped capability is visible in production logs.
 				u.logger.Infof("upstream %q: unsupported server-initiated request %q (id %v) dropped — the gateway brokers tools only, not server->client requests", u.spec.Namespace, method, resp.ID)
 			} else {
 				// A stray/duplicate response (id, no method) — e.g. a
@@ -399,8 +393,8 @@ func (u *StdioUpstream) readLoop(r io.Reader) {
 	// line over MaxStdoutLineBytes kills bufio.Scanner while the subprocess
 	// keeps running, so cmd.Wait() never returns, the status stays StatusOK,
 	// send()'s degraded guard never fires, and every call is dispatched into a
-	// pipe nobody reads. Force the exit so the EXISTING respawn
-	// path runs, rather than assuming a dead reader means a dead process.
+	// pipe nobody reads. Force the exit so the respawn path runs,
+	// rather than assuming a dead reader means a dead process.
 	u.readerExited()
 }
 
@@ -485,9 +479,8 @@ func (u *StdioUpstream) drainStderr(r io.Reader) {
 func (u *StdioUpstream) supervise(ctx context.Context) {
 	step := 0
 	for {
-		// Wait for the current cmd to exit.
-		//
-		// A nil cmd means the FIRST spawn never succeeded — u.cmd is assigned
+		// Wait for the current cmd to exit. A nil cmd means the FIRST
+		// spawn never succeeded — u.cmd is assigned
 		// only on a successful spawn and is never cleared — so there is no exit
 		// to wait for. Rather than abandoning the upstream with no
 		// supervisor, fall through to the backoff/respawn path below.
@@ -838,10 +831,8 @@ func idKey(id interface{}) string {
 	}
 }
 
-// transportLogger is a tiny structured-ish logger used by the
-// transport layer. Centralised here so the bridge can configure
-// levels without each test caring. Writes plain text to its writer
-// — never to stdout (which is reserved for JSON-RPC).
+// transportLogger is the transport layer's leveled logger. It writes
+// plain text to its writer — never to stdout (reserved for JSON-RPC).
 type transportLogger struct {
 	w     io.Writer
 	debug bool

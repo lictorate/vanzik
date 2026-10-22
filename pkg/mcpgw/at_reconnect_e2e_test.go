@@ -1,8 +1,8 @@
 package mcpgw
 
-// AT (Test Wrangler) — bridge-level reconnect end-to-end test.
+// Bridge-level reconnect end-to-end test.
 //
-// A17's transport_test.go has TestStdioUpstream_Reconnect at the
+// transport_test.go has TestStdioUpstream_Reconnect at the
 // transport layer (StdioUpstream alone). This file drives the same
 // scenario through the FULL bridge — Bridge.Run, real StdioUpstream,
 // real subprocess — so we verify:
@@ -17,10 +17,8 @@ package mcpgw
 //   4. After reconnect, Status() returns to OK and a follow-up
 //      tools/call succeeds.
 //
-// Per the AT brief, time.Sleep is allowed in test code; we use a
-// generous 10s deadline so the first backoff tier (1s in the default
-// schedule, but we override to 100ms here) doesn't make the test
-// flaky on slow CI runners.
+// The backoff is shortened to 100ms and the deadlines are generous, so
+// the test isn't flaky on slow CI runners.
 
 import (
 	"context"
@@ -38,15 +36,9 @@ func TestAT_ReconnectE2E_RecoverAfterCrash(t *testing.T) {
 		t.Skip("skip in short mode (spawns real subprocess)")
 	}
 
-	// crash-after-n=2: the upstream survives the first Initialize +
-	// the first tools/call (initialize is 1 request, tools/call is
-	// 1 request, so it crashes immediately after the initialize-driven
-	// reinit handshake — the supervisor will see the exit and respawn).
-	//
-	// We stagger crash-after-n large enough that:
-	//   - upstream-side Initialize (1 request, count=1)
-	//   - bridge-side handleInitialize re-Initialize (1 request, count=2)
-	//   - first tools/list from harness (1 request, count=3 -> crash)
+	// --crash-after-n 3: the stub answers its first three requests (the
+	// upstream's own Initialize, the bridge's re-Initialize, the first
+	// tools/list) and exits on the fourth.
 	cfg := &Config{
 		GuardURL:                  "http://127.0.0.1:8080",
 		TenantID:                  "local",
@@ -102,22 +94,8 @@ func TestAT_ReconnectE2E_RecoverAfterCrash(t *testing.T) {
 		t.Fatalf("initialize: %+v", resp.Error)
 	}
 
-	// 2. First tools/list — this is upstream request count 3, which
-	//    triggers --crash-after-n exit. The bridge sees the response
-	//    first (the stub writes the response, THEN exits on the next
-	//    iteration of its scan loop after handled.Add returns >crashAfterN).
-	//
-	// Actually: the stub increments handled BEFORE switching on the
-	// method, and exits immediately if int(n) > *crashAfterN. With
-	// crashAfterN=3, the third request triggers `if 3 > 3` → false,
-	// so the third request still gets a response. The fourth request
-	// triggers the crash (4 > 3 → true).
-	//
-	// Plan: drive 3 successful requests (initialize from upstream's
-	// pre-Initialize is request 1; bridge's handleInitialize re-init
-	// is request 2; first tools/list is request 3). Then drive a 4th
-	// request which never gets a response and the supervisor sees the
-	// exit.
+	// 2. First tools/list: upstream request 3, still answered (the
+	//    stub exits only once its count exceeds --crash-after-n).
 	h.send(map[string]interface{}{
 		"jsonrpc": "2.0", "id": 2, "method": "tools/list",
 		"params": map[string]interface{}{},
@@ -193,12 +171,8 @@ func TestAT_ReconnectE2E_RecoverAfterCrash(t *testing.T) {
 		t.Fatalf("upstream did not reconnect within 15s; final status=%q", up.Status())
 	}
 
-	// 7. Drive a fresh tools/call after reconnect — should succeed.
-	//    Note: this consumes 1 request on the new subprocess (since
-	//    we restarted, the handled counter is reset). Add some buffer
-	//    by adjusting the call below to match what the reconnected
-	//    stub will accept (--crash-after-n=3, fresh process, request
-	//    count starts at 1).
+	// 7. A fresh tools/call after reconnect must succeed: the respawned
+	//    stub's request count starts again at 1.
 	h.send(map[string]interface{}{
 		"jsonrpc": "2.0", "id": 4, "method": "tools/call",
 		"params": map[string]interface{}{

@@ -1,9 +1,8 @@
 package llmproxy
 
-// gate_test.go covers the HTTPPolicyClient: /v1/check wire shape, mapped
-// scope projection, fail-mode branches, hot-reload, and argument
-// projection helpers. Mirrors pkg/mcpgw/gate_test.go's mock-server
-// pattern so reviewing across the two proxies stays mechanical.
+// HTTPPolicyClient: /v1/check wire shape, scope mapping, fail modes,
+// hot-reload and argument projection. Uses the same mock-server pattern
+// as pkg/mcpgw/gate_test.go.
 
 import (
 	"context"
@@ -112,7 +111,7 @@ func newGateForTest(t *testing.T, m *mockGuardServer, failMode string, pol *poli
 	return NewHTTPPolicyClient(cfg, pol)
 }
 
-// toolCall builds a ToolCallCheck shaped like A22 would emit.
+// toolCall builds a ToolCallCheck as the streaming path emits it.
 func toolCall(provider, toolName string, args map[string]interface{}) *ToolCallCheck {
 	return &ToolCallCheck{
 		Provider:   provider,
@@ -452,7 +451,7 @@ func TestLLMHTTPPolicyClient_PolicyHotReloadUpdatesMappings(t *testing.T) {
 	if got := gate.MapScope("read_file"); got != "data" {
 		t.Errorf("operator override: MapScope(read_file) = %q, want data", got)
 	}
-	// And the previously-set custom_db_query is gone (new snapshot replaced).
+	// The new snapshot replaces the old one entirely.
 	if got := gate.MapScope("custom_db_query"); got != UnmappedScope {
 		t.Errorf("after second SetPolicy: MapScope(custom_db_query) = %q, want %q (no longer in policy)", got, UnmappedScope)
 	}

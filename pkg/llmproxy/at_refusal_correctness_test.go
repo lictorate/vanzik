@@ -1,25 +1,9 @@
 package llmproxy
 
-// at_refusal_correctness_test.go is the AT-added DENY-path
-// well-formedness coupon. The v0.5 plan AT brief says:
-//
-//   "Rewrite correctness: under DENY, assert the rewritten stream is
-//    well-formed JSON/SSE and the agent SDK can parse it back."
-//
-// A24's refusal_test.go pins the surface-level shape (event kinds in
-// order, the message string contains the rule, etc.). This test
-// asserts SDK-level parseability: every `data:` payload deserializes
-// back into a plausible OpenAI-streaming or Anthropic-streaming event
-// envelope, and the sequence of events matches what the SDKs expect
-// (assistant content delta + finish_reason for OpenAI; the five-event
-// content_block_* + message_delta + message_stop sequence for
-// Anthropic). A live SDK iterating these bytes would not raise.
-//
-// We do NOT pull in openai-python or anthropic SDKs — they're Python.
-// We replicate their parsing logic minimally in Go: each `data:` line
-// is JSON-decoded into a plausible-shape struct, and the sequence is
-// validated. Drift in the SDKs' own type definitions would not break
-// these tests; it's a structural assertion against the wire format.
+// SDK-level parseability of DENY-path refusals (refusal_test.go pins
+// the surface shape): every `data:` payload decodes into the envelope an
+// SDK expects, in the expected order. The SDKs' parsing is replicated
+// minimally in Go, so this checks the wire format, not SDK type drift.
 
 import (
 	"context"
@@ -31,9 +15,7 @@ import (
 	"testing"
 )
 
-// openAIChunkEnvelope mirrors the public-facing minimum a streaming
-// SDK (openai-python's `_streaming.py` for instance) consumes per
-// chunk.
+// openAIChunkEnvelope is the minimum a streaming SDK reads per chunk.
 type openAIChunkEnvelope struct {
 	ID      string `json:"id"`
 	Object  string `json:"object"`
@@ -57,11 +39,8 @@ type anthropicEventForSDK struct {
 	Message      map[string]interface{} `json:"message,omitempty"`
 }
 
-// TestAT_RefusalCorrectness_OpenAI_SDKParseable boots a real Server
-// with the rich BuildRefusalRich wired (matching production main.go),
-// drives a DENY through the streaming pipe, captures the refusal
-// bytes, and asserts every `data:` payload deserializes into a valid
-// chunk envelope. Mirrors how openai-python iterates a stream.
+// TestAT_RefusalCorrectness_OpenAI_SDKParseable drives a DENY through a
+// Server wired like main.go and decodes every `data:` payload as a chunk.
 func TestAT_RefusalCorrectness_OpenAI_SDKParseable(t *testing.T) {
 	fixture := readFixture(t, "openai_streaming_single_tool_call.txt")
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -100,12 +79,8 @@ func TestAT_RefusalCorrectness_OpenAI_SDKParseable(t *testing.T) {
 		t.Fatalf("no data: lines in refusal: %q", string(got))
 	}
 
-	// Upstream emits a role-only content delta BEFORE the tool_call
-	// (PassThrough) so it is forwarded to the client byte-identical.
-	// The synthetic refusal then follows. Every data line must
-	// deserialize cleanly; at least one (the refusal) must carry the
-	// rule + finish_reason: stop. Drift on either is an SDK-breaking
-	// regression.
+	// The role delta passes through, then the refusal, which must
+	// carry the rule and finish_reason "stop".
 	sawRefusalChunk := false
 	for i, payload := range dataPayloads {
 		var env openAIChunkEnvelope
@@ -135,9 +110,8 @@ func TestAT_RefusalCorrectness_OpenAI_SDKParseable(t *testing.T) {
 	}
 }
 
-// TestAT_RefusalCorrectness_OpenAI_Approval — REQUIRE_APPROVAL refusal
-// must contain BOTH the approval URL and the round-trip hint so the
-// agent loop can pick it up.
+// TestAT_RefusalCorrectness_OpenAI_Approval: the approval refusal carries
+// both the approval URL and the retry hint.
 func TestAT_RefusalCorrectness_OpenAI_Approval(t *testing.T) {
 	fixture := readFixture(t, "openai_streaming_single_tool_call.txt")
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -172,11 +146,10 @@ func TestAT_RefusalCorrectness_OpenAI_Approval(t *testing.T) {
 	got, _ := io.ReadAll(resp.Body)
 	gotStr := string(got)
 
-	// Each must appear; otherwise the operator UX promise breaks.
 	for _, want := range []string{
 		"ap_test_round_trip",
 		"http://localhost:8080/dashboard",
-		"_meta.dev.vanzik/approval_id", // round-trip hint
+		"X-Vanzik-Approval-ID header", // round-trip hint
 		"require_approval:shell:rm",
 		"paused this action pending human approval",
 	} {
@@ -194,11 +167,8 @@ func TestAT_RefusalCorrectness_OpenAI_Approval(t *testing.T) {
 	}
 }
 
-// TestAT_RefusalCorrectness_Anthropic_SDKParseable asserts the
-// Anthropic refusal sequence is well-formed: 5 events in the
-// documented order (content_block_start text, content_block_delta
-// text_delta, content_block_stop, message_delta with
-// stop_reason:end_turn, message_stop).
+// TestAT_RefusalCorrectness_Anthropic_SDKParseable: the refusal is the
+// five documented events in order.
 func TestAT_RefusalCorrectness_Anthropic_SDKParseable(t *testing.T) {
 	fixture := readFixture(t, "anthropic_streaming_single_tool_use.txt")
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -241,8 +211,7 @@ func TestAT_RefusalCorrectness_Anthropic_SDKParseable(t *testing.T) {
 		t.Fatalf("Anthropic refusal too short: got %d data: lines, want >= %d\nbody=%s",
 			len(dataPayloads), len(wantSequence), string(got))
 	}
-	// Take the LAST 5 (the original tool_use's 5+ events were buffered
-	// and discarded; what remains is the synthetic refusal sequence).
+	// The tool_use's own events were discarded; the tail is the refusal.
 	tail := dataPayloads[len(dataPayloads)-len(wantSequence):]
 
 	stopReasonSeen := false
@@ -268,14 +237,11 @@ func TestAT_RefusalCorrectness_Anthropic_SDKParseable(t *testing.T) {
 	}
 }
 
-// TestAT_RefusalCorrectness_Anthropic_PreservesToolUseIndex asserts
-// the synthetic refusal lands at the SAME content_block_index the
-// upstream tool_use was at. SDK ordering relies on this — emitting at
-// index 0 when the tool_use was at index 3 would corrupt prior text
-// blocks the client already received.
+// TestAT_RefusalCorrectness_Anthropic_PreservesToolUseIndex: the refusal
+// reuses the tool_use's block index; index 0 would corrupt text blocks
+// the client already received.
 func TestAT_RefusalCorrectness_Anthropic_PreservesToolUseIndex(t *testing.T) {
-	// Synthesize an upstream that emits text at index 0, 1, 2 (closed)
-	// and then a tool_use at index 3.
+	// Text blocks at 0-2, then a tool_use at 3.
 	fixture := []byte(`event: message_start
 data: {"type":"message_start","message":{"id":"msg_ix","type":"message"}}
 
@@ -329,11 +295,7 @@ data: {"type":"message_stop"}
 	got, _ := io.ReadAll(resp.Body)
 	dataPayloads, _ := splitSSEDataLines(got)
 
-	// Find the FIRST event in the synthetic refusal sequence — i.e.
-	// the first content_block_start after the message_start the
-	// upstream emitted at the top. Its index must be 3 (the tool_use's
-	// original index) so the client's streaming JSON state machine
-	// sees the refusal text replace the tool_use cleanly.
+	// The refusal's content_block_start must be at index 3.
 	refusalStartIdx := -1
 	seenTextBlockStart := false // index 0 from upstream
 	for _, p := range dataPayloads {
@@ -359,13 +321,11 @@ data: {"type":"message_stop"}
 	}
 }
 
-// splitSSEDataLines walks SSE bytes and returns the payload of each
-// `data:` line, plus whether `[DONE]` was observed. Comment lines and
-// `event:` lines are ignored.
+// splitSSEDataLines returns each `data:` payload and whether `[DONE]`
+// was seen.
 func splitSSEDataLines(b []byte) (payloads []string, sawDone bool) {
 	for _, line := range strings.Split(string(b), "\n") {
 		l := line
-		// Strip CR if present (CRLF endings).
 		l = strings.TrimSuffix(l, "\r")
 		var payload string
 		switch {

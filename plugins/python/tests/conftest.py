@@ -14,15 +14,9 @@ class MockVanzikHandler(BaseHTTPRequestHandler):
     Override them via the ``mock_server`` fixture's ``handler_class`` before
     the request arrives.
 
-    Thread-safety note
-    ------------------
-    The fixture uses ``ThreadingHTTPServer`` so multiple requests can be
-    served in parallel (required by concurrency tests). ``last_request_body``
-    and ``last_request_headers`` are class-level slots written from every
-    handler thread — they reflect whichever request wrote LAST, not any
-    particular one. Tests that make a **single** call and then assert on
-    these slots are fine; tests that do multiple concurrent calls must
-    assert on their own results, not on this shared state.
+    Requests are served in parallel, so ``last_request_body`` and
+    ``last_request_headers`` reflect whichever request wrote last: assert
+    on them only after a single call.
     """
 
     # Default responses (overridden per-test via class attributes)
@@ -43,7 +37,6 @@ class MockVanzikHandler(BaseHTTPRequestHandler):
     status_raw_queue: list = []
     request_log: list = []
 
-    # Capture the last request body and headers for assertions
     last_request_body = None
     last_request_headers = None
 
@@ -101,11 +94,10 @@ class MockVanzikHandler(BaseHTTPRequestHandler):
 class _DeepBacklogHTTPServer(ThreadingHTTPServer):
     """ThreadingHTTPServer with a larger listen backlog.
 
-    socketserver.TCPServer defaults request_queue_size to 5. Under the
-    32-thread burst in test_concurrent_tool_calls the kernel was RST-ing
-    the overflow connections on CI Linux runners (flaky 29/32 assertion).
-    128 comfortably absorbs the burst; the effective value is capped by
-    net.core.somaxconn on the host, but 128 matches Linux's common cap.
+    socketserver.TCPServer's default request_queue_size of 5 makes the
+    kernel RST overflow connections from the 32-thread burst in
+    test_concurrent_tool_calls on CI Linux runners. 128 absorbs it (the
+    host's net.core.somaxconn caps the effective value).
     """
     request_queue_size = 128
 
@@ -117,11 +109,8 @@ def mock_server():
     Yields the base URL (e.g. ``http://127.0.0.1:54321``).
     Resets class-level response overrides after each test.
     """
-    # ThreadingHTTPServer handles each connection on its own thread. The
-    # single-threaded HTTPServer used to drop concurrent requests with
-    # ConnectionResetError under load (reproduced flakily in CI); the
-    # deep-backlog subclass further prevents the 32-thread burst from
-    # overflowing the listen queue.
+    # Threaded: a single-threaded HTTPServer drops concurrent requests with
+    # ConnectionResetError under load.
     server = _DeepBacklogHTTPServer(("127.0.0.1", 0), MockVanzikHandler)
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)

@@ -22,12 +22,10 @@ func writeSegment(t *testing.T, path string, m MetaRecord) {
 	}
 }
 
-// TestPlanReplaySegments_SameCreatedAtDifferentSegments is the regression test
-// for the flaky TestReplayWithCheckpoint_FollowsRotationChain (seen on Windows
-// CI). Files were identified by `_meta.created_at`, and a coarse clock can give
-// a file and its successor the same timestamp. Replay then took the live file
-// for the checkpointed one and resumed at a byte offset inside the wrong file,
-// skipping every entry in the archive.
+// TestPlanReplaySegments_SameCreatedAtDifferentSegments: a coarse clock (seen
+// on Windows CI) can give a file and its successor the same created_at. With
+// segment_id as the identity, replay must not take the live file for the
+// checkpointed one and resume at a byte offset inside the wrong file.
 func TestPlanReplaySegments_SameCreatedAtDifferentSegments(t *testing.T) {
 	dir := t.TempDir()
 	live := filepath.Join(dir, "audit.jsonl")
@@ -54,9 +52,8 @@ func TestPlanReplaySegments_SameCreatedAtDifferentSegments(t *testing.T) {
 	}
 }
 
-// TestFileIDOf_PreV14HeadersKeepTheirIdentity: a header written before v1.4 has
-// no segment_id, and checkpoints written then stored its created_at. Upgrading
-// must not make those checkpoints stop matching.
+// TestFileIDOf_PreV14HeadersKeepTheirIdentity: a header without segment_id
+// keeps created_at as its identity, so checkpoints that stored it still match.
 func TestFileIDOf_PreV14HeadersKeepTheirIdentity(t *testing.T) {
 	at := time.Date(2026, 9, 1, 12, 0, 0, 123456789, time.UTC)
 	legacy := &MetaRecord{SchemaVersion: CurrentSchemaVersion, CreatedAt: at}

@@ -1,28 +1,15 @@
-"""Statistical contract test for ``Guard.wait_for_approval`` jitter (AT, Phase 3).
+"""Statistical contract test for ``Guard.wait_for_approval`` jitter.
 
-The brief: capture the actual sleep durations the SDK requests across a
-sample of >=30 polls; assert (a) coefficient of variation > 0.05 (some
-randomness present) and (b) every duration falls in ``[0.75 * pi, 1.25 *
-pi]`` so the jitter is bounded.
+Across >=30 captured sleep durations: (a) coefficient of variation > 0.05
+(a real RNG drives it) and (b) every duration within ``[0.75 * pi, 1.25 *
+pi]`` (bounded). ``test_sdk_polish.py`` has the per-sample 80%-120% check.
 
-This complements the per-iteration band check in ``test_sdk_polish.py``
-(which is a "every sample within 80%-120%" assertion). The contribution
-here is the **statistical** angle — one sample staying in the band could
-be coincidence; 30+ samples with non-zero CoV proves a real RNG drives it.
+``time.sleep`` is patched through ``vanzik.time.sleep`` to record the
+requested duration and sleep zero.
 
-Why patch ``time.sleep``?
--------------------------
-The real loop sleeps 0.5 s × 30 polls ≈ 15 s. We capture the requested
-duration but actually sleep zero so the test runs in well under a second.
-The SDK accesses ``time.sleep`` via ``vanzik.time.sleep`` (rebound at
-import time), so the patch is on that name.
-
-Note on flake-resistance
-------------------------
-This is a timing-shape test. The thresholds here are intentionally
-generous — CoV > 0.05 is a few sigma below the theoretical CoV (~0.116)
-of a uniform [0.8, 1.2] random. If this test ever flakes, the right
-fix is a wider sample (raise to 100), not a relaxed threshold.
+The thresholds are generous: CoV > 0.05 is a few sigma below the
+theoretical ~0.116 of uniform [0.8, 1.2]. If this flakes, raise the
+sample size (to 100); don't relax the threshold.
 """
 
 from __future__ import annotations
@@ -58,13 +45,6 @@ def _capture_sleeps(num_polls: int, poll_interval: float, mock_server: str) -> l
         real_sleep(0)
 
     g = Guard(mock_server, api_key="k")
-    # Pick timeout so the loop logic decides to keep polling. We bound the
-    # number of iterations by the timeout parameter — set a long deadline
-    # and break out once we've collected enough samples by patching the
-    # urlopen path to "always pending". The 'capturing_sleep' returns
-    # immediately so the loop will iterate until time.time() exceeds
-    # deadline. We pick a low deadline AND break ourselves once we have
-    # enough samples.
     deadline = time.time() + 30  # plenty
     target = num_polls
 
@@ -72,9 +52,7 @@ def _capture_sleeps(num_polls: int, poll_interval: float, mock_server: str) -> l
         sleeps.append(s)
         real_sleep(0)
         if len(sleeps) >= target:
-            # Force the loop to stop by jumping the wall-clock past deadline.
-            # We do this by raising a sentinel that wait_for_approval lets
-            # propagate. Simpler: monkey-patch time.time to exceed deadline.
+            # A BaseException sentinel propagates out of wait_for_approval.
             raise _StopJitterLoop()
 
     class _StopJitterLoop(BaseException):
@@ -105,22 +83,19 @@ def test_jitter_distribution_is_random_and_bounded(mock_server):
     """Across 30+ polls, jitter durations are non-degenerate and bounded.
 
     Bounded: every duration lies in ``[0.75 * poll_interval, 1.25 *
-    poll_interval]`` (the brief allows ±25%; the SDK uses ±20%).
+    poll_interval]`` (±25% slack; the SDK uses ±20%).
 
     Non-degenerate: coefficient-of-variation (stddev/mean) > 0.05. Pure
     uniform on ``[0.8, 1.2]`` has CoV ≈ 0.116 — at 30 samples the chance
     of falling below 0.05 by random luck is < 0.1%.
 
-    The SDK signature: ``poll_interval`` is an ``int`` (per the public
-    API). Use 1 second; the patched sleep means we actually wait zero.
+    ``poll_interval`` is an ``int`` in the public API, hence 1 second.
     """
     poll_interval = 1.0
     sleeps = _capture_sleeps(num_polls=30, poll_interval=poll_interval, mock_server=mock_server)
 
-    # Sanity: at least 30 samples were captured.
     assert len(sleeps) >= 30, f"only captured {len(sleeps)} sleeps"
 
-    # Bound check (±25% slack as per brief; SDK actually does ±20%).
     lo, hi = 0.75 * poll_interval, 1.25 * poll_interval
     for s in sleeps:
         assert lo <= s <= hi, (

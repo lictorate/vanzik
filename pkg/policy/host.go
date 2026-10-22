@@ -29,7 +29,7 @@ import (
 //     surrounding whitespace, a user@ prefix and a :port are dropped.
 //
 // host is already lower-cased. An ordinary ASCII hostname returns after one
-// scan without allocating, so the hot path is unchanged.
+// scan without allocating.
 func canonicalHost(host string) string { return canonicalize(host, true) }
 
 // canonicalRuleHost is canonicalHost for a rule's domain. A port there is

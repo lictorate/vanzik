@@ -129,6 +129,18 @@ set_default_openai_api("chat_completions")
 # and export OPENAI_BASE_URL=http://127.0.0.1:8081/v1
 ```
 
-The proxy then gates tool calls in the model's response, and the
-adapter gates what the local Python runs. See
+The proxy only knows the tool names in its default map, and `run_shell`
+is not one of them: unmapped, it reaches `/v1/check` as scope `unmapped`
+and is denied. Map it to `shell` in the policy the proxy loads (add the
+entry to the existing `tool_scope_map:` list in `configs/default.yaml`):
+
+```yaml
+tool_scope_map:
+  - pattern: run_shell
+    scope: shell
+```
+
+For a `shell`-mapped tool the proxy checks its `command` argument, the
+same command the adapter checks. The proxy then gates tool calls in the
+model's response, and the adapter gates what the local Python runs. See
 [`openai-sdk-config.md`](openai-sdk-config.md) for the proxy setup.

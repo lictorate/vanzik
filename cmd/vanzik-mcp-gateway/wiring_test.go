@@ -11,11 +11,9 @@ package main
 //
 // There is no startup guard that refuses to serve unwired, so the
 // binary's correctness rests entirely on every code path assigning the hook.
-// Until now nothing enforced that — this package had no tests at all.
 //
 // Deliberately a STRUCTURAL test, not a behavioural one: main() is not
-// callable, and extracting it would be a refactor this task has no mandate for.
-// It is written to be permissive about everything that does not matter —
+// callable. It is written to be permissive about everything that does not matter —
 // variable names, ordering, formatting, added flags, extra branches — and
 // strict about the one thing that does: no path may construct a policy gate
 // without wiring it in.
