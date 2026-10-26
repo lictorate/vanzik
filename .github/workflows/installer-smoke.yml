@@ -93,7 +93,7 @@ jobs:
           go-version: '1.26.10'   # keep in step with go.mod's go directive and ci.yml
       - name: Build the release archives
         run: scripts/build-release.sh --out dist --version "${{ needs.release.outputs.version }}"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mirror
           path: dist/
