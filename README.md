@@ -4,7 +4,8 @@
 
 <p align="center">
   <strong>The firewall for AI agents.</strong><br/>
-  Every tool call, every API call — gated by policy, logged, and routed for human approval. No opt-out path at the wire-level layers; the SDK layer is opt-in.
+  Every tool call, every API call — gated by policy, logged, and routed for human approval. No opt-out path at the wire-level layers; the SDK layer is opt-in.<br/>
+  Built by <a href="https://lictorate.com">Lictorate</a> · <a href="https://vanzik.lictorate.com">vanzik.lictorate.com</a>
 </p>
 
 <p align="center">
@@ -21,7 +22,7 @@
   <a href="#architecture">Architecture</a> •
   <a href="#limitations--threat-model">Limitations &amp; Threat Model</a> •
   <a href="#production">Production</a> •
-  <a href="#documentation">Docs</a> •
+  <a href="https://vanzik.lictorate.com/docs">Docs</a> •
   <a href="docs/CONTRIBUTING.md">Contributing</a>
 </p>
 
@@ -245,6 +246,8 @@ Live SSE action feed, one-click approve/deny, running totals, agent context. Sta
 Full reference configs (nginx + Docker Compose + Kubernetes), auth/CORS/TLS details, and day-2 operations: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) • [`docs/OPERATIONS.md`](docs/OPERATIONS.md) • [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md).
 
 ## Documentation
+
+**Read the docs at [vanzik.lictorate.com/docs](https://vanzik.lictorate.com/docs)**: every guide below, one page each, for the latest release. The Markdown in [`docs/`](docs/) is the source; the site is synced from it on each release.
 
 | Topic | Doc |
 |---|---|
