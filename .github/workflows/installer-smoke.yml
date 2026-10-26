@@ -90,7 +90,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: '1.26.10'   # keep in step with go.mod's toolchain directive and ci.yml
+          go-version: '1.26.10'   # keep in step with go.mod's go directive and ci.yml
       - name: Build the release archives
         run: scripts/build-release.sh --out dist --version "${{ needs.release.outputs.version }}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

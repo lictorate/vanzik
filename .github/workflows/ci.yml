@@ -468,6 +468,20 @@ jobs:
       - name: Build Docker image
         run: docker build -t vanzik:ci .
 
+      # Fail on high or critical OS-package vulnerabilities that have a fix.
+      # Go modules are left to the vulncheck job (see .grype.yaml). The
+      # Monday cron re-runs this against fresh Alpine advisories.
+      - name: Scan the image for vulnerabilities
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: vanzik:ci
+          fail-build: true
+          severity-cutoff: high
+          only-fixed: true
+          output-format: table
+          config: .grype.yaml
+          grype-version: v0.121.0
+
       - name: Smoke test the container
         run: |
           # Start the image with --api-key so it binds to 0.0.0.0 (reachable

@@ -69,7 +69,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: '1.26.10'   # keep in step with go.mod's toolchain directive and ci.yml
+          go-version: '1.26.10'   # keep in step with go.mod's go directive and ci.yml
           cache-dependency-path: src/go.sum
 
       # build-release.sh refuses a --version that differs from the version
@@ -137,6 +137,28 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      # Scan before anything is pushed, so a failing scan stops the release.
+      # arm64 uses the same pinned Alpine base and packages, so the amd64
+      # image is representative.
+      - name: Build the amd64 image for scanning
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --file tooling/Dockerfile \
+            --build-arg COMMIT="$(git -C src rev-parse --short HEAD)" \
+            --load -t vanzik:scan src
+
+      - name: Scan the image for vulnerabilities
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: vanzik:scan
+          fail-build: true
+          severity-cutoff: high
+          only-fixed: true
+          output-format: table
+          config: tooling/.grype.yaml
+          grype-version: v0.121.0
 
       # The Dockerfile cross-compiles in a builder on the runner's own
       # platform, so the arm64 image needs no emulation. Only the newest
