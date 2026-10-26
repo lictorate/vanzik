@@ -1,0 +1,9 @@
+# Grype config for the container image scans in ci.yml and release-assets.yml.
+#
+# Grype gates OS packages (Alpine) only. Go vulnerabilities are gated by
+# govulncheck in ci.yml's vulncheck job, which checks reachability; Grype
+# would match Go modules (and the Go stdlib, which Syft also reports as a
+# go-module package) by version alone, duplicating or contradicting that gate.
+ignore:
+  - package:
+      type: go-module
