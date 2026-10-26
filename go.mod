@@ -1,8 +1,10 @@
 module lictorate.com/vanzik/v2
 
-go 1.26.0
-
-// Pin the build toolchain to the patched stdlib release. Every Vanzik
+// The go directive is the minimum toolchain that may build Vanzik, and it is
+// set to the patched stdlib release on purpose: an older Go refuses to build
+// (even with GOTOOLCHAIN=local) instead of silently producing a binary linked
+// against a vulnerable stdlib. Because it is the module's minimum, it also
+// raises the minimum Go version for anyone importing this module. Every Vanzik
 // vulnerability to date has come from the stdlib, not a module dependency, so
 // this line is the project's single most load-bearing security control — and
 // `go test ./...` will NOT tell you when it goes stale. Only govulncheck does.
@@ -29,7 +31,10 @@ go 1.26.0
 // go1.26.10 adds the fix for GO-2026-6809 (crypto/x509: distrust compromised
 // intermediate certificates), reachable from proxy.Server.Start through
 // http.Server.ListenAndServe.
-toolchain go1.26.10
+//
+// With the go directive at the patched release, a separate `toolchain` line
+// is redundant (`go mod tidy` drops it); raise this line for future fixes.
+go 1.26.10
 
 require (
 	github.com/fsnotify/fsnotify v1.10.1
