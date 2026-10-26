@@ -1,7 +1,10 @@
 name: CI
 
 # Triggers:
-#   - push to any branch (so feature-branch commits get CI feedback).
+#   - push to any branch (so feature-branch commits get CI feedback), except
+#     Dependabot's branches: every Dependabot branch has a PR, and the
+#     pull_request run already covers it. Running both doubled the load when
+#     Dependabot opened several PRs at once and queued CI for hours.
 #   - pull_request targeting any branch (catches forks + branch-to-branch PRs).
 #   - schedule (Monday 06:00 UTC) so the integration-tests job runs against
 #     fresh upstream framework releases at least once a week, even if no
@@ -9,7 +12,7 @@ name: CI
 # Explicit "**" branch glob keeps any future branch-protection rules working.
 on:
   push:
-    branches: ['**']
+    branches: ['**', '!dependabot/**']
   pull_request:
     branches: ['**']
   schedule:
@@ -19,6 +22,12 @@ on:
 
 permissions:
   contents: read
+
+# A new push supersedes the run already going for the same branch or PR.
+# master is exempt so every commit that lands there gets a full run.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 jobs:
   test:
