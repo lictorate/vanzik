@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=64", "wheel"]
+requires = ["setuptools>=84.1.0", "wheel>=0.38.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -49,21 +49,28 @@ Issues = "https://github.com/lictorate/vanzik/issues"
 # against (A11/A12/A13). Ceilings are the next major boundary so a future
 # breaking release does not silently install on top of v0.5.
 #
-# CURRENT UPSTREAM MAJORS (verified 2026-05-05 via `pip index versions`):
-#   langchain        1.2.x     (was 0.3 when A11 landed; bumped 1.0 → 1.2)
-#   langchain-core   1.3.x
+# CURRENT UPSTREAM MAJORS (verified 2026-05-05 via `pip index versions`;
+# langchain, langchain-core and mcp re-verified 2026-10-26, see below):
+#   langchain        1.4.x     (was 0.3 when A11 landed; floor 1.3.9 since 2026-10-26)
+#   langchain-core   1.7.x     (floor 1.3.3 since 2026-10-26; 0.3.x has CVE-2025-68664)
 #   crewai           1.14.x    (was 0.80 when A12 landed; bumped 1.0 → 1.14)
 #   browser-use      0.12.x    (was 0.4 when A13 landed; pre-1.0)
-#   mcp              1.27.x
+#   mcp              2.3.x     (floor 1.28.1 since 2026-10-26)
 #   openai-agents    0.23.x    (added in v1.4; pre-1.0, verified 2026-10-14)
+#
+# Security floors (2026-10-26): the langchain, langchain-core and mcp floors
+# exclude releases with known advisories. Adapter suites are green on a fresh
+# resolve (langchain 1.4.7, langchain-core 1.7.0, mcp 2.3.0) and on the
+# floors (langchain 1.3.9, mcp 1.28.1). langchain 1.3.9 itself needs
+# langchain-core>=1.4.6, so 1.4.6 is the lowest core tested with the extra.
 #
 # The floors below cover the hardened surface AND the current major so a
 # fresh `pip install` resolves successfully. When a framework cuts the next
 # major, the integration-tests CI job exercises the new surface; the
 # operator workflow is to bump the upper bound once green.
 langchain = [
-    "langchain-core>=0.3,<2.0",
-    "langchain>=0.3,<2.0",
+    "langchain-core>=1.3.3,<2.0",
+    "langchain>=1.3.9,<2.0",
 ]
 # crewai 1.0 is the floor: on 0.19x a crew kickoff dispatched tools outside the
 # adapter's gate (found by the 1.1.1 full-scope test); the adapter refuses <1.0.
@@ -72,10 +79,9 @@ browser-use = [
     "browser-use>=0.4,<1.0",
     "playwright>=1.40",
 ]
-# MCP SDK is on the 1.x line. Earlier 0.9.1 release predates the stable
-# Python SDK shape; the floor includes both for compatibility.
+# MCP SDK floor is 1.28.1: earlier releases carry known advisories.
 # mcp 2.x verified in v1.2.0 (adapter + gateway suites green on 2.2.0).
-mcp = ["mcp>=0.9,<3.0"]
+mcp = ["mcp>=1.28.1,<3.0"]
 # OpenAI Agents SDK (import name `agents`). 0.3.3 is the floor: it is the
 # first release with tool input guardrails and ToolContext.tool_arguments,
 # which vanzik_tool_guardrail uses; the adapter refuses anything older.
@@ -91,7 +97,7 @@ all = ["vanzik[langchain,crewai,browser-use,mcp,openai-agents]"]
 # Test deps. responses + pytest-asyncio added so integration tests can use
 # them without each extra group dragging them in.
 dev = [
-    "pytest>=7.0",
+    "pytest>=9.0.3",
     "pytest-cov>=4.0",
     "pytest-asyncio>=0.21",
     "responses>=0.23",
