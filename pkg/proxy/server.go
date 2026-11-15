@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"runtime/debug"
@@ -975,14 +976,14 @@ func (s *Server) resolvedApprovalToResult(req policy.ActionRequest, pa *PendingA
 		return policy.CheckResult{
 			Decision:   policy.Allow,
 			Rule:       "allow:approved",
-			Reason:     fmt.Sprintf("approval %s resolved ALLOW by human", pa.ID),
+			Reason:     fmt.Sprintf("approval %s resolved ALLOW", pa.ID),
 			ApprovalID: pa.ID,
 		}
 	case policy.Deny:
 		return policy.CheckResult{
 			Decision:   policy.Deny,
 			Rule:       "deny:approved",
-			Reason:     fmt.Sprintf("approval %s resolved DENY by human", pa.ID),
+			Reason:     fmt.Sprintf("approval %s resolved DENY", pa.ID),
 			ApprovalID: pa.ID,
 		}
 	default:
@@ -1097,7 +1098,7 @@ func (s *Server) logResolution(pa *PendingAction) {
 		Result: policy.CheckResult{
 			SchemaVersion: SchemaVersionV1,
 			Decision:      policy.Decision(pa.Decision),
-			Reason:        fmt.Sprintf("approval %s resolved %s by human via %s from %s", pa.ID, pa.Decision, pa.ResolvedVia, pa.ResolvedFrom),
+			Reason:        fmt.Sprintf("approval %s resolved %s via %s from %s", pa.ID, pa.Decision, pa.ResolvedVia, pa.ResolvedFrom),
 			Rule:          "approval:resolved:" + pa.ResolvedVia,
 			ApprovalID:    pa.ID,
 		},
@@ -1268,6 +1269,13 @@ func (s *Server) handleAuditHead(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAuditRecord(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// A cross-origin page can POST text/plain without a preflight; requiring
+	// JSON closes that "simple request" route in every auth mode.
+	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
+		http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
 		return
 	}
 
