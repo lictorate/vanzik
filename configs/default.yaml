@@ -334,7 +334,9 @@ agents:
             message: "Vanzik's config folder (API key, policy) is off-limits to Claude Code"
           # The hook files `vanzik setup` writes. Removing Vanzik's entry
           # turns the checks off. A project's own .claude/settings.json
-          # matches too.
+          # matches too. This covers the file tools and shell redirections
+          # only: `cp`, an editor, or a folder moved with CLAUDE_CONFIG_DIR,
+          # CURSOR_CONFIG_DIR, GEMINI_CLI_HOME or CODEX_HOME get past it.
           - action: write
             paths: ["**/.claude/settings.json", "**/.cursor/hooks.json", "**/.gemini/settings.json", "**/.codex/hooks.json"]
             message: "The hook settings that connect Vanzik are off-limits to Claude Code"
@@ -358,18 +360,45 @@ agents:
           # action, read the saved API key or stop the server makes the
           # checks optional. These are glob matches on the command text, so
           # a determined agent can write the same call another way (a
-          # script, a variable); they stop the plain forms, not a determined agent.
-          - pattern: "*/v1/approve/*"
+          # script, a variable, a hostname instead of a loopback address);
+          # they stop the plain forms, not a determined agent. The endpoint
+          # rules name a loopback address so another service's /v1/audit
+          # or a grep for the path isn't caught.
+          - pattern: "*localhost*/v1/approve/*"
             message: "Approving actions is for you, not Claude Code"
-          - pattern: "*/v1/deny/*"
+          - pattern: "*localhost*/v1/deny/*"
             message: "Denying actions is for you, not Claude Code"
-          - pattern: "*/v1/audit*"
+          - pattern: "*localhost*/v1/audit*"
             message: "Vanzik's audit endpoint is off-limits to Claude Code"
-          - pattern: "*/v1/t/*/approve/*"
+          - pattern: "*localhost*/v1/t/*/approve/*"
             message: "Approving actions is for you, not Claude Code"
-          - pattern: "*/v1/t/*/deny/*"
+          - pattern: "*localhost*/v1/t/*/deny/*"
             message: "Denying actions is for you, not Claude Code"
-          - pattern: "*/v1/t/*/audit*"
+          - pattern: "*localhost*/v1/t/*/audit*"
+            message: "Vanzik's audit endpoint is off-limits to Claude Code"
+          - pattern: "*127.0.0.1*/v1/approve/*"
+            message: "Approving actions is for you, not Claude Code"
+          - pattern: "*127.0.0.1*/v1/deny/*"
+            message: "Denying actions is for you, not Claude Code"
+          - pattern: "*127.0.0.1*/v1/audit*"
+            message: "Vanzik's audit endpoint is off-limits to Claude Code"
+          - pattern: "*127.0.0.1*/v1/t/*/approve/*"
+            message: "Approving actions is for you, not Claude Code"
+          - pattern: "*127.0.0.1*/v1/t/*/deny/*"
+            message: "Denying actions is for you, not Claude Code"
+          - pattern: "*127.0.0.1*/v1/t/*/audit*"
+            message: "Vanzik's audit endpoint is off-limits to Claude Code"
+          - pattern: "*[::1]*/v1/approve/*"
+            message: "Approving actions is for you, not Claude Code"
+          - pattern: "*[::1]*/v1/deny/*"
+            message: "Denying actions is for you, not Claude Code"
+          - pattern: "*[::1]*/v1/audit*"
+            message: "Vanzik's audit endpoint is off-limits to Claude Code"
+          - pattern: "*[::1]*/v1/t/*/approve/*"
+            message: "Approving actions is for you, not Claude Code"
+          - pattern: "*[::1]*/v1/t/*/deny/*"
+            message: "Denying actions is for you, not Claude Code"
+          - pattern: "*[::1]*/v1/t/*/audit*"
             message: "Vanzik's audit endpoint is off-limits to Claude Code"
           - pattern: "vanzik approve*"
             message: "Approving actions is for you, not Claude Code"
@@ -383,16 +412,25 @@ agents:
             message: "Denying actions is for you, not Claude Code"
           - pattern: "*vanzik.exe deny*"
             message: "Denying actions is for you, not Claude Code"
-          - pattern: "*/.config/vanzik*"
+          - pattern: "*/.config/vanzik"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Claude Code"
+          - pattern: "*/.config/vanzik *"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Claude Code"
+          - pattern: "*/.config/vanzik/*"
             message: "Vanzik's config folder (API key, policy) is off-limits to Claude Code"
           - pattern: "*/vanzik/api-key*"
             message: "Vanzik's API key is off-limits to Claude Code"
-          - pattern: "*AppData*vanzik*"
+          - pattern: "*AppData*\\vanzik\\*"
             message: "Vanzik's config folder (API key, policy) is off-limits to Claude Code"
-          - pattern: "*APPDATA*vanzik*"
+          - pattern: "*AppData*/vanzik/*"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Claude Code"
+          - pattern: "*APPDATA*\\vanzik\\*"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Claude Code"
+          - pattern: "*APPDATA*/vanzik/*"
             message: "Vanzik's config folder (API key, policy) is off-limits to Claude Code"
           # Only commands that name vanzik: `kill 1234` and `pkill node` stay
-          # allowed.
+          # allowed. launchctl and systemctl are limited to the verbs that
+          # stop or disable a service, so `systemctl status vanzik` works.
           - pattern: "kill *vanzik*"
             message: "Stopping Vanzik is off-limits to Claude Code"
           - pattern: "pkill *vanzik*"
@@ -401,9 +439,25 @@ agents:
             message: "Stopping Vanzik is off-limits to Claude Code"
           - pattern: "taskkill *vanzik*"
             message: "Stopping Vanzik is off-limits to Claude Code"
-          - pattern: "launchctl *vanzik*"
+          - pattern: "launchctl* bootout *vanzik*"
             message: "Stopping Vanzik is off-limits to Claude Code"
-          - pattern: "systemctl *vanzik*"
+          - pattern: "launchctl* unload *vanzik*"
+            message: "Stopping Vanzik is off-limits to Claude Code"
+          - pattern: "launchctl* stop *vanzik*"
+            message: "Stopping Vanzik is off-limits to Claude Code"
+          - pattern: "launchctl* remove *vanzik*"
+            message: "Stopping Vanzik is off-limits to Claude Code"
+          - pattern: "launchctl* kill *vanzik*"
+            message: "Stopping Vanzik is off-limits to Claude Code"
+          - pattern: "launchctl* disable *vanzik*"
+            message: "Stopping Vanzik is off-limits to Claude Code"
+          - pattern: "systemctl* stop *vanzik*"
+            message: "Stopping Vanzik is off-limits to Claude Code"
+          - pattern: "systemctl* kill *vanzik*"
+            message: "Stopping Vanzik is off-limits to Claude Code"
+          - pattern: "systemctl* disable *vanzik*"
+            message: "Stopping Vanzik is off-limits to Claude Code"
+          - pattern: "systemctl* mask *vanzik*"
             message: "Stopping Vanzik is off-limits to Claude Code"
         require_approval:
           - pattern: "sudo *"

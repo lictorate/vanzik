@@ -369,3 +369,181 @@ tests:
     hook: cursor
     input: {hook_event_name: beforeReadFile, file_path: "/home/alice/.claude/settings.json"}
     expect: ALLOW
+
+  # --- Narrower matches: loopback endpoints, stop verbs, the config folder itself ---
+  # The endpoint rules name a loopback address; the cases below show other
+  # services' /v1/ paths, greps for them, and read-only service commands
+  # still pass.
+  - name: "Cursor may not approve through 127.0.0.1"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "curl -X POST http://127.0.0.1:8080/v1/approve/ap_abc123", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Cursor may not approve through [::1]"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "curl -X POST 'http://[::1]:8080/v1/approve/ap_abc123'", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Cursor may not deny through [::1]"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "curl -X POST http://[::1]:8080/v1/deny/ap_abc123", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Denying actions is for you"
+
+  - name: "Cursor may not read the audit log through 127.0.0.1"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "curl -s http://127.0.0.1:8080/v1/audit", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "audit endpoint is off-limits"
+
+  - name: "Cursor may not read the audit log through [::1]"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "curl -s http://[::1]:8080/v1/audit", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "audit endpoint is off-limits"
+
+  - name: "Cursor may not approve a tenant's action through 127.0.0.1"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "curl -X POST http://127.0.0.1:8080/v1/t/acme/approve/ap_abc123", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Cursor may not read a tenant's audit log through [::1]"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "curl -s http://[::1]:8080/v1/t/acme/audit", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "audit endpoint is off-limits"
+
+  - name: "Cursor may not ls the config folder"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "ls ~/.config/vanzik", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Cursor may not ls the config folder with a trailing slash"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "ls -la ~/.config/vanzik/", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Cursor may not read the API key on Windows with forward slashes"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "type C:/Users/alice/AppData/Roaming/vanzik/api-key", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Vanzik\'s API key is off-limits"
+
+  - name: "Cursor may not systemctl kill vanzik"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "systemctl --user kill vanzik.service", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Cursor may not systemctl disable vanzik"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "systemctl --user disable --now vanzik.service", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Cursor may not systemctl mask vanzik"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "systemctl mask vanzik.service", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Cursor may not systemctl stop vanzik without --user"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "systemctl stop vanzik", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Cursor may not launchctl unload vanzik"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "launchctl unload -w ~/Library/LaunchAgents/com.lictorate.vanzik.plist", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Cursor may not launchctl stop vanzik"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "launchctl stop com.lictorate.vanzik", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Cursor may not launchctl remove vanzik"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "launchctl remove com.lictorate.vanzik", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Cursor may not launchctl kill vanzik"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "launchctl kill SIGTERM gui/501/com.lictorate.vanzik", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Cursor may not launchctl disable vanzik"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "launchctl disable gui/501/com.lictorate.vanzik", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Cursor may curl another service's /v1/audit"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "curl -s https://api.stripe.com/v1/audit", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may curl another service's /v1/audit-logs"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "curl https://api.example.com/v1/audit-logs", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may POST to another service's /v1/approve"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "curl -X POST https://api.example.com/v1/approve/123", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may grep for /v1/approve/"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "grep -rn '/v1/approve/' docs/", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may rg for /v1/audit"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "rg '/v1/audit' pkg/", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may commit a message that names /v1/approve/"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "git commit -m 'document /v1/approve/ endpoint'", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may list launchd jobs and grep for vanzik"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "launchctl list | grep vanzik", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may check the vanzik service status"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "systemctl status vanzik", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may check the vanzik user service status"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "systemctl --user status vanzik", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may read a file next to the config folder"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "cat ~/.config/vanzik-notes", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may read a .md file named like the config folder"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "cat ~/.config/vanzik.md", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may read a Windows folder named like the config folder"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "type C:\\Users\\alice\\AppData\\Roaming\\vanzik-notes\\todo.txt", cwd: /home/alice/project}
+    expect: ALLOW
