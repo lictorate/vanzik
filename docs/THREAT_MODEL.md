@@ -12,7 +12,7 @@ A policy enforcement and audit layer at two protocol boundaries — the MCP stdi
 
 ### Operator and approver — trusted
 
-Owns the policy file, the API key, the process environment, and the approve/deny decision. Control-plane endpoints (`/v1/approve`, `/v1/deny`, `/v1/status`, `/v1/audit`, `/api/*`) require a Bearer token or a session cookie plus CSRF header (`pkg/proxy/auth.go`, constant-time comparison). Without an API key the server binds `127.0.0.1` only (`pkg/proxy/server.go`, `NewServer`) and prints a startup warning; exposing it further is an explicit operator act.
+Owns the policy file, the API key, the process environment, and the approve/deny decision. Control-plane endpoints (`/v1/approve`, `/v1/deny`, `/v1/status`, `/v1/audit`, `/api/*`) require a Bearer token or a session cookie plus CSRF header (`pkg/proxy/auth.go`, constant-time comparison). Without an API key the server binds `127.0.0.1` only (`pkg/proxy/server.go`, `NewServer`) and prints a startup warning; exposing it further is an explicit operator act. A browser can still reach a loopback listener (another localhost port, or a DNS-rebound name that resolves to `127.0.0.1`), so without a key those endpoints also answer only a loopback `Host` and a same-origin or absent `Origin`, and refuse the rest with `403`; `POST /v1/audit` takes only `application/json`.
 
 A compromised operator host is out of scope: whoever can edit the policy file or read the API key can disable enforcement.
 

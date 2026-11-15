@@ -22,7 +22,7 @@ For structured dashboards (Grafana, Datadog, etc.), use `/metrics` — see [`OBS
 vanzik server --dashboard --api-key $KEY
 ```
 
-Without `--api-key`, the dashboard is effectively unauthenticated — everyone on `127.0.0.1` (the only bind surface in that mode) sees everything. In production you always want `--api-key`.
+Without `--api-key`, the dashboard is effectively unauthenticated — everyone on `127.0.0.1` (the only bind surface in that mode) sees everything. In that mode the dashboard works only at a loopback address on the server's own port (`http://localhost:<port>`): a request with another `Host` or a cross-origin `Origin` gets `403`, so a dev UI on another localhost port, a tunnel or a reverse proxy needs `--api-key` (plus `--allowed-origin` for another origin). In production you always want `--api-key`.
 
 ---
 
