@@ -76,6 +76,7 @@ vanzik-llm-proxy \
 | `--listen`               | address to bind (host:port). A non-loopback address — including an empty host such as `:8081`, which binds every interface — requires `--proxy-api-key` (§ 8.1). | `127.0.0.1:8081`             |
 | `--upstream-openai`      | base URL for OpenAI-shape requests                        | `https://api.openai.com`     |
 | `--upstream-anthropic`   | base URL for Anthropic-shape requests                     | `https://api.anthropic.com`  |
+| `--upstream-header-timeout` | max wait for the provider's response headers; `0` disables. Non-streamed replies send headers only when generation ends, so keep it long. On expiry the proxy returns the `502` `upstream error` envelope. No idle timer applies once headers arrive. | `10m` |
 | `--guard-url`            | central server `/v1/check` URL (from `VANZIK_URL` when unset) | `http://127.0.0.1:8080`      |
 | `--api-key`              | bearer for `/v1/check` **and** `POST /v1/audit` (from `VANZIK_API_KEY`, then the key `vanzik setup` saved). Required for full forced-refusal audit fidelity when the central server is keyed (§ 5.4 Audit fidelity); without it those audits fall back to the lower-fidelity `/v1/check` path. | unset (warn) |
 | `--proxy-api-key`        | optional key the proxy itself enforces on inbound API requests; callers send it in the `X-Vanzik-Proxy-Auth` header (`<key>` or `Bearer <key>`). Empty = no proxy auth; required for a non-loopback `--listen` (§ 8.1). | unset |
