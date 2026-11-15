@@ -4,16 +4,6 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-### Security
-
-- **A keyless server no longer answers a hostile web page.** Without `--api-key`, the approve, deny, audit and dashboard endpoints let every request through, so a page on another localhost port, or a DNS-rebound hostname, could read pending approvals, approve them and forge audit records. Those endpoints now return `403` before the handler unless the `Host` is loopback (`localhost`, `127.0.0.0/8`, `[::1]`) and any `Origin` is the same origin as the `Host`.
-- **`POST /v1/audit` requires `Content-Type: application/json`** in every mode (`415` otherwise), closing the no-preflight `text/plain` route. `/v1/check` is unchanged.
-- **Approval resolutions no longer say "by human".** The audit text is `approval <id> resolved <DECISION> via <bearer|session|open> from <addr>`, and the retry's `allow:approved` / `deny:approved` reasons drop the claim too. A bearer or unauthenticated caller may be a script.
-
-### Behaviour change
-
-- Keyless access through another localhost origin, Docker's `host.docker.internal`, a tunnel or a reverse proxy now needs `--api-key` (with `--allowed-origin` for another origin). See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md#3-cors).
-
 ## [2.0.0] — 2026-10-26
 
 > **AgentGuard is now Vanzik.** 2.0.0 renames the project, and the rename, including refusing the old `AGENTGUARD_*` variable names, is its only breaking change: every name that said AgentGuard says Vanzik, with no alias for the old one. Everything else is an addition (`vanzik migrate --from-agentguard`, the server adopting an `agentguard.db`) or a fix. The policy schema, the `/v1/*` wire protocol, the audit log format and seal, the store and every command's existing flags are as in 1.4.0, so policies, audit logs and databases carry over unchanged.

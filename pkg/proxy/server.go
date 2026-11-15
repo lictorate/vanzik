@@ -1038,8 +1038,12 @@ func approvalIDFromRequest(r *http.Request, legacyPrefix string) string {
 // which auth mechanism admitted it and the peer address it arrived from.
 // Coarse by design — with single-key auth there is no identity to record —
 // but enough to reconstruct "who could have clicked this" in an incident.
-func resolutionActor(r *http.Request) (via, from string) {
+// A keyless server ignores credentials, so whatever the caller sent proves
+// nothing and is stamped "open" like any other unauthenticated caller.
+func resolutionActor(r *http.Request, keyed bool) (via, from string) {
 	switch {
+	case !keyed:
+		via = "open"
 	case r.Header.Get("Authorization") != "":
 		via = "bearer"
 	case hasSessionCookie(r):
@@ -1125,7 +1129,7 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing id", http.StatusBadRequest)
 		return
 	}
-	via, from := resolutionActor(r)
+	via, from := resolutionActor(r, s.cfg.APIKey != "")
 	pa, err := s.approval.resolve(id, policy.Allow, TenantIDFromContext(r.Context()), via, from)
 	if err != nil {
 		writeResolveError(w, err)
@@ -1149,7 +1153,7 @@ func (s *Server) handleDeny(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing id", http.StatusBadRequest)
 		return
 	}
-	via, from := resolutionActor(r)
+	via, from := resolutionActor(r, s.cfg.APIKey != "")
 	pa, err := s.approval.resolve(id, policy.Deny, TenantIDFromContext(r.Context()), via, from)
 	if err != nil {
 		writeResolveError(w, err)

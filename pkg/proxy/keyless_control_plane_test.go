@@ -118,6 +118,45 @@ func TestResolutionAuditText_NamesChannelNotHuman(t *testing.T) {
 	}
 }
 
+// TestResolutionActor_KeylessIgnoresCredentials: a keyless server ignores
+// Authorization and cookies, so they must not earn the caller a "bearer" or
+// "session" stamp; it is recorded like any other unauthenticated caller.
+func TestResolutionActor_KeylessIgnoresCredentials(t *testing.T) {
+	cases := []struct {
+		name    string
+		prepare func(*http.Request)
+	}{
+		{"authorization header", func(r *http.Request) { r.Header.Set("Authorization", "Bearer anything") }},
+		{"session cookie", func(r *http.Request) { r.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "s"}) }},
+		{"none", func(*http.Request) {}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newTestServer(t, func(c *Config) { c.APIKey = "" })
+			pending := mustAdd(t, srv.approval,
+				policy.ActionRequest{Scope: "shell", Command: "sudo reboot", AgentID: "agent-k"},
+				policy.CheckResult{Decision: policy.RequireApproval, Rule: "require_approval:shell"},
+			)
+			req := httptest.NewRequest(http.MethodPost, "/v1/approve/"+pending.ID, nil)
+			req.Host = "localhost:8080"
+			tc.prepare(req)
+			w := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(w, req)
+			if w.Code != http.StatusOK {
+				t.Fatalf("approve: %d %s", w.Code, w.Body.String())
+			}
+			pa, ok := srv.approval.Lookup(pending.ID, policy.LocalTenantID)
+			if !ok || pa.ResolvedVia != "open" {
+				t.Errorf("ResolvedVia = %q, want open", pa.ResolvedVia)
+			}
+			entries := resolutionEntries(t, srv)
+			if len(entries) != 1 || entries[0].Result.Rule != "approval:resolved:open" {
+				t.Errorf("resolution entries = %+v, want one with rule approval:resolved:open", entries)
+			}
+		})
+	}
+}
+
 // TestKeyless_CrossOriginAuditForgeryBlocked drives the full handler chain
 // with the verified attack: a page on another localhost port POSTing a
 // text/plain body to the keyless /v1/audit. It must be refused before the
