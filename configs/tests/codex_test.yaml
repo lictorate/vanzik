@@ -640,3 +640,58 @@ tests:
     hook: codex
     input: {tool_name: Bash, tool_input: {command: "type C:\\Users\\alice\\AppData\\Roaming\\vanzik-notes\\todo.txt"}}
     expect: ALLOW
+
+  # --- The Windows config folder by itself, and with a lowercase variable name ---
+  - name: "Codex CLI may not copy the Windows config folder with xcopy"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "xcopy /E %APPDATA%\\vanzik C:\\tmp"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Codex CLI may not cd into the Windows config folder"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "cd %APPDATA%\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Codex CLI may not cd /d into the Windows config folder"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "cd /d %APPDATA%\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Codex CLI may not dir the Windows config folder"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "dir %APPDATA%\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Codex CLI may not dir the Windows config folder spelled %AppData%"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "dir %AppData%\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Codex CLI may not dir the Windows config folder with a forward slash"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "dir %APPDATA%/vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Codex CLI may not dir the Windows config folder by its full path"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "dir C:\\Users\\u\\AppData\\Roaming\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Codex CLI may not Get-ChildItem the Windows config folder"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "Get-ChildItem $env:APPDATA\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Codex CLI may not read the API key spelled %appdata%"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "type %appdata%\\vanzik\\api-key"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"

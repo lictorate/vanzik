@@ -774,3 +774,58 @@ tests:
     hook: claude-code
     input: {tool_name: Bash, tool_input: {command: "type C:\\Users\\alice\\AppData\\Roaming\\vanzik-notes\\todo.txt"}}
     expect: ALLOW
+
+  # --- The Windows config folder by itself, and with a lowercase variable name ---
+  - name: "Claude Code may not copy the Windows config folder with xcopy"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "xcopy /E %APPDATA%\\vanzik C:\\tmp"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not cd into the Windows config folder"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "cd %APPDATA%\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not cd /d into the Windows config folder"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "cd /d %APPDATA%\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not dir the Windows config folder"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "dir %APPDATA%\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not dir the Windows config folder spelled %AppData%"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "dir %AppData%\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not dir the Windows config folder with a forward slash"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "dir %APPDATA%/vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not dir the Windows config folder by its full path"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "dir C:\\Users\\u\\AppData\\Roaming\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not Get-ChildItem the Windows config folder"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "Get-ChildItem $env:APPDATA\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not read the API key spelled %appdata%"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "type %appdata%\\vanzik\\api-key"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"

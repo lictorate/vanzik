@@ -547,3 +547,58 @@ tests:
     hook: cursor
     input: {hook_event_name: beforeShellExecution, command: "type C:\\Users\\alice\\AppData\\Roaming\\vanzik-notes\\todo.txt", cwd: /home/alice/project}
     expect: ALLOW
+
+  # --- The Windows config folder by itself, and with a lowercase variable name ---
+  - name: "Cursor may not copy the Windows config folder with xcopy"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "xcopy /E %APPDATA%\\vanzik C:\\tmp", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Cursor may not cd into the Windows config folder"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "cd %APPDATA%\\vanzik", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Cursor may not cd /d into the Windows config folder"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "cd /d %APPDATA%\\vanzik", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Cursor may not dir the Windows config folder"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "dir %APPDATA%\\vanzik", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Cursor may not dir the Windows config folder spelled %AppData%"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "dir %AppData%\\vanzik", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Cursor may not dir the Windows config folder with a forward slash"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "dir %APPDATA%/vanzik", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Cursor may not dir the Windows config folder by its full path"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "dir C:\\Users\\u\\AppData\\Roaming\\vanzik", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Cursor may not Get-ChildItem the Windows config folder"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "Get-ChildItem $env:APPDATA\\vanzik", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Cursor may not read the API key spelled %appdata%"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "type %appdata%\\vanzik\\api-key", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
