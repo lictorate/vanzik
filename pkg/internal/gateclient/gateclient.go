@@ -254,22 +254,6 @@ func FailModeDecision(failMode string, err error, rules FailModeRules) Decision 
 	}
 }
 
-// FirstStringArg returns the first non-empty string value found in
-// args under any of the supplied keys, or "" if none match.
-func FirstStringArg(args map[string]interface{}, keys ...string) string {
-	if len(args) == 0 {
-		return ""
-	}
-	for _, k := range keys {
-		if v, ok := args[k]; ok {
-			if s, ok := v.(string); ok && s != "" {
-				return s
-			}
-		}
-	}
-	return ""
-}
-
 // InferFilesystemAction maps a tool-name verb to the canonical
 // filesystem-scope action ("read"/"write"/"delete"). Best-effort —
 // an unknown verb yields "", which no filesystem path rule matches.

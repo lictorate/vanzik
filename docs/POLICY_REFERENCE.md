@@ -339,11 +339,15 @@ When the dual-check fires, the gateway projects the tool-call arguments into the
 
 | Mapped scope | Argument projection |
 |---|---|
-| `filesystem` | `Path` ← first non-empty of `path`/`file_path`/`filepath`/`target_path`/`destination`/`src`/`dst`. `Action` ← inferred from tool-name verb (`read`/`write`/`delete`). Search and tree tools (`search_files`, `directory_tree`) are reads. A `paths` array argument (e.g. `read_multiple_files`) gets one filesystem check per entry, and every one must allow. |
-| `network` | `URL` ← `url` arg. `Domain` ← the URL's host when there is a `url` arg (empty for a relative or malformed URL, so the call is denied); otherwise the `domain`/`host`/`hostname` arg. A `domain`/`host`/`hostname` arg never overrides the URL's host: the model writes the arguments and could pair an allow-listed domain with a URL on another host. |
+| `filesystem` | `Path` ← the path (first non-empty of `path`/`file_path`/`notebook_path`/`filepath`/`target`/`target_path`/`filename`/`file`), else the source (`src`), else the destination (`destination`/`dst`). `Action` ← inferred from tool-name verb (`read`/`write`/`delete`). Search and tree tools (`search_files`, `directory_tree`) are reads. A `paths` array argument (e.g. `read_multiple_files`) gets one filesystem check per entry, and every one must allow. |
+| `network` | `URL` ← first non-empty of `url`/`uri`/`endpoint`/`target_url`. `Domain` ← that URL's host (empty for a relative or malformed URL, so the call is denied); with no URL argument, the `domain`/`host`/`hostname` arg. A `domain`/`host`/`hostname` arg never overrides the URL's host: the model writes the arguments and could pair an allow-listed domain with a URL on another host. |
 | `browser` | `URL` + `Domain` as for network; `Action` ← un-prefixed tool name. |
-| `shell` | `Command` ← first non-empty of `command`/`cmd`/`script`. Falls back to `<ns>:<tool>` + serialised `args`. |
-| `data` | `Command` ← first non-empty of `value`/`content`/`text`/`data`. `Action` ← `"form_input"`. `URL`/`Domain` projected as for network. |
+| `shell` | `Command` ← first non-empty of `command`/`cmd`/`script`/`code`. Falls back to `<ns>:<tool>` + serialised `args`. |
+| `data` | `Command` ← first non-empty of `value`/`content`/`text`/`data`. `Action` ← `"form_input"`. `URL` as for network; `Domain` ← that URL's host. |
+
+The LLM API Proxy reads the same argument names ([`LLM_API_PROXY.md` § 4.1](LLM_API_PROXY.md)); both take them from one table in `pkg/internal/gateclient`.
+
+**Conflicting aliases are denied.** The names in one group above (the path names, the source, the destination names, the URL names, and so on) are aliases: the check reads the first one set, but the tool reads whichever one its signature names. If two names of one group carry different non-empty string values, for example `{"command": "ls", "cmd": "rm -rf /"}`, the call is denied with rule `deny:gateway:conflicting_argument_alias` (LLM API Proxy: `deny:llm_api_proxy:conflicting_argument_alias`) before any `/v1/check` call, whatever `--fail-mode` says. The refusal and its audit entry (recorded through `POST /v1/audit`) name the conflicting keys, not their values. Equal values, or different groups such as `src` and `dst`, are checked as usual. The gateway applies this to mapped calls in `--policy-mode strict`; `fast` projects no arguments.
 
 Rules in the mapped scope (`filesystem`, `network`, etc.) match on these fields exactly as they would for an SDK or proxy request — there is no MCP-specific matching path.
 

@@ -320,6 +320,20 @@ The forwarded action proceeds **only if every check returns ALLOW**. If
 any denies, the call denies. If any requires approval, the call
 requires approval, with the first approval to fire.
 
+The argument names each mapped scope reads are listed in
+[`POLICY_REFERENCE.md`](POLICY_REFERENCE.md#field-projection-per-mapped-scope);
+the LLM API Proxy reads the same ones. Several names can feed one field
+(`command` / `cmd` / `script` / `code`, say). If a mapped call sets two
+of them to different non-empty strings, such as
+`{"command": "ls", "cmd": "rm -rf /"}`, the check would see one while
+the tool may read the other, so the gateway denies the call with rule
+`deny:gateway:conflicting_argument_alias` before either check, whatever
+`--fail-mode` says. The denial is recorded through `POST /v1/audit` and
+names the conflicting keys, not their values; give the gateway
+`--api-key` when the central server is keyed, or the record is refused
+and only logged. A move's `src` and `dst` are different fields and may
+differ.
+
 #### 4.4.1 Why dual-check
 
 Operators write existing scope rules:

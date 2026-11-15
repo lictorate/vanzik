@@ -188,15 +188,28 @@ It has 47 entries:
 
 The capitalised names are Claude Code's built-in tools. A mapping
 carries no argument names: which arguments feed the check is fixed per
-scope (`pkg/llmproxy/gate.go`):
+scope, in one table the MCP gateway shares
+(`pkg/internal/gateclient/args.go`):
 
 | Scope | `command` | Other fields |
 |---|---|---|
 | `shell` | the `command` / `cmd` / `script` / `code` argument; else the tool name | — |
-| `filesystem` | `<tool_name> <path>` | `path` from `path`, `file_path`, `notebook_path`, `filepath`, `target`, `target_path`, `filename`, `file`, `destination`, `src` or `dst`; `action` inferred from the tool name (read / write / delete …) |
+| `filesystem` | `<tool_name> <path>` | `path` from `path`, `file_path`, `notebook_path`, `filepath`, `target`, `target_path`, `filename` or `file`; else the source `src`; else the destination `destination` or `dst`. `action` inferred from the tool name (read / write / delete …) |
 | `network` | `<tool_name> <url>` | `url` from `url`, `uri`, `endpoint` or `target_url`; `domain` from that URL's host, else a `domain` / `host` / `hostname` argument |
 | `browser` | `<tool_name> <url>` | `url` and `domain` as for `network`; `action` is the tool name |
+| `data` | the `value` / `content` / `text` / `data` argument; else the tool name | — |
 | `unmapped` | the tool name | — |
+
+The names in one cell are aliases: the check reads the first one set,
+but the tool reads whichever one its signature names. A tool call that
+sets two aliases to different non-empty strings, such as
+`{"command": "ls", "cmd": "rm -rf /"}`, is denied with rule
+`deny:llm_api_proxy:conflicting_argument_alias` before any `/v1/check`
+call, whatever `--fail-mode` says, and recorded through the forced-audit
+path (§ 5.4 Audit fidelity). The reason names the keys, not their values. Equal values
+pass, and so do different roles: `src` and `dst` may differ. A `data`
+tool's `url` / `uri` / `endpoint` / `target_url` arguments are aliases
+too, though the proxy doesn't project them.
 
 ### 4.2 Policy-YAML override
 
