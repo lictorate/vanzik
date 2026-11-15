@@ -98,7 +98,6 @@ func (s *Server) refuseUndecodableStreamEncoding(w http.ResponseWriter, r *http.
 	}
 	metrics.IncLLMProxyUndecodableContentEncoding(provider)
 	decision := undecodableEncodingDecision(provider, enc)
-	s.auditStreamRefusal(r, provider, decision, "", "")
 
 	copyForwardableHeaders(resp.Header, w.Header())
 	w.Header().Del("Content-Length")
@@ -113,6 +112,12 @@ func (s *Server) refuseUndecodableStreamEncoding(w http.ResponseWriter, r *http.
 	}
 	_, _ = w.Write(s.buildRefusal(provider, decision,
 		&RefusalContext{Provider: provider, AnthropicToolUseIndex: -1, Model: model}))
+	// Flush before auditing so the refusal does not wait on the audit
+	// round trip, like the other stream refusals.
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	s.auditStreamRefusal(r, provider, decision, "", "")
 	return true
 }
 
