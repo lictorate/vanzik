@@ -775,8 +775,9 @@ gateway can translate `requestId` on the way out; it is not implemented.
   request. Notifications expect `202 Accepted`.
 - Treats HTTP 404 to a request that carried a session id as an expired
   session: it starts a new session from the cached `initialize` and
-  retries the request once. A 404 means the server did not process the
-  message, so the retry cannot run a tool call twice. If the new session
+  retries the request once. A compliant server answers 404 only to a
+  message it did not process; a non-compliant one may have run the call
+  before answering, and the retry then runs it twice. If the new session
   cannot be started, the upstream is degraded (§ 7).
 - Opens the optional GET stream for notifications sent outside any
   request; a `405` turns it off.
@@ -823,6 +824,13 @@ a full session against a stub MCP server built from
   stream before the response, that call fails; the host can retry it.
 - **The older HTTP+SSE transport** (protocol `2024-11-05`, separate SSE
   and POST endpoints). `--upstream-http` speaks Streamable HTTP only.
+- **Upstream notifications are coalesced.** Each upstream delivers its
+  notifications to the host one at a time, drops a method that is
+  already waiting for delivery, and holds at most 16 distinct methods.
+  A server that floods `notifications/tools/list_changed` therefore
+  costs the host one re-pull, not one per message. The bridge forwards
+  only `tools/list_changed`, a "re-pull the list" hint, so no
+  information is lost.
 - Per-upstream rate limiting. The central server's rate limiter
   applies, but a misbehaving downstream that floods on `tools/list`
   will be felt.

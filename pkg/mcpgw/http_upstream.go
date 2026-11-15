@@ -78,8 +78,10 @@ type HTTPUpstreamOptions struct {
 
 	Logger *transportLogger
 
-	// OnNotification receives the method of every notification the
-	// server sends, on its own goroutine (see StdioUpstreamOptions).
+	// OnNotification receives the method of the notifications the
+	// server sends, off the reading goroutine. Notifications are
+	// coalesced: repeats of a method already waiting for delivery are
+	// dropped (see StdioUpstreamOptions).
 	OnNotification func(method string)
 
 	// Client overrides the HTTP client (tests). It should not follow
@@ -109,7 +111,7 @@ func NewHTTPUpstream(spec UpstreamSpec, opts HTTPUpstreamOptions) *HTTPUpstream 
 		client:         client,
 		logger:         logger,
 		backoff:        backoff,
-		onNotification: opts.OnNotification,
+		onNotification: coalesceNotifications(opts.OnNotification),
 		life:           life,
 		lifeCancel:     cancel,
 		status:         StatusStarting,
@@ -530,7 +532,7 @@ func (u *HTTPUpstream) route(data []byte, wantID RequestID) *Response {
 	var note Notification
 	if err := json.Unmarshal(data, &note); err == nil && note.Method != "" {
 		if u.onNotification != nil {
-			go u.onNotification(note.Method)
+			u.onNotification(note.Method)
 			return nil
 		}
 		u.logger.Debugf("upstream %q: notification %q dropped (no sink)", u.spec.Namespace, note.Method)
@@ -707,7 +709,7 @@ func (u *HTTPUpstream) reconnect() {
 		u.mu.Unlock()
 		u.logger.Infof("upstream %q: reconnected", u.spec.Namespace)
 		if u.onNotification != nil {
-			go u.onNotification(NotificationToolsListChanged)
+			u.onNotification(NotificationToolsListChanged)
 		}
 		return
 	}
