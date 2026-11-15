@@ -257,11 +257,16 @@ type scriptedUI struct {
 	t       *testing.T
 	choices []int
 	titles  []string
+	defs    map[string]int // title -> the preselected option
 	out     bytes.Buffer
 }
 
 func (u *scriptedUI) Select(title string, opts []tui.Option, def int) (int, error) {
 	u.titles = append(u.titles, title)
+	if u.defs == nil {
+		u.defs = map[string]int{}
+	}
+	u.defs[title] = def
 	if len(u.choices) == 0 {
 		u.t.Fatalf("setup asked %q but the script has no answer left", title)
 	}
