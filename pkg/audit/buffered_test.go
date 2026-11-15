@@ -79,6 +79,7 @@ func (c *captureLogger) Count() int {
 type blockingLogger struct {
 	gate     chan struct{}
 	released atomic.Bool
+	entered  atomic.Int32 // Log calls started, so tests can wait for wedged workers
 }
 
 func newBlockingLogger() *blockingLogger {
@@ -86,6 +87,7 @@ func newBlockingLogger() *blockingLogger {
 }
 
 func (b *blockingLogger) Log(e Entry) error {
+	b.entered.Add(1)
 	if !b.released.Load() {
 		<-b.gate
 	}
@@ -322,6 +324,73 @@ func TestBufferedAsync_CloseDrainsQueue(t *testing.T) {
 	// After Close, all enqueued entries must have reached the underlying.
 	if got := cap.Count(); got != 100 {
 		t.Errorf("expected 100 entries in underlying after Close, got %d", got)
+	}
+}
+
+// With every worker wedged in the underlying logger, Close must return after
+// closeDrainTimeout and leave the entries still queued in the overflow file
+// instead of hanging.
+func TestBufferedAsync_CloseWedgedWriterSpillsQueue(t *testing.T) {
+	old := closeDrainTimeout
+	closeDrainTimeout = 200 * time.Millisecond
+	defer func() { closeDrainTimeout = old }()
+
+	const workers, queue, total = 2, 20, 30
+	dir := t.TempDir()
+	overflow := filepath.Join(dir, "overflow.jsonl")
+	blk := newBlockingLogger()
+	defer blk.Release() // frees the wedged workers once the test is done
+	b, err := NewBufferedAsyncLogger(blk, BufferedAsyncOpts{
+		QueueSize:        queue,
+		Workers:          workers,
+		OverflowPath:     overflow,
+		RecoveryInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("NewBufferedAsyncLogger: %v", err)
+	}
+
+	// Wedge every worker first so the split between queued and spilled
+	// entries is exact.
+	for i := 0; i < workers; i++ {
+		if err := b.Log(sampleEntry(i)); err != nil {
+			t.Fatalf("Log(%d): %v", i, err)
+		}
+	}
+	waitFor(t, 5*time.Second, func() bool { return int(blk.entered.Load()) == workers }, "workers never wedged")
+	for i := workers; i < total; i++ {
+		if err := b.Log(sampleEntry(i)); err != nil {
+			t.Fatalf("Log(%d): %v", i, err)
+		}
+	}
+
+	done := make(chan struct{})
+	go func() { _ = b.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close hung on a wedged writer")
+	}
+
+	// Entries held by the wedged workers are unrecoverable; the other
+	// total-workers (queued, or spilled by Log on saturation) must be on disk.
+	data, err := os.ReadFile(overflow)
+	if err != nil {
+		t.Fatalf("read overflow: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var e Entry
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatalf("overflow line %q: %v", line, err)
+		}
+		seen[e.Request.Command] = true
+	}
+	if len(seen) != total-workers {
+		t.Errorf("overflow holds %d distinct entries, want %d", len(seen), total-workers)
+	}
+	if d := b.QueueDepth(); d != 0 {
+		t.Errorf("QueueDepth after Close = %d, want 0", d)
 	}
 }
 

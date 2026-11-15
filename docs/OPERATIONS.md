@@ -274,6 +274,8 @@ Before a scheduled restart in production:
 
 Graceful shutdown handles SIGINT and SIGTERM — the process drains in-flight requests up to `ShutdownTimeout` before exiting.
 
+The buffered audit logger (the default) flushes its queue at shutdown, waiting at most 5 s; if the audit backend is stalled past that, the entries still queued are written to the overflow file (`<audit-log>.overflow.jsonl`) and replayed on the next start. A hard kill (SIGKILL, OOM kill, power loss) gives it no chance to do so: up to queue size plus worker count (1024 + 4 by default) acknowledged decisions can be missing from the log, and the sealed chain shows no gap for them because sequence numbers are assigned at write time. Give the host a stop timeout above `ShutdownTimeout` plus 5 s.
+
 ---
 
 ## Capacity sizing
