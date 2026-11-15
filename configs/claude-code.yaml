@@ -20,6 +20,21 @@
           - action: write
             paths: ["**/.ssh/**", "**/.aws/**", "**/.gnupg/**", "/etc/**", "/usr/**", "C:/Windows/**"]
             message: "Claude Code doesn't write to system folders or credentials"
+          # Vanzik's own files: the API key that can approve a pending action,
+          # and the policy that decides what Claude Code may do. Only the
+          # default folder is named; one moved with XDG_CONFIG_HOME is not.
+          - action: read
+            paths: ["**/.config/vanzik/**", "**/AppData/Roaming/vanzik/**"]
+            message: "Vanzik's config folder (API key, policy) is off-limits to Claude Code"
+          - action: write
+            paths: ["**/.config/vanzik/**", "**/AppData/Roaming/vanzik/**"]
+            message: "Vanzik's config folder (API key, policy) is off-limits to Claude Code"
+          # The hook files `vanzik setup` writes. Removing Vanzik's entry
+          # turns the checks off. A project's own .claude/settings.json
+          # matches too.
+          - action: write
+            paths: ["**/.claude/settings.json", "**/.cursor/hooks.json", "**/.gemini/settings.json", "**/.codex/hooks.json"]
+            message: "The hook settings that connect Vanzik are off-limits to Claude Code"
         require_approval:
           - action: read
             paths: ["**/.env", "**/.env.*"]
@@ -36,6 +51,57 @@
           - pattern: ":(){ :|:& };:"
           - pattern: "dd if=/dev/*"
           - pattern: "> /dev/sda"
+          # Vanzik's control plane. An agent that can approve its own pending
+          # action, read the saved API key or stop the server makes the
+          # checks optional. These are glob matches on the command text, so
+          # a determined agent can write the same call another way (a
+          # script, a variable); they stop the plain forms, not a determined agent.
+          - pattern: "*/v1/approve/*"
+            message: "Approving actions is for you, not Claude Code"
+          - pattern: "*/v1/deny/*"
+            message: "Denying actions is for you, not Claude Code"
+          - pattern: "*/v1/audit*"
+            message: "Vanzik's audit endpoint is off-limits to Claude Code"
+          - pattern: "*/v1/t/*/approve/*"
+            message: "Approving actions is for you, not Claude Code"
+          - pattern: "*/v1/t/*/deny/*"
+            message: "Denying actions is for you, not Claude Code"
+          - pattern: "*/v1/t/*/audit*"
+            message: "Vanzik's audit endpoint is off-limits to Claude Code"
+          - pattern: "vanzik approve*"
+            message: "Approving actions is for you, not Claude Code"
+          - pattern: "*/vanzik approve*"
+            message: "Approving actions is for you, not Claude Code"
+          - pattern: "*vanzik.exe approve*"
+            message: "Approving actions is for you, not Claude Code"
+          - pattern: "vanzik deny*"
+            message: "Denying actions is for you, not Claude Code"
+          - pattern: "*/vanzik deny*"
+            message: "Denying actions is for you, not Claude Code"
+          - pattern: "*vanzik.exe deny*"
+            message: "Denying actions is for you, not Claude Code"
+          - pattern: "*/.config/vanzik*"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Claude Code"
+          - pattern: "*/vanzik/api-key*"
+            message: "Vanzik's API key is off-limits to Claude Code"
+          - pattern: "*AppData*vanzik*"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Claude Code"
+          - pattern: "*APPDATA*vanzik*"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Claude Code"
+          # Only commands that name vanzik: `kill 1234` and `pkill node` stay
+          # allowed.
+          - pattern: "kill *vanzik*"
+            message: "Stopping Vanzik is off-limits to Claude Code"
+          - pattern: "pkill *vanzik*"
+            message: "Stopping Vanzik is off-limits to Claude Code"
+          - pattern: "killall *vanzik*"
+            message: "Stopping Vanzik is off-limits to Claude Code"
+          - pattern: "taskkill *vanzik*"
+            message: "Stopping Vanzik is off-limits to Claude Code"
+          - pattern: "launchctl *vanzik*"
+            message: "Stopping Vanzik is off-limits to Claude Code"
+          - pattern: "systemctl *vanzik*"
+            message: "Stopping Vanzik is off-limits to Claude Code"
         require_approval:
           - pattern: "sudo *"
           - pattern: "rm -rf *"

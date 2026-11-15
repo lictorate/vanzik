@@ -65,3 +65,307 @@ tests:
     input: {hook_event_name: beforeMCPExecution, mcp_server_name: fs, tool_name: write_file, tool_input: '{}'}
     expect: DENY
     expect_rule: "deny:mcp_tool:*:write_file"
+
+  # --- Vanzik's control plane, config folder, hook files and process ---
+  # Rules against an agent approving its own actions, reading the API
+  # key, rewriting the policy, editing the hook settings or stopping
+  # the server. They match the plain forms of each command; the cases
+  # after them show everyday commands still pass.
+  - name: "Cursor may not call the approve endpoint"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "curl -X POST http://localhost:8080/v1/approve/ap_abc123", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Cursor may not approve with the saved API key"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "curl -s -X POST localhost:8080/v1/approve/ap_abc123 -H \"Authorization: Bearer $(cat ~/.config/vanzik/api-key)\"", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Cursor may not call the deny endpoint"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "curl -X POST http://127.0.0.1:8080/v1/deny/ap_abc123", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Denying actions is for you"
+
+  - name: "Cursor may not call a tenant's approve endpoint"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "curl -X POST http://localhost:8080/v1/t/acme/approve/ap_abc123", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Cursor may not call a tenant's deny endpoint"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "curl -X POST http://localhost:8080/v1/t/acme/deny/ap_abc123", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Denying actions is for you"
+
+  - name: "Cursor may not read the audit log through the server"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "curl -s 'http://localhost:8080/v1/audit?limit=50'", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "audit endpoint is off-limits"
+
+  - name: "Cursor may not read a tenant's audit log through the server"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "curl -s http://localhost:8080/v1/t/acme/audit", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "audit endpoint is off-limits"
+
+  - name: "Cursor may not run vanzik approve"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "vanzik approve ap_abc123", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Cursor may not run vanzik approve by its full path"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "/usr/local/bin/vanzik approve ap_abc123", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Cursor may not run vanzik deny"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "vanzik deny ap_abc123", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Denying actions is for you"
+
+  - name: "Cursor may not run vanzik.exe approve"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "C:/Users/alice/bin/vanzik.exe approve ap_abc123", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Cursor may not read the API key with cat"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "cat ~/.config/vanzik/api-key", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Cursor may not read the API key through XDG_CONFIG_HOME"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "cat $XDG_CONFIG_HOME/vanzik/api-key", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Vanzik's API key is off-limits"
+
+  - name: "Cursor may not cat the policy in the config folder"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "cat ~/.config/vanzik/default.yaml", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Cursor may not sed the policy in the config folder"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "sed -i s/DENY/ALLOW/ ~/.config/vanzik/default.yaml", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Cursor may not redirect into the policy in the config folder"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "echo 'rules: []' > /home/alice/.config/vanzik/default.yaml", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Cursor may not read the API key on Windows"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "type %APPDATA%\\vanzik\\api-key", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Cursor may not pkill vanzik"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "pkill -f vanzik", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Cursor may not killall vanzik"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "killall vanzik", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Cursor may not kill the process pgrep finds for vanzik"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "kill -9 $(pgrep vanzik)", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Cursor may not unload the macOS login service"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "launchctl bootout gui/501/com.lictorate.vanzik", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Cursor may not stop the systemd service"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "systemctl --user stop vanzik.service", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Cursor may not taskkill vanzik.exe"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "taskkill /F /IM vanzik.exe", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Cursor may not redirect into the hook settings"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "echo '{}' > /home/alice/.claude/settings.json", cwd: /home/alice/project}
+    expect: DENY
+    expect_reason_contains: "hook settings"
+
+  - name: "Cursor may kill a process by number"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "kill 1234", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may kill a process with a signal"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "kill -9 4321", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may pkill node"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "pkill node", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may killall a dev server"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "killall python3", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may taskkill another program"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "taskkill /F /IM node.exe", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may stop its own systemd service"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "systemctl --user stop myapp.service", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may list launchd jobs"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "launchctl list", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may curl a local dev server"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "curl -s http://localhost:3000/health", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may curl another API's v1 endpoint"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "curl -s https://api.example.com/v1/users", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may run the vanzik policy tests"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "go run ./cmd/vanzik test configs/tests", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may run vanzik status"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "vanzik status", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may commit a message that mentions vanzik approve"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "git commit -m \"docs: explain vanzik approve\"", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may read other files under ~/.config"
+    hook: cursor
+    input: {hook_event_name: beforeShellExecution, command: "cat ~/.config/starship.toml", cwd: /home/alice/project}
+    expect: ALLOW
+
+  - name: "Cursor may not write the policy in the config folder"
+    hook: cursor
+    input: {hook_event_name: preToolUse, tool_name: Write, tool_input: {file_path: "/home/alice/.config/vanzik/default.yaml"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Cursor may not write the API key file"
+    hook: cursor
+    input: {hook_event_name: preToolUse, tool_name: Write, tool_input: {file_path: "/home/alice/.config/vanzik/api-key"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Cursor may not write the policy in the Windows config folder"
+    hook: cursor
+    input: {hook_event_name: preToolUse, tool_name: Write, tool_input: {file_path: "C:/Users/alice/AppData/Roaming/vanzik/default.yaml"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Cursor may not edit Claude Code's hook settings"
+    hook: cursor
+    input: {hook_event_name: preToolUse, tool_name: Write, tool_input: {file_path: "/home/alice/.claude/settings.json"}}
+    expect: DENY
+    expect_reason_contains: "hook settings"
+
+  - name: "Cursor may not edit Cursor's hook settings"
+    hook: cursor
+    input: {hook_event_name: preToolUse, tool_name: Write, tool_input: {file_path: "/home/alice/.cursor/hooks.json"}}
+    expect: DENY
+    expect_reason_contains: "hook settings"
+
+  - name: "Cursor may not edit Gemini CLI's hook settings"
+    hook: cursor
+    input: {hook_event_name: preToolUse, tool_name: Write, tool_input: {file_path: "/home/alice/.gemini/settings.json"}}
+    expect: DENY
+    expect_reason_contains: "hook settings"
+
+  - name: "Cursor may not edit Codex's hook settings"
+    hook: cursor
+    input: {hook_event_name: preToolUse, tool_name: Write, tool_input: {file_path: "/home/alice/.codex/hooks.json"}}
+    expect: DENY
+    expect_reason_contains: "hook settings"
+
+  - name: "Cursor may write a project's Claude command"
+    hook: cursor
+    input: {hook_event_name: preToolUse, tool_name: Write, tool_input: {file_path: "/home/alice/project/.claude/commands/review.md"}}
+    expect: ALLOW
+
+  - name: "Cursor may write a file in a folder named vanzik"
+    hook: cursor
+    input: {hook_event_name: preToolUse, tool_name: Write, tool_input: {file_path: "/home/alice/project/vanzik/main.go"}}
+    expect: ALLOW
+
+  - name: "Cursor may write another program's config"
+    hook: cursor
+    input: {hook_event_name: preToolUse, tool_name: Write, tool_input: {file_path: "/home/alice/.config/starship.toml"}}
+    expect: ALLOW
+
+  - name: "Cursor may not read the API key file"
+    hook: cursor
+    input: {hook_event_name: beforeReadFile, file_path: "/home/alice/.config/vanzik/api-key"}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Cursor may not read the policy in the config folder"
+    hook: cursor
+    input: {hook_event_name: beforeReadFile, file_path: "/home/alice/.config/vanzik/default.yaml"}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Cursor may not read the API key in the Windows config folder"
+    hook: cursor
+    input: {hook_event_name: beforeReadFile, file_path: "C:/Users/alice/AppData/Roaming/vanzik/api-key"}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Cursor may read another program's config"
+    hook: cursor
+    input: {hook_event_name: beforeReadFile, file_path: "/home/alice/.config/starship.toml"}
+    expect: ALLOW
+
+  - name: "Cursor may read a file in a folder named vanzik"
+    hook: cursor
+    input: {hook_event_name: beforeReadFile, file_path: "/home/alice/project/vanzik/main.go"}
+    expect: ALLOW
+
+  - name: "Cursor may read Claude Code's settings"
+    hook: cursor
+    input: {hook_event_name: beforeReadFile, file_path: "/home/alice/.claude/settings.json"}
+    expect: ALLOW

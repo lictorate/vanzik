@@ -191,3 +191,274 @@ tests:
     input: {tool_name: mcp__fs__write_file, tool_input: {path: notes.md}}
     expect: DENY
     expect_rule: "deny:mcp_tool:*:write_file"
+
+  # --- Vanzik's control plane, config folder, hook files and process ---
+  # Rules against an agent approving its own actions, reading the API
+  # key, rewriting the policy, editing the hook settings or stopping
+  # the server. They match the plain forms of each command; the cases
+  # after them show everyday commands still pass.
+  - name: "Codex CLI may not call the approve endpoint"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "curl -X POST http://localhost:8080/v1/approve/ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Codex CLI may not approve with the saved API key"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "curl -s -X POST localhost:8080/v1/approve/ap_abc123 -H \"Authorization: Bearer $(cat ~/.config/vanzik/api-key)\""}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Codex CLI may not call the deny endpoint"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "curl -X POST http://127.0.0.1:8080/v1/deny/ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Denying actions is for you"
+
+  - name: "Codex CLI may not call a tenant's approve endpoint"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "curl -X POST http://localhost:8080/v1/t/acme/approve/ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Codex CLI may not call a tenant's deny endpoint"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "curl -X POST http://localhost:8080/v1/t/acme/deny/ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Denying actions is for you"
+
+  - name: "Codex CLI may not read the audit log through the server"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "curl -s 'http://localhost:8080/v1/audit?limit=50'"}}
+    expect: DENY
+    expect_reason_contains: "audit endpoint is off-limits"
+
+  - name: "Codex CLI may not read a tenant's audit log through the server"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "curl -s http://localhost:8080/v1/t/acme/audit"}}
+    expect: DENY
+    expect_reason_contains: "audit endpoint is off-limits"
+
+  - name: "Codex CLI may not run vanzik approve"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "vanzik approve ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Codex CLI may not run vanzik approve by its full path"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "/usr/local/bin/vanzik approve ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Codex CLI may not run vanzik deny"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "vanzik deny ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Denying actions is for you"
+
+  - name: "Codex CLI may not run vanzik.exe approve"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "C:/Users/alice/bin/vanzik.exe approve ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Codex CLI may not read the API key with cat"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "cat ~/.config/vanzik/api-key"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Codex CLI may not read the API key through XDG_CONFIG_HOME"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "cat $XDG_CONFIG_HOME/vanzik/api-key"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's API key is off-limits"
+
+  - name: "Codex CLI may not cat the policy in the config folder"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "cat ~/.config/vanzik/default.yaml"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Codex CLI may not sed the policy in the config folder"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "sed -i s/DENY/ALLOW/ ~/.config/vanzik/default.yaml"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Codex CLI may not redirect into the policy in the config folder"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "echo 'rules: []' > /home/alice/.config/vanzik/default.yaml"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Codex CLI may not read the API key on Windows"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "type %APPDATA%\\vanzik\\api-key"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Codex CLI may not pkill vanzik"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "pkill -f vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Codex CLI may not killall vanzik"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "killall vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Codex CLI may not kill the process pgrep finds for vanzik"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "kill -9 $(pgrep vanzik)"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Codex CLI may not unload the macOS login service"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "launchctl bootout gui/501/com.lictorate.vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Codex CLI may not stop the systemd service"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "systemctl --user stop vanzik.service"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Codex CLI may not taskkill vanzik.exe"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "taskkill /F /IM vanzik.exe"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Codex CLI may not redirect into the hook settings"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "echo '{}' > /home/alice/.claude/settings.json"}}
+    expect: DENY
+    expect_reason_contains: "hook settings"
+
+  - name: "Codex CLI may kill a process by number"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "kill 1234"}}
+    expect: ALLOW
+
+  - name: "Codex CLI may kill a process with a signal"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "kill -9 4321"}}
+    expect: ALLOW
+
+  - name: "Codex CLI may pkill node"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "pkill node"}}
+    expect: ALLOW
+
+  - name: "Codex CLI may killall a dev server"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "killall python3"}}
+    expect: ALLOW
+
+  - name: "Codex CLI may taskkill another program"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "taskkill /F /IM node.exe"}}
+    expect: ALLOW
+
+  - name: "Codex CLI may stop its own systemd service"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "systemctl --user stop myapp.service"}}
+    expect: ALLOW
+
+  - name: "Codex CLI may list launchd jobs"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "launchctl list"}}
+    expect: ALLOW
+
+  - name: "Codex CLI may curl a local dev server"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "curl -s http://localhost:3000/health"}}
+    expect: ALLOW
+
+  - name: "Codex CLI may curl another API's v1 endpoint"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "curl -s https://api.example.com/v1/users"}}
+    expect: ALLOW
+
+  - name: "Codex CLI may run the vanzik policy tests"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "go run ./cmd/vanzik test configs/tests"}}
+    expect: ALLOW
+
+  - name: "Codex CLI may run vanzik status"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "vanzik status"}}
+    expect: ALLOW
+
+  - name: "Codex CLI may commit a message that mentions vanzik approve"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "git commit -m \"docs: explain vanzik approve\""}}
+    expect: ALLOW
+
+  - name: "Codex CLI may read other files under ~/.config"
+    hook: codex
+    input: {tool_name: Bash, tool_input: {command: "cat ~/.config/starship.toml"}}
+    expect: ALLOW
+
+  - name: "Codex CLI may not write the policy in the config folder"
+    hook: codex
+    input: {tool_name: apply_patch, tool_input: {command: "*** Begin Patch\n*** Update File: /home/alice/.config/vanzik/default.yaml\n@@\n-a\n+b\n*** End Patch\n"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Codex CLI may not write the API key file"
+    hook: codex
+    input: {tool_name: apply_patch, tool_input: {command: "*** Begin Patch\n*** Update File: /home/alice/.config/vanzik/api-key\n@@\n-a\n+b\n*** End Patch\n"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Codex CLI may not write the policy in the Windows config folder"
+    hook: codex
+    input: {tool_name: apply_patch, tool_input: {command: "*** Begin Patch\n*** Update File: C:/Users/alice/AppData/Roaming/vanzik/default.yaml\n@@\n-a\n+b\n*** End Patch\n"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Codex CLI may not edit Claude Code's hook settings"
+    hook: codex
+    input: {tool_name: apply_patch, tool_input: {command: "*** Begin Patch\n*** Update File: /home/alice/.claude/settings.json\n@@\n-a\n+b\n*** End Patch\n"}}
+    expect: DENY
+    expect_reason_contains: "hook settings"
+
+  - name: "Codex CLI may not edit Cursor's hook settings"
+    hook: codex
+    input: {tool_name: apply_patch, tool_input: {command: "*** Begin Patch\n*** Update File: /home/alice/.cursor/hooks.json\n@@\n-a\n+b\n*** End Patch\n"}}
+    expect: DENY
+    expect_reason_contains: "hook settings"
+
+  - name: "Codex CLI may not edit Gemini CLI's hook settings"
+    hook: codex
+    input: {tool_name: apply_patch, tool_input: {command: "*** Begin Patch\n*** Update File: /home/alice/.gemini/settings.json\n@@\n-a\n+b\n*** End Patch\n"}}
+    expect: DENY
+    expect_reason_contains: "hook settings"
+
+  - name: "Codex CLI may not edit Codex's hook settings"
+    hook: codex
+    input: {tool_name: apply_patch, tool_input: {command: "*** Begin Patch\n*** Update File: /home/alice/.codex/hooks.json\n@@\n-a\n+b\n*** End Patch\n"}}
+    expect: DENY
+    expect_reason_contains: "hook settings"
+
+  - name: "Codex CLI may write a project's Claude command"
+    hook: codex
+    input: {tool_name: apply_patch, tool_input: {command: "*** Begin Patch\n*** Update File: /home/alice/project/.claude/commands/review.md\n@@\n-a\n+b\n*** End Patch\n"}}
+    expect: ALLOW
+
+  - name: "Codex CLI may write a file in a folder named vanzik"
+    hook: codex
+    input: {tool_name: apply_patch, tool_input: {command: "*** Begin Patch\n*** Update File: /home/alice/project/vanzik/main.go\n@@\n-a\n+b\n*** End Patch\n"}}
+    expect: ALLOW
+
+  - name: "Codex CLI may write another program's config"
+    hook: codex
+    input: {tool_name: apply_patch, tool_input: {command: "*** Begin Patch\n*** Update File: /home/alice/.config/starship.toml\n@@\n-a\n+b\n*** End Patch\n"}}
+    expect: ALLOW
