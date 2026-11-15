@@ -1049,7 +1049,7 @@ func resolutionActor(r *http.Request, keyed bool) (via, from string) {
 	case hasSessionCookie(r):
 		via = "session"
 	default:
-		via = "open" // server running without --api-key
+		via = "open" // a keyed server reached without the auth wrapper (a direct handler call): nothing proved who called
 	}
 	from = r.RemoteAddr
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {

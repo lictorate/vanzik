@@ -40,7 +40,7 @@ Vanzik uses two orthogonal auth schemes:
 1. **Bearer token** (`Authorization: Bearer <key>`) — for machine-to-machine access. Comes from the `--api-key` flag on the server.
 2. **Session cookie + CSRF** — for browser (`/dashboard`) access. `POST /auth/login` with the same API key sets an HttpOnly `vanzik_session` cookie and a JS-readable `vanzik_csrf` cookie (double-submit). State-changing endpoints additionally require `X-CSRF-Token: <vanzik_csrf value>`.
 
-**When the server is started without `--api-key`**, auth middleware is a pass-through and the server binds to `127.0.0.1` only.
+**When the server is started without `--api-key`**, the server binds to `127.0.0.1` only and the auth middleware takes no credential, but it still returns `403` before the handler unless the request's `Host` is loopback and its `Origin` is absent or the same origin as the `Host`. A page on another localhost port, a DNS-rebound name, `host.docker.internal`, a tunnel or a reverse proxy therefore needs `--api-key`; see [`DEPLOYMENT.md` §3](DEPLOYMENT.md#3-cors).
 
 Auth posture is **identical** across both URL families — the middleware is URL-agnostic, so a token / session that works against `/v1/audit` works against `/v1/t/local/audit` and vice versa.
 
@@ -428,6 +428,8 @@ Content-Type: application/json
 | `request` | object | no | The action the refusal was for, in the `/v1/check` request shape. `meta.transport` sets the entry's `transport` tag (default `sdk`). |
 | `schema_version` | string | no | Defaults to `"v1"`; any other value → `400`. |
 
+The `Content-Type` must be `application/json` (parameters such as `charset` are fine). Any other or missing `Content-Type` returns `415`, in every mode, because a cross-origin page can send `text/plain` without a CORS preflight.
+
 The decision is always **DENY**: the endpoint never takes a decision from the caller (a `"decision"` field in the body is ignored), so it cannot write an ALLOW into the trail.
 
 ### Response
@@ -445,9 +447,10 @@ Same shape as `/v1/check`. The entry goes through the same audit-write path, so 
 | `200` | Recorded. |
 | `400` | Malformed JSON, unsupported `schema_version` (JSON error body), or missing `rule`. |
 | `401` | Missing/invalid Bearer token or session. |
-| `403` | Session valid but `X-CSRF-Token` missing or mismatched. |
+| `403` | Session valid but `X-CSRF-Token` missing or mismatched; or, on a keyless server, a non-loopback `Host` or a cross-origin `Origin`. |
 | `404` | Tenant-aware route with an unregistered tenant: `{"error":"tenant not found"}`. |
 | `413` | Body exceeds `MaxRequestBodyBytes`. |
+| `415` | `Content-Type` is not `application/json`. |
 
 ---
 
