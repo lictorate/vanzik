@@ -201,10 +201,12 @@ func (b *BufferedAsyncLogger) Query(filter QueryFilter) ([]Entry, error) {
 // closeFlushTimeout so a small backlog at shutdown still reaches the
 // underlying logger.
 //
-// Close returns after at most closeDrainTimeout (plus the overflow writes)
-// even if the underlying logger is wedged. Entries still queued then are
-// appended to the overflow file for the next process start; the entry each
-// wedged worker is holding cannot be recovered.
+// Close returns even if the underlying logger is wedged. If the workers
+// finish within closeDrainTimeout, the overflow flush above follows, so the
+// bound is closeDrainTimeout + closeFlushTimeout. If they do not, Close skips
+// the flush and appends what is still queued to the overflow file for the
+// next process start, taking closeDrainTimeout plus those disk writes. The
+// entry each wedged worker is holding cannot be recovered.
 //
 // Close does NOT close the underlying logger; the caller owns that.
 //
