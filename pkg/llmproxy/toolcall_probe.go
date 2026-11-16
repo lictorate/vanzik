@@ -10,22 +10,26 @@ package llmproxy
 // numeric field is enough; no attacker needed. (A JSON null or an extra
 // field does not fail the decode, so only wrong-typed values land here.)
 //
-// The probe types declare only the path to the tool-call array, so no
-// sibling field can fail the decode: the probe constrains nothing a
-// lenient client wouldn't. A substring search for "tool_calls" would
-// also match model prose and refuse ordinary answers.
+// The probe types declare only the paths to the tool calls (OpenAI
+// tool_calls and the legacy function_call), so no sibling field can
+// fail the decode: the probe constrains nothing a lenient client
+// wouldn't. A substring search for "tool_calls" would also match model
+// prose and refuse ordinary answers.
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"strings"
 )
 
-// openAIToolCallProbe declares only choices[].message.tool_calls.
+// openAIToolCallProbe declares only choices[].message.tool_calls and
+// choices[].message.function_call.
 type openAIToolCallProbe struct {
 	Choices []struct {
 		Message struct {
-			ToolCalls []json.RawMessage `json:"tool_calls"`
+			ToolCalls    []json.RawMessage `json:"tool_calls"`
+			FunctionCall json.RawMessage   `json:"function_call"`
 		} `json:"message"`
 	} `json:"choices"`
 }
@@ -41,6 +45,9 @@ type anthropicToolUseProbe struct {
 // still carries a tool call. False (no tool call, unreadable even to the
 // probe, or unknown provider) means the caller forwards verbatim.
 func hasLenientToolCall(body []byte, provider string) bool {
+	// A UTF-8 BOM fails encoding/json, but Python's json.loads(bytes)
+	// and other SDK decoders skip it and execute the calls behind it.
+	body = bytes.TrimPrefix(body, []byte("\xef\xbb\xbf"))
 	switch provider {
 	case "openai":
 		var p openAIToolCallProbe
@@ -48,7 +55,8 @@ func hasLenientToolCall(body []byte, provider string) bool {
 			return false
 		}
 		for i := range p.Choices {
-			if len(p.Choices[i].Message.ToolCalls) > 0 {
+			m := p.Choices[i].Message
+			if len(m.ToolCalls) > 0 || hasJSONValue(m.FunctionCall) {
 				return true
 			}
 		}
@@ -69,6 +77,12 @@ func hasLenientToolCall(body []byte, provider string) bool {
 	default:
 		return false
 	}
+}
+
+// hasJSONValue reports whether raw holds a value other than null.
+func hasJSONValue(raw json.RawMessage) bool {
+	t := bytes.TrimSpace(raw)
+	return len(t) > 0 && !bytes.Equal(t, []byte("null"))
 }
 
 // undecodableToolCallDecision refuses an undecodable body that carries
