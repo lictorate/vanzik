@@ -42,15 +42,16 @@ Anything the agent does outside the gated transport — shelling out directly, p
 
 ### The upstream LLM provider — semi-trusted
 
-The provider is trusted for the *content* of its answers but **not for the structure of its stream**. A non-conformant or hostile stream is in scope, and three fail-closed defences exist for exactly this actor:
+The provider is trusted for the *content* of its answers but **not for the structure of its stream**. A non-conformant or hostile stream is in scope, and these fail-closed defences exist for exactly this actor:
 
 | Defence | Where | What it refuses |
 |---|---|---|
 | Interleaved second `tool_use` block | `anthropic_parser.go` (`FeedEvent`) | A second block opening while one is still buffering would be flushed ungated when the first cycle resets. The whole stream is refused. |
 | Start-seeded input plus streamed deltas | `anthropic_parser.go` | Two argument sources would concatenate into invalid JSON and the gate would evaluate a truncated view. Refused. |
-| First-wins function name | `openai_parser.go` | A second, different name for the same `tool_calls[i]` would make the gate evaluate a different call than the client executes. The first name wins, matching client SDKs. |
+| Conflicting function name fragments | `openai_parser.go` | A second, different name for the same call would make the gate evaluate a different call than the client executes: openai-python concatenates name fragments and openai-node keeps the last. The stream is refused (`deny:llm_api_proxy:tool_name_conflict`). |
+| Legacy `function_call` mixed with `tool_calls` | `openai_parser.go` | Clients disagree on which shape they execute. The stream is refused (`deny:llm_api_proxy:mixed_function_call`). A legacy `function_call` on its own is gated like any tool call. |
 
-Each refusal is a synthetic refusal to the client, counted in `vanzik_llmproxy_protocol_violation_total{provider}`, and the buffered bytes are discarded. Oversized argument accumulation is capped by `--max-buffer-bytes` with a built-in 64 MiB ceiling. The same fail-closed rule covers the rest of the stream structure: a non-streaming body that fails strict decode but still carries a tool call is refused (`vanzik_llmproxy_undecodable_tool_call_total`); tool input with no block open and tool calls spread across several OpenAI choices are protocol-violation refusals (rule strings in [`LLM_API_PROXY.md`](LLM_API_PROXY.md) §5.4); a stream that ends with a cycle still open is gated or refused, never dropped; and an empty Anthropic seed with whitespace does not trip the conflict refusal.
+Each refusal is a synthetic refusal to the client, counted in `vanzik_llmproxy_protocol_violation_total{provider}`, and the buffered bytes are discarded. Oversized argument accumulation is capped by `--max-buffer-bytes` with a built-in 64 MiB ceiling. The same fail-closed rule covers the rest of the stream structure: a non-streaming body that fails strict decode but still carries a tool call (including a legacy `function_call`, or a call behind a UTF-8 byte order mark) is refused (`vanzik_llmproxy_undecodable_tool_call_total`); a 2xx response whose `Content-Encoding` the proxy cannot decode is refused (`deny:llm_api_proxy:undecodable_content_encoding`); tool input with no block open and tool calls spread across several OpenAI choices are protocol-violation refusals (rule strings in [`LLM_API_PROXY.md`](LLM_API_PROXY.md) §5.4); a stream that ends with a cycle still open is gated or refused, never dropped; and an empty Anthropic seed with whitespace does not trip the conflict refusal.
 
 ### The downstream MCP server — untrusted for framing and liveness
 
