@@ -73,7 +73,7 @@ Fields are JSON-encoded; only `scope` is required.
 | `session_id`     | string            | optional | Required to use `cost.max_per_session` accumulation; also keyed by audit `Query`. |
 | `parent_session_id` | string         | optional | The session that started this one (an orchestrator's session for a sub-agent). Not used by policy; recorded in the audit entry's `request` so `GET /v1/sessions` can link parent and child sessions. Omitted when empty, so requests without it are unchanged. |
 | `est_cost`       | number ≥ 0        | optional | Estimated cost of this action in USD. Required for the `cost` scope. SDKs drop this field when its value is `0` to avoid spurious cost-scope evaluations. |
-| `meta`           | object<string,string> | optional | Free-form string-keyed metadata. Forwarded to notifiers and the audit log; may be redacted by `notify.DefaultRedactor`. |
+| `meta`           | object<string,string> | optional | Free-form string-keyed metadata. Forwarded to notifiers and the audit log; may be redacted by `notify.DefaultRedactor`. One key binds an approval: `args_digest`, the hex HMAC-SHA256 of the tool name and arguments that the LLM API Proxy and the MCP Gateway send. When the request that created an approval carried it, a retry presenting that `approval_id` is honoured only with the same `args_digest`; otherwise it is evaluated fresh. SDK requests don't send it, and their approvals are bound as before. |
 
 ### Example
 
