@@ -1,5 +1,5 @@
 # Build stage
-# Must stay >= the `go` directive in go.mod (go1.26.10), the minimum toolchain,
+# Must stay >= the `go` directive in go.mod (go1.26.11), the minimum toolchain,
 # which carries the stdlib fixes govulncheck gates on — see that file for the
 # advisory list. A builder older than that minimum still works (Go downloads the
 # required toolchain) but silently adds a download to every image build, so keep
@@ -12,7 +12,7 @@
 # target (TARGETOS/TARGETARCH, set by BuildKit for each `--platform`). Every
 # dependency is pure Go, so CGO stays off and a multi-arch image needs no CPU
 # emulation. A plain `docker build` targets the host.
-FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26.11-alpine@sha256:ae52b5bc6ed045a9ed26ab03dc19327a802a9cc9aa8b27ed57f5c6b60579b0bb AS builder
 
 WORKDIR /app
 COPY go.mod go.sum* ./
@@ -35,7 +35,10 @@ RUN for b in vanzik vanzik-mcp-gateway vanzik-llm-proxy; do \
 # Runtime stage
 FROM alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f
 
-RUN apk --no-cache add ca-certificates \
+# The pinned base image predates the CVE-2026-4738 fix (zlib 1.4-r0). Drop the
+# `apk upgrade` once a base-image digest ships zlib 1.4-r0 or later.
+RUN apk --no-cache upgrade zlib \
+    && apk --no-cache add ca-certificates \
     && addgroup -S vanzik \
     && adduser -S -G vanzik -u 10001 vanzik \
     && mkdir -p /var/lib/vanzik \
