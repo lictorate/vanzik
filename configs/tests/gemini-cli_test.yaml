@@ -73,3 +73,540 @@ tests:
     input: {tool_name: mcp_my_fs_write_file, mcp_context: {server_name: my_fs, tool_name: write_file}, tool_input: {path: notes.md}}
     expect: DENY
     expect_rule: "deny:mcp_tool:*:write_file"
+
+  # --- Vanzik's control plane, config folder, hook files and process ---
+  # Rules against an agent approving its own actions, reading the API
+  # key, rewriting the policy, editing the hook settings or stopping
+  # the server. They match the plain forms of each command; the cases
+  # after them show everyday commands still pass.
+  - name: "Gemini CLI may not call the approve endpoint"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "curl -X POST http://localhost:8080/v1/approve/ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Gemini CLI may not approve with the saved API key"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "curl -s -X POST localhost:8080/v1/approve/ap_abc123 -H \"Authorization: Bearer $(cat ~/.config/vanzik/api-key)\""}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Gemini CLI may not call the deny endpoint"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "curl -X POST http://127.0.0.1:8080/v1/deny/ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Denying actions is for you"
+
+  - name: "Gemini CLI may not call a tenant's approve endpoint"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "curl -X POST http://localhost:8080/v1/t/acme/approve/ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Gemini CLI may not call a tenant's deny endpoint"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "curl -X POST http://localhost:8080/v1/t/acme/deny/ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Denying actions is for you"
+
+  - name: "Gemini CLI may not read the audit log through the server"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "curl -s 'http://localhost:8080/v1/audit?limit=50'"}}
+    expect: DENY
+    expect_reason_contains: "audit endpoint is off-limits"
+
+  - name: "Gemini CLI may not read a tenant's audit log through the server"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "curl -s http://localhost:8080/v1/t/acme/audit"}}
+    expect: DENY
+    expect_reason_contains: "audit endpoint is off-limits"
+
+  - name: "Gemini CLI may not run vanzik approve"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "vanzik approve ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Gemini CLI may not run vanzik approve by its full path"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "/usr/local/bin/vanzik approve ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Gemini CLI may not run vanzik deny"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "vanzik deny ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Denying actions is for you"
+
+  - name: "Gemini CLI may not run vanzik.exe approve"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "C:/Users/alice/bin/vanzik.exe approve ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Gemini CLI may not read the API key with cat"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "cat ~/.config/vanzik/api-key"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Gemini CLI may not read the API key through XDG_CONFIG_HOME"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "cat $XDG_CONFIG_HOME/vanzik/api-key"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's API key is off-limits"
+
+  - name: "Gemini CLI may not cat the policy in the config folder"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "cat ~/.config/vanzik/default.yaml"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Gemini CLI may not sed the policy in the config folder"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "sed -i s/DENY/ALLOW/ ~/.config/vanzik/default.yaml"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Gemini CLI may not redirect into the policy in the config folder"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "echo 'rules: []' > /home/alice/.config/vanzik/default.yaml"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Gemini CLI may not read the API key on Windows"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "type %APPDATA%\\vanzik\\api-key"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Gemini CLI may not pkill vanzik"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "pkill -f vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Gemini CLI may not killall vanzik"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "killall vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Gemini CLI may not kill the process pgrep finds for vanzik"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "kill -9 $(pgrep vanzik)"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Gemini CLI may not unload the macOS login service"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "launchctl bootout gui/501/com.lictorate.vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Gemini CLI may not stop the systemd service"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "systemctl --user stop vanzik.service"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Gemini CLI may not taskkill vanzik.exe"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "taskkill /F /IM vanzik.exe"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Gemini CLI may not redirect into the hook settings"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "echo '{}' > /home/alice/.claude/settings.json"}}
+    expect: DENY
+    expect_reason_contains: "hook settings"
+
+  - name: "Gemini CLI may kill a process by number"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "kill 1234"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may kill a process with a signal"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "kill -9 4321"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may pkill node"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "pkill node"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may killall a dev server"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "killall python3"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may taskkill another program"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "taskkill /F /IM node.exe"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may stop its own systemd service"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "systemctl --user stop myapp.service"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may list launchd jobs"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "launchctl list"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may curl a local dev server"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "curl -s http://localhost:3000/health"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may curl another API's v1 endpoint"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "curl -s https://api.example.com/v1/users"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may run the vanzik policy tests"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "go run ./cmd/vanzik test configs/tests"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may run vanzik status"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "vanzik status"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may commit a message that mentions vanzik approve"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "git commit -m \"docs: explain vanzik approve\""}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may read other files under ~/.config"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "cat ~/.config/starship.toml"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may not write the policy in the config folder"
+    hook: gemini-cli
+    input: {tool_name: write_file, tool_input: {file_path: "/home/alice/.config/vanzik/default.yaml", content: x}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Gemini CLI may not write the API key file"
+    hook: gemini-cli
+    input: {tool_name: write_file, tool_input: {file_path: "/home/alice/.config/vanzik/api-key", content: x}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Gemini CLI may not write the policy in the Windows config folder"
+    hook: gemini-cli
+    input: {tool_name: write_file, tool_input: {file_path: "C:/Users/alice/AppData/Roaming/vanzik/default.yaml", content: x}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Gemini CLI may not edit Claude Code's hook settings"
+    hook: gemini-cli
+    input: {tool_name: write_file, tool_input: {file_path: "/home/alice/.claude/settings.json", content: x}}
+    expect: DENY
+    expect_reason_contains: "hook settings"
+
+  - name: "Gemini CLI may not edit Cursor's hook settings"
+    hook: gemini-cli
+    input: {tool_name: write_file, tool_input: {file_path: "/home/alice/.cursor/hooks.json", content: x}}
+    expect: DENY
+    expect_reason_contains: "hook settings"
+
+  - name: "Gemini CLI may not edit Gemini CLI's hook settings"
+    hook: gemini-cli
+    input: {tool_name: write_file, tool_input: {file_path: "/home/alice/.gemini/settings.json", content: x}}
+    expect: DENY
+    expect_reason_contains: "hook settings"
+
+  - name: "Gemini CLI may not edit Codex's hook settings"
+    hook: gemini-cli
+    input: {tool_name: write_file, tool_input: {file_path: "/home/alice/.codex/hooks.json", content: x}}
+    expect: DENY
+    expect_reason_contains: "hook settings"
+
+  - name: "Gemini CLI may write a project's Claude command"
+    hook: gemini-cli
+    input: {tool_name: write_file, tool_input: {file_path: "/home/alice/project/.claude/commands/review.md", content: x}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may write a file in a folder named vanzik"
+    hook: gemini-cli
+    input: {tool_name: write_file, tool_input: {file_path: "/home/alice/project/vanzik/main.go", content: x}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may write another program's config"
+    hook: gemini-cli
+    input: {tool_name: write_file, tool_input: {file_path: "/home/alice/.config/starship.toml", content: x}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may not read the API key file"
+    hook: gemini-cli
+    input: {tool_name: read_file, tool_input: {file_path: "/home/alice/.config/vanzik/api-key"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Gemini CLI may not read the policy in the config folder"
+    hook: gemini-cli
+    input: {tool_name: read_file, tool_input: {file_path: "/home/alice/.config/vanzik/default.yaml"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Gemini CLI may not read the API key in the Windows config folder"
+    hook: gemini-cli
+    input: {tool_name: read_file, tool_input: {file_path: "C:/Users/alice/AppData/Roaming/vanzik/api-key"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Gemini CLI may read another program's config"
+    hook: gemini-cli
+    input: {tool_name: read_file, tool_input: {file_path: "/home/alice/.config/starship.toml"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may read a file in a folder named vanzik"
+    hook: gemini-cli
+    input: {tool_name: read_file, tool_input: {file_path: "/home/alice/project/vanzik/main.go"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may read Claude Code's settings"
+    hook: gemini-cli
+    input: {tool_name: read_file, tool_input: {file_path: "/home/alice/.claude/settings.json"}}
+    expect: ALLOW
+
+  # --- Narrower matches: loopback endpoints, stop verbs, the config folder itself ---
+  # The endpoint rules name a loopback address; the cases below show other
+  # services' /v1/ paths, greps for them, and read-only service commands
+  # still pass.
+  - name: "Gemini CLI may not approve through 127.0.0.1"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "curl -X POST http://127.0.0.1:8080/v1/approve/ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Gemini CLI may not approve through [::1]"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "curl -X POST 'http://[::1]:8080/v1/approve/ap_abc123'"}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Gemini CLI may not deny through [::1]"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "curl -X POST http://[::1]:8080/v1/deny/ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Denying actions is for you"
+
+  - name: "Gemini CLI may not read the audit log through 127.0.0.1"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "curl -s http://127.0.0.1:8080/v1/audit"}}
+    expect: DENY
+    expect_reason_contains: "audit endpoint is off-limits"
+
+  - name: "Gemini CLI may not read the audit log through [::1]"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "curl -s http://[::1]:8080/v1/audit"}}
+    expect: DENY
+    expect_reason_contains: "audit endpoint is off-limits"
+
+  - name: "Gemini CLI may not approve a tenant's action through 127.0.0.1"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "curl -X POST http://127.0.0.1:8080/v1/t/acme/approve/ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Gemini CLI may not read a tenant's audit log through [::1]"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "curl -s http://[::1]:8080/v1/t/acme/audit"}}
+    expect: DENY
+    expect_reason_contains: "audit endpoint is off-limits"
+
+  - name: "Gemini CLI may not ls the config folder"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "ls ~/.config/vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Gemini CLI may not ls the config folder with a trailing slash"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "ls -la ~/.config/vanzik/"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Gemini CLI may not read the API key on Windows with forward slashes"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "type C:/Users/alice/AppData/Roaming/vanzik/api-key"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik\'s API key is off-limits"
+
+  - name: "Gemini CLI may not systemctl kill vanzik"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "systemctl --user kill vanzik.service"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Gemini CLI may not systemctl disable vanzik"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "systemctl --user disable --now vanzik.service"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Gemini CLI may not systemctl mask vanzik"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "systemctl mask vanzik.service"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Gemini CLI may not systemctl stop vanzik without --user"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "systemctl stop vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Gemini CLI may not launchctl unload vanzik"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "launchctl unload -w ~/Library/LaunchAgents/com.lictorate.vanzik.plist"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Gemini CLI may not launchctl stop vanzik"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "launchctl stop com.lictorate.vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Gemini CLI may not launchctl remove vanzik"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "launchctl remove com.lictorate.vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Gemini CLI may not launchctl kill vanzik"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "launchctl kill SIGTERM gui/501/com.lictorate.vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Gemini CLI may not launchctl disable vanzik"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "launchctl disable gui/501/com.lictorate.vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Gemini CLI may curl another service's /v1/audit"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "curl -s https://api.stripe.com/v1/audit"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may curl another service's /v1/audit-logs"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "curl https://api.example.com/v1/audit-logs"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may POST to another service's /v1/approve"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "curl -X POST https://api.example.com/v1/approve/123"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may grep for /v1/approve/"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "grep -rn '/v1/approve/' docs/"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may rg for /v1/audit"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "rg '/v1/audit' pkg/"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may commit a message that names /v1/approve/"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "git commit -m 'document /v1/approve/ endpoint'"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may list launchd jobs and grep for vanzik"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "launchctl list | grep vanzik"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may check the vanzik service status"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "systemctl status vanzik"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may check the vanzik user service status"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "systemctl --user status vanzik"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may read a file next to the config folder"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "cat ~/.config/vanzik-notes"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may read a .md file named like the config folder"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "cat ~/.config/vanzik.md"}}
+    expect: ALLOW
+
+  - name: "Gemini CLI may read a Windows folder named like the config folder"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "type C:\\Users\\alice\\AppData\\Roaming\\vanzik-notes\\todo.txt"}}
+    expect: ALLOW
+
+  # --- The Windows config folder by itself, and with a lowercase variable name ---
+  - name: "Gemini CLI may not copy the Windows config folder with xcopy"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "xcopy /E %APPDATA%\\vanzik C:\\tmp"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Gemini CLI may not cd into the Windows config folder"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "cd %APPDATA%\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Gemini CLI may not cd /d into the Windows config folder"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "cd /d %APPDATA%\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Gemini CLI may not dir the Windows config folder"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "dir %APPDATA%\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Gemini CLI may not dir the Windows config folder spelled %AppData%"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "dir %AppData%\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Gemini CLI may not dir the Windows config folder with a forward slash"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "dir %APPDATA%/vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Gemini CLI may not dir the Windows config folder by its full path"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "dir C:\\Users\\u\\AppData\\Roaming\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Gemini CLI may not Get-ChildItem the Windows config folder"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "Get-ChildItem $env:APPDATA\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Gemini CLI may not read the API key spelled %appdata%"
+    hook: gemini-cli
+    input: {tool_name: run_shell_command, tool_input: {command: "type %appdata%\\vanzik\\api-key"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"

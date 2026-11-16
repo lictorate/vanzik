@@ -276,7 +276,556 @@ tests:
     expect: DENY
     expect_rule: "deny:mcp_tool:*:write_file"
 
+  - name: a Claude Code MCP copy tool is denied
+    hook: claude-code
+    input: {tool_name: mcp__fs__copy_file, tool_input: {source: secret.txt, destination: /tmp/secret.txt}}
+    expect: DENY
+    expect_rule: "deny:mcp_tool:*:copy_file"
+
+  - name: a Claude Code MCP append tool is denied
+    hook: claude-code
+    input: {tool_name: mcp__fs__append_file, tool_input: {path: notes.md, content: x}}
+    expect: DENY
+    expect_rule: "deny:mcp_tool:*:append_file"
+
   - name: a Claude Code MCP read tool is allowed
     hook: claude-code
     input: {tool_name: mcp__fs__read_text_file, tool_input: {path: notes.md}}
     expect: ALLOW
+
+  # --- Vanzik's control plane, config folder, hook files and process ---
+  # Rules against an agent approving its own actions, reading the API
+  # key, rewriting the policy, editing the hook settings or stopping
+  # the server. They match the plain forms of each command; the cases
+  # after them show everyday commands still pass.
+  - name: "Claude Code may not call the approve endpoint"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "curl -X POST http://localhost:8080/v1/approve/ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Claude Code may not approve with the saved API key"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "curl -s -X POST localhost:8080/v1/approve/ap_abc123 -H \"Authorization: Bearer $(cat ~/.config/vanzik/api-key)\""}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Claude Code may not call the deny endpoint"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "curl -X POST http://127.0.0.1:8080/v1/deny/ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Denying actions is for you"
+
+  - name: "Claude Code may not call a tenant's approve endpoint"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "curl -X POST http://localhost:8080/v1/t/acme/approve/ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Claude Code may not call a tenant's deny endpoint"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "curl -X POST http://localhost:8080/v1/t/acme/deny/ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Denying actions is for you"
+
+  - name: "Claude Code may not read the audit log through the server"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "curl -s 'http://localhost:8080/v1/audit?limit=50'"}}
+    expect: DENY
+    expect_reason_contains: "audit endpoint is off-limits"
+
+  - name: "Claude Code may not read a tenant's audit log through the server"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "curl -s http://localhost:8080/v1/t/acme/audit"}}
+    expect: DENY
+    expect_reason_contains: "audit endpoint is off-limits"
+
+  - name: "Claude Code may not run vanzik approve"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "vanzik approve ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Claude Code may not run vanzik approve by its full path"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "/usr/local/bin/vanzik approve ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Claude Code may not run vanzik deny"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "vanzik deny ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Denying actions is for you"
+
+  - name: "Claude Code may not run vanzik.exe approve"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "C:/Users/alice/bin/vanzik.exe approve ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Claude Code may not read the API key with cat"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "cat ~/.config/vanzik/api-key"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not read the API key through XDG_CONFIG_HOME"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "cat $XDG_CONFIG_HOME/vanzik/api-key"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's API key is off-limits"
+
+  - name: "Claude Code may not cat the policy in the config folder"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "cat ~/.config/vanzik/default.yaml"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not sed the policy in the config folder"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "sed -i s/DENY/ALLOW/ ~/.config/vanzik/default.yaml"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not redirect into the policy in the config folder"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "echo 'rules: []' > /home/alice/.config/vanzik/default.yaml"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not read the API key on Windows"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "type %APPDATA%\\vanzik\\api-key"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not pkill vanzik"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "pkill -f vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Claude Code may not killall vanzik"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "killall vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Claude Code may not kill the process pgrep finds for vanzik"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "kill -9 $(pgrep vanzik)"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Claude Code may not unload the macOS login service"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "launchctl bootout gui/501/com.lictorate.vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Claude Code may not stop the systemd service"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "systemctl --user stop vanzik.service"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Claude Code may not taskkill vanzik.exe"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "taskkill /F /IM vanzik.exe"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Claude Code may not redirect into the hook settings"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "echo '{}' > /home/alice/.claude/settings.json"}}
+    expect: DENY
+    expect_reason_contains: "hook settings"
+
+  - name: "Claude Code may kill a process by number"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "kill 1234"}}
+    expect: ALLOW
+
+  - name: "Claude Code may kill a process with a signal"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "kill -9 4321"}}
+    expect: ALLOW
+
+  - name: "Claude Code may pkill node"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "pkill node"}}
+    expect: ALLOW
+
+  - name: "Claude Code may killall a dev server"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "killall python3"}}
+    expect: ALLOW
+
+  - name: "Claude Code may taskkill another program"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "taskkill /F /IM node.exe"}}
+    expect: ALLOW
+
+  - name: "Claude Code may stop its own systemd service"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "systemctl --user stop myapp.service"}}
+    expect: ALLOW
+
+  - name: "Claude Code may list launchd jobs"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "launchctl list"}}
+    expect: ALLOW
+
+  - name: "Claude Code may curl a local dev server"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "curl -s http://localhost:3000/health"}}
+    expect: ALLOW
+
+  - name: "Claude Code may curl another API's v1 endpoint"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "curl -s https://api.example.com/v1/users"}}
+    expect: ALLOW
+
+  - name: "Claude Code may run the vanzik policy tests"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "go run ./cmd/vanzik test configs/tests"}}
+    expect: ALLOW
+
+  - name: "Claude Code may run vanzik status"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "vanzik status"}}
+    expect: ALLOW
+
+  - name: "Claude Code may commit a message that mentions vanzik approve"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "git commit -m \"docs: explain vanzik approve\""}}
+    expect: ALLOW
+
+  - name: "Claude Code may read other files under ~/.config"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "cat ~/.config/starship.toml"}}
+    expect: ALLOW
+
+  - name: "Claude Code may not write the policy in the config folder"
+    hook: claude-code
+    input: {tool_name: Write, tool_input: {file_path: "/home/alice/.config/vanzik/default.yaml", content: x}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not write the API key file"
+    hook: claude-code
+    input: {tool_name: Write, tool_input: {file_path: "/home/alice/.config/vanzik/api-key", content: x}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not write the policy in the Windows config folder"
+    hook: claude-code
+    input: {tool_name: Write, tool_input: {file_path: "C:/Users/alice/AppData/Roaming/vanzik/default.yaml", content: x}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not edit Claude Code's hook settings"
+    hook: claude-code
+    input: {tool_name: Write, tool_input: {file_path: "/home/alice/.claude/settings.json", content: x}}
+    expect: DENY
+    expect_reason_contains: "hook settings"
+
+  - name: "Claude Code may not edit Cursor's hook settings"
+    hook: claude-code
+    input: {tool_name: Write, tool_input: {file_path: "/home/alice/.cursor/hooks.json", content: x}}
+    expect: DENY
+    expect_reason_contains: "hook settings"
+
+  - name: "Claude Code may not edit Gemini CLI's hook settings"
+    hook: claude-code
+    input: {tool_name: Write, tool_input: {file_path: "/home/alice/.gemini/settings.json", content: x}}
+    expect: DENY
+    expect_reason_contains: "hook settings"
+
+  - name: "Claude Code may not edit Codex's hook settings"
+    hook: claude-code
+    input: {tool_name: Write, tool_input: {file_path: "/home/alice/.codex/hooks.json", content: x}}
+    expect: DENY
+    expect_reason_contains: "hook settings"
+
+  - name: "Claude Code may write a project's Claude command"
+    hook: claude-code
+    input: {tool_name: Write, tool_input: {file_path: "/home/alice/project/.claude/commands/review.md", content: x}}
+    expect: ALLOW
+
+  - name: "Claude Code may write a file in a folder named vanzik"
+    hook: claude-code
+    input: {tool_name: Write, tool_input: {file_path: "/home/alice/project/vanzik/main.go", content: x}}
+    expect: ALLOW
+
+  - name: "Claude Code may write another program's config"
+    hook: claude-code
+    input: {tool_name: Write, tool_input: {file_path: "/home/alice/.config/starship.toml", content: x}}
+    expect: ALLOW
+
+  - name: "Claude Code may not read the API key file"
+    hook: claude-code
+    input: {tool_name: Read, tool_input: {file_path: "/home/alice/.config/vanzik/api-key"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not read the policy in the config folder"
+    hook: claude-code
+    input: {tool_name: Read, tool_input: {file_path: "/home/alice/.config/vanzik/default.yaml"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not read the API key in the Windows config folder"
+    hook: claude-code
+    input: {tool_name: Read, tool_input: {file_path: "C:/Users/alice/AppData/Roaming/vanzik/api-key"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may read another program's config"
+    hook: claude-code
+    input: {tool_name: Read, tool_input: {file_path: "/home/alice/.config/starship.toml"}}
+    expect: ALLOW
+
+  - name: "Claude Code may read a file in a folder named vanzik"
+    hook: claude-code
+    input: {tool_name: Read, tool_input: {file_path: "/home/alice/project/vanzik/main.go"}}
+    expect: ALLOW
+
+  - name: "Claude Code may read Claude Code's settings"
+    hook: claude-code
+    input: {tool_name: Read, tool_input: {file_path: "/home/alice/.claude/settings.json"}}
+    expect: ALLOW
+
+  # --- Narrower matches: loopback endpoints, stop verbs, the config folder itself ---
+  # The endpoint rules name a loopback address; the cases below show other
+  # services' /v1/ paths, greps for them, and read-only service commands
+  # still pass.
+  - name: "Claude Code may not approve through 127.0.0.1"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "curl -X POST http://127.0.0.1:8080/v1/approve/ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Claude Code may not approve through [::1]"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "curl -X POST 'http://[::1]:8080/v1/approve/ap_abc123'"}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Claude Code may not deny through [::1]"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "curl -X POST http://[::1]:8080/v1/deny/ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Denying actions is for you"
+
+  - name: "Claude Code may not read the audit log through 127.0.0.1"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "curl -s http://127.0.0.1:8080/v1/audit"}}
+    expect: DENY
+    expect_reason_contains: "audit endpoint is off-limits"
+
+  - name: "Claude Code may not read the audit log through [::1]"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "curl -s http://[::1]:8080/v1/audit"}}
+    expect: DENY
+    expect_reason_contains: "audit endpoint is off-limits"
+
+  - name: "Claude Code may not approve a tenant's action through 127.0.0.1"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "curl -X POST http://127.0.0.1:8080/v1/t/acme/approve/ap_abc123"}}
+    expect: DENY
+    expect_reason_contains: "Approving actions is for you"
+
+  - name: "Claude Code may not read a tenant's audit log through [::1]"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "curl -s http://[::1]:8080/v1/t/acme/audit"}}
+    expect: DENY
+    expect_reason_contains: "audit endpoint is off-limits"
+
+  - name: "Claude Code may not ls the config folder"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "ls ~/.config/vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not ls the config folder with a trailing slash"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "ls -la ~/.config/vanzik/"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not read the API key on Windows with forward slashes"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "type C:/Users/alice/AppData/Roaming/vanzik/api-key"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik\'s API key is off-limits"
+
+  - name: "Claude Code may not systemctl kill vanzik"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "systemctl --user kill vanzik.service"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Claude Code may not systemctl disable vanzik"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "systemctl --user disable --now vanzik.service"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Claude Code may not systemctl mask vanzik"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "systemctl mask vanzik.service"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Claude Code may not systemctl stop vanzik without --user"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "systemctl stop vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Claude Code may not launchctl unload vanzik"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "launchctl unload -w ~/Library/LaunchAgents/com.lictorate.vanzik.plist"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Claude Code may not launchctl stop vanzik"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "launchctl stop com.lictorate.vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Claude Code may not launchctl remove vanzik"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "launchctl remove com.lictorate.vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Claude Code may not launchctl kill vanzik"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "launchctl kill SIGTERM gui/501/com.lictorate.vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Claude Code may not launchctl disable vanzik"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "launchctl disable gui/501/com.lictorate.vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Stopping Vanzik is off-limits"
+
+  - name: "Claude Code may curl another service's /v1/audit"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "curl -s https://api.stripe.com/v1/audit"}}
+    expect: ALLOW
+
+  - name: "Claude Code may curl another service's /v1/audit-logs"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "curl https://api.example.com/v1/audit-logs"}}
+    expect: ALLOW
+
+  - name: "Claude Code may POST to another service's /v1/approve"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "curl -X POST https://api.example.com/v1/approve/123"}}
+    expect: ALLOW
+
+  - name: "Claude Code may grep for /v1/approve/"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "grep -rn '/v1/approve/' docs/"}}
+    expect: ALLOW
+
+  - name: "Claude Code may rg for /v1/audit"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "rg '/v1/audit' pkg/"}}
+    expect: ALLOW
+
+  - name: "Claude Code may commit a message that names /v1/approve/"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "git commit -m 'document /v1/approve/ endpoint'"}}
+    expect: ALLOW
+
+  - name: "Claude Code may list launchd jobs and grep for vanzik"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "launchctl list | grep vanzik"}}
+    expect: ALLOW
+
+  - name: "Claude Code may check the vanzik service status"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "systemctl status vanzik"}}
+    expect: ALLOW
+
+  - name: "Claude Code may check the vanzik user service status"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "systemctl --user status vanzik"}}
+    expect: ALLOW
+
+  - name: "Claude Code may read a file next to the config folder"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "cat ~/.config/vanzik-notes"}}
+    expect: ALLOW
+
+  - name: "Claude Code may read a .md file named like the config folder"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "cat ~/.config/vanzik.md"}}
+    expect: ALLOW
+
+  - name: "Claude Code may read a Windows folder named like the config folder"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "type C:\\Users\\alice\\AppData\\Roaming\\vanzik-notes\\todo.txt"}}
+    expect: ALLOW
+
+  # --- The Windows config folder by itself, and with a lowercase variable name ---
+  - name: "Claude Code may not copy the Windows config folder with xcopy"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "xcopy /E %APPDATA%\\vanzik C:\\tmp"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not cd into the Windows config folder"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "cd %APPDATA%\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not cd /d into the Windows config folder"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "cd /d %APPDATA%\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not dir the Windows config folder"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "dir %APPDATA%\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not dir the Windows config folder spelled %AppData%"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "dir %AppData%\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not dir the Windows config folder with a forward slash"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "dir %APPDATA%/vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not dir the Windows config folder by its full path"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "dir C:\\Users\\u\\AppData\\Roaming\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not Get-ChildItem the Windows config folder"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "Get-ChildItem $env:APPDATA\\vanzik"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"
+
+  - name: "Claude Code may not read the API key spelled %appdata%"
+    hook: claude-code
+    input: {tool_name: Bash, tool_input: {command: "type %appdata%\\vanzik\\api-key"}}
+    expect: DENY
+    expect_reason_contains: "Vanzik's config folder"

@@ -16,6 +16,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"lictorate.com/vanzik/v2/pkg/metrics"
@@ -82,17 +83,10 @@ func (s *Server) forwardWithToolCallGating(
 	target.Path = joinPath(upstream.Path, path)
 	target.RawQuery = r.URL.RawQuery
 
-	var bodyReader io.Reader
-	if len(body) > 0 {
-		bodyReader = bytes.NewReader(body)
-	}
-	upstreamReq, err := http.NewRequestWithContext(ctx, r.Method, target.String(), bodyReader)
+	upstreamReq, err := newUpstreamRequest(ctx, r.Method, &target, upstream.Host, r.Header, body)
 	if err != nil {
 		return fmt.Errorf("build upstream request: %w", err)
 	}
-	copyForwardableHeaders(r.Header, upstreamReq.Header)
-	rewriteUserAgent(upstreamReq.Header, r.Header.Get("User-Agent"))
-	upstreamReq.Host = upstream.Host
 
 	resp, err := s.httpClient.Do(upstreamReq)
 	if err != nil {
@@ -111,6 +105,19 @@ func (s *Server) forwardWithToolCallGating(
 		if _, copyErr := io.Copy(w, resp.Body); copyErr != nil {
 			return fmt.Errorf("copy upstream error body: %w", copyErr)
 		}
+		return nil
+	}
+
+	// The request dropped Accept-Encoding, so net/http asked for gzip
+	// itself and decoded it. A Content-Encoding still on the response
+	// is one the proxy cannot decode (br, zstd, stacked, or an upstream
+	// that ignored the request): the body cannot be inspected and the
+	// client would decode and run it, so refuse.
+	if enc := undecodedContentEncoding(resp.Header); enc != "" {
+		metrics.IncLLMProxyUndecodableContentEncoding(provider)
+		decision := undecodableEncodingDecision(provider, enc)
+		s.auditNonStreamingRefusal(r, provider, reqModel, decision)
+		writeNonStreamingRefusal(s, w, resp.Header, provider, decision, ToolCallCheck{Provider: provider}, reqModel)
 		return nil
 	}
 
@@ -133,6 +140,7 @@ func (s *Server) forwardWithToolCallGating(
 			Reason: fmt.Sprintf("upstream non-streaming response exceeds gating buffer (--max-buffer-bytes=%d)", cap),
 			Rule:   "deny:llm_api_proxy:non_streaming_buffer_overflow",
 		}
+		s.auditNonStreamingRefusal(r, provider, reqModel, decision)
 		writeNonStreamingRefusal(s, w, resp.Header, provider, decision, ToolCallCheck{Provider: provider}, reqModel)
 		return nil
 	}
@@ -149,8 +157,8 @@ func (s *Server) forwardWithToolCallGating(
 		if err := json.Unmarshal(bodyBytes, &parsed); err != nil {
 			if hasLenientToolCall(bodyBytes, "openai") {
 				metrics.IncLLMProxyUndecodableToolCall("openai")
-				s.auditUndecodableToolCall(r, "openai", reqModel)
 				decision := undecodableToolCallDecision("openai")
+				s.auditNonStreamingRefusal(r, "openai", reqModel, decision)
 				writeNonStreamingRefusal(s, w, resp.Header, "openai", decision, ToolCallCheck{Provider: "openai"}, reqModel)
 				return nil
 			}
@@ -167,8 +175,8 @@ func (s *Server) forwardWithToolCallGating(
 		if err := json.Unmarshal(bodyBytes, &parsed); err != nil {
 			if hasLenientToolCall(bodyBytes, "anthropic") {
 				metrics.IncLLMProxyUndecodableToolCall("anthropic")
-				s.auditUndecodableToolCall(r, "anthropic", reqModel)
 				decision := undecodableToolCallDecision("anthropic")
+				s.auditNonStreamingRefusal(r, "anthropic", reqModel, decision)
 				writeNonStreamingRefusal(s, w, resp.Header, "anthropic", decision, ToolCallCheck{Provider: "anthropic"}, reqModel)
 				return nil
 			}
@@ -211,6 +219,8 @@ func writeNonStreamingRefusal(
 	// The refusal's length differs from the upstream body's.
 	copyForwardableHeaders(srcHeader, w.Header())
 	w.Header().Del("Content-Length")
+	// The refusal is plain JSON whatever the upstream body was.
+	w.Header().Del("Content-Encoding")
 	if w.Header().Get("Content-Type") == "" {
 		w.Header().Set("Content-Type", "application/json")
 	}
@@ -363,19 +373,10 @@ func (s *Server) forwardTo(ctx context.Context, w http.ResponseWriter, r *http.R
 	target.Path = joinPath(upstream.Path, path)
 	target.RawQuery = r.URL.RawQuery
 
-	var bodyReader io.Reader
-	if len(body) > 0 {
-		bodyReader = bytes.NewReader(body)
-	}
-	req, err := http.NewRequestWithContext(ctx, r.Method, target.String(), bodyReader)
+	req, err := newUpstreamRequest(ctx, r.Method, &target, upstream.Host, r.Header, body)
 	if err != nil {
 		return fmt.Errorf("build upstream request: %w", err)
 	}
-
-	copyForwardableHeaders(r.Header, req.Header)
-	rewriteUserAgent(req.Header, r.Header.Get("User-Agent"))
-
-	req.Host = upstream.Host
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -415,6 +416,58 @@ func copyForwardableHeaders(src, dst http.Header) {
 		for _, v := range vs {
 			dst.Add(k, v)
 		}
+	}
+}
+
+// newUpstreamRequest builds the request every proxy forwarder sends
+// upstream: client headers minus hop-by-hop ones, with Accept-Encoding
+// dropped so net/http negotiates gzip itself and hands back a decoded
+// body with Content-Encoding and Content-Length removed. Forwarding
+// the client's own Accept-Encoding (br, zstd, ...) turns the transport's
+// transparent decoding off and leaves the gate holding bytes it cannot
+// parse while the client decodes and runs them.
+func newUpstreamRequest(ctx context.Context, method string, target *url.URL, host string, src http.Header, body []byte) (*http.Request, error) {
+	var bodyReader io.Reader
+	if len(body) > 0 {
+		bodyReader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, target.String(), bodyReader)
+	if err != nil {
+		return nil, err
+	}
+	copyForwardableHeaders(src, req.Header)
+	req.Header.Del("Accept-Encoding")
+	rewriteUserAgent(req.Header, src.Get("User-Agent"))
+	req.Host = host
+	return req, nil
+}
+
+// undecodedContentEncoding returns the Content-Encoding value on h
+// (all header lines, joined) when any token in it is not "identity",
+// or "" when the body is plain.
+func undecodedContentEncoding(h http.Header) string {
+	vals := h.Values("Content-Encoding")
+	for _, v := range vals {
+		for _, tok := range strings.Split(v, ",") {
+			tok = strings.ToLower(strings.TrimSpace(tok))
+			if tok != "" && tok != "identity" {
+				return strings.Join(vals, ", ")
+			}
+		}
+	}
+	return ""
+}
+
+// undecodableEncodingDecision is the verdict for a 2xx response the
+// proxy cannot decode. Like undecodableToolCallDecision it ignores
+// --fail-mode: that covers an unreachable guard, not one that cannot
+// read the response.
+func undecodableEncodingDecision(provider, enc string) Decision {
+	return Decision{
+		Allow: false,
+		Reason: "upstream " + provider + " response has Content-Encoding " + strconv.Quote(enc) +
+			" which the proxy cannot decode; refused rather than forwarded ungated",
+		Rule: "deny:llm_api_proxy:undecodable_content_encoding",
 	}
 }
 
