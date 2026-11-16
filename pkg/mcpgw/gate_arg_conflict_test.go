@@ -223,6 +223,14 @@ func TestGatewayGate_OneArgumentChecked_KnownGap(t *testing.T) {
 			func(a policy.ActionRequest) string { return a.Command }, "ls"},
 		{"uri host beats domain", "fetch:get", map[string]interface{}{"uri": "https://ok.example/", "domain": "evil.example"},
 			func(a policy.ActionRequest) string { return a.Domain }, "ok.example"},
+		{"notebook_path beats dst", "fs:copy_file", map[string]interface{}{"notebook_path": "/tmp/x", "dst": "/etc/passwd"},
+			func(a policy.ActionRequest) string { return a.Path }, "/tmp/x"},
+		{"filename beats destination", "fs:copy_file", map[string]interface{}{"filename": "/tmp/x", "destination": "/etc/passwd"},
+			func(a policy.ActionRequest) string { return a.Path }, "/tmp/x"},
+		{"endpoint host beats host", "fetch:get", map[string]interface{}{"endpoint": "https://ok.example/", "host": "evil.example"},
+			func(a policy.ActionRequest) string { return a.Domain }, "ok.example"},
+		{"target_url host beats domain (browser)", "web:open", map[string]interface{}{"target_url": "https://ok.example/", "domain": "evil.example"},
+			func(a policy.ActionRequest) string { return a.Domain }, "ok.example"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
