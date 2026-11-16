@@ -115,6 +115,9 @@ type HTTPPolicyClient struct {
 	// denials made while the central server is unreachable. nil (the
 	// other fail modes, or --fail-audit-log "") records nothing.
 	fallback *gateclient.FallbackAuditWriter
+
+	// argsDigestKey keys meta["args_digest"] (gateclient.NewArgsDigestKey).
+	argsDigestKey [32]byte
 }
 
 // NewHTTPPolicyClient constructs a gate against cfg + an initial
@@ -122,12 +125,13 @@ type HTTPPolicyClient struct {
 // provider's Watch and call SetPolicy on every reload.
 func NewHTTPPolicyClient(cfg *Config, pol *policy.Policy) *HTTPPolicyClient {
 	c := &HTTPPolicyClient{
-		GuardURL:   cfg.GuardURL,
-		APIKey:     cfg.APIKey,
-		TenantID:   cfg.TenantID,
-		PolicyMode: cfg.PolicyMode,
-		FailMode:   cfg.FailMode,
-		HTTPClient: &http.Client{Timeout: DefaultGuardHTTPTimeout},
+		GuardURL:      cfg.GuardURL,
+		APIKey:        cfg.APIKey,
+		TenantID:      cfg.TenantID,
+		PolicyMode:    cfg.PolicyMode,
+		FailMode:      cfg.FailMode,
+		HTTPClient:    &http.Client{Timeout: DefaultGuardHTTPTimeout},
+		argsDigestKey: gateclient.NewArgsDigestKey(cfg.APIKey),
 	}
 	if cfg.FailMode == "fail-closed-with-audit" {
 		c.fallback = gateclient.NewFallbackAuditWriter(cfg.FailAuditLog)
@@ -180,7 +184,7 @@ func (c *HTTPPolicyClient) Check(ctx context.Context, req *ToolsCallRequest) (De
 		AgentID:    req.AgentID,
 		SessionID:  req.SessionID,
 		Command:    req.FullName,
-		Meta:       buildMcpMeta(req),
+		Meta:       buildMcpMeta(req, c.argsDigestKey[:]),
 		ApprovalID: req.ApprovalID,
 	}
 	decMCP, err := c.callV1Check(ctx, mcpAR)
@@ -197,7 +201,7 @@ func (c *HTTPPolicyClient) Check(ctx context.Context, req *ToolsCallRequest) (De
 		return decMCP, nil
 	}
 
-	for _, mappedAR := range mappedActionRequests(req, mappedScope) {
+	for _, mappedAR := range mappedActionRequests(req, mappedScope, c.argsDigestKey[:]) {
 		decMapped, err := c.callV1Check(ctx, mappedAR)
 		if err != nil {
 			return c.failModeDecision(mappedAR, err), nil
@@ -228,7 +232,7 @@ const MetaGatewayConnectionKey = "gateway_connection"
 // match on them via meta-aware patterns; secrets are redacted by the
 // downstream notify Redactor before the value lands in the audit log
 // (see docs/MCP_GATEWAY.md § 5).
-func buildMcpMeta(req *ToolsCallRequest) map[string]string {
+func buildMcpMeta(req *ToolsCallRequest, digestKey []byte) map[string]string {
 	out := map[string]string{
 		"namespace": req.Namespace,
 		"tool_name": req.ToolName,
@@ -254,6 +258,11 @@ func buildMcpMeta(req *ToolsCallRequest) map[string]string {
 			}
 		}
 	}
+	// The bytes the bridge forwards upstream on ALLOW, so an approval
+	// covers exactly what the tool receives. A Marshal error fails the
+	// forward too, so that call never runs.
+	forwarded, _ := json.Marshal(req.Arguments)
+	out[gateclient.MetaArgsDigestKey] = gateclient.ArgsDigest(digestKey, req.FullName, forwarded)
 	return out
 }
 
@@ -262,12 +271,12 @@ func buildMcpMeta(req *ToolsCallRequest) map[string]string {
 // operator's mcp_tool rules are the primary signal; the mapped scope
 // is a secondary safety net that catches dangerous arguments via the
 // existing scope rules without requiring duplicate mcp_tool rules.
-func buildMappedActionRequest(req *ToolsCallRequest, mappedScope string) policy.ActionRequest {
+func buildMappedActionRequest(req *ToolsCallRequest, mappedScope string, digestKey []byte) policy.ActionRequest {
 	ar := policy.ActionRequest{
 		Scope:      mappedScope,
 		AgentID:    req.AgentID,
 		SessionID:  req.SessionID,
-		Meta:       buildMcpMeta(req),
+		Meta:       buildMcpMeta(req, digestKey),
 		ApprovalID: req.ApprovalID,
 	}
 
@@ -337,8 +346,8 @@ func buildMappedActionRequest(req *ToolsCallRequest, mappedScope string) policy.
 // one for a single path argument if it has one, so a denied file can't
 // ride along with allowed ones. A non-string entry is checked with an
 // empty path. Every other call gets the one buildMappedActionRequest check.
-func mappedActionRequests(req *ToolsCallRequest, mappedScope string) []policy.ActionRequest {
-	base := buildMappedActionRequest(req, mappedScope)
+func mappedActionRequests(req *ToolsCallRequest, mappedScope string, digestKey []byte) []policy.ActionRequest {
+	base := buildMappedActionRequest(req, mappedScope, digestKey)
 	if mappedScope != "filesystem" {
 		return []policy.ActionRequest{base}
 	}
@@ -409,7 +418,7 @@ func (c *HTTPPolicyClient) denyArgConflict(ctx context.Context, req *ToolsCallRe
 		UserAgent:  "vanzik-mcp-gateway/" + GatewayBuildVersion,
 		HTTPClient: c.HTTPClient,
 	}
-	if err := caller.RecordForcedAudit(ctx, buildMappedActionRequest(req, mappedScope), d.Reason, d.Rule); err != nil {
+	if err := caller.RecordForcedAudit(ctx, buildMappedActionRequest(req, mappedScope, c.argsDigestKey[:]), d.Reason, d.Rule); err != nil {
 		log.Printf("vanzik-mcp-gateway: forced-audit record failed (refusal unaffected): %v", err)
 	}
 	return d

@@ -43,11 +43,11 @@ func TestBridge_ToolCallsCarryTheGatewayConnection(t *testing.T) {
 
 func TestBuildMcpMeta_GatewayConnection(t *testing.T) {
 	req := toolsCallReq("fs:read_file", map[string]interface{}{"gateway_connection": "spoof"})
-	if _, ok := buildMcpMeta(req)[MetaGatewayConnectionKey]; ok {
+	if _, ok := buildMcpMeta(req, nil)[MetaGatewayConnectionKey]; ok {
 		t.Error("meta has gateway_connection without a connection id")
 	}
 	req.ConnectionID = "0123456789abcdef"
-	meta := buildMcpMeta(req)
+	meta := buildMcpMeta(req, nil)
 	if meta[MetaGatewayConnectionKey] != "0123456789abcdef" {
 		t.Errorf("gateway_connection = %q", meta[MetaGatewayConnectionKey])
 	}

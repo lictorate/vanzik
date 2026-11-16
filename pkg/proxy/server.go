@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"lictorate.com/vanzik/v2/pkg/audit"
+	"lictorate.com/vanzik/v2/pkg/internal/gateclient"
 	"lictorate.com/vanzik/v2/pkg/metrics"
 	"lictorate.com/vanzik/v2/pkg/notify"
 	"lictorate.com/vanzik/v2/pkg/policy"
@@ -683,7 +684,7 @@ func (s *Server) handleCheck(w http.ResponseWriter, r *http.Request) {
 			// turning the endpoint into an oracle.
 			if !matchesOriginalRequest(req, pa.Request) {
 				metrics.IncApprovalReplayMismatch()
-				log.Printf("approval_id %q replayed against mismatched action: agent=%q vs %q, scope=%q vs %q, command=%q vs %q, path=%q vs %q, domain=%q vs %q, url=%q vs %q, action=%q vs %q (falling through to fresh policy evaluation)",
+				log.Printf("approval_id %q replayed against mismatched action: agent=%q vs %q, scope=%q vs %q, command=%q vs %q, path=%q vs %q, domain=%q vs %q, url=%q vs %q, action=%q vs %q, args_digest=%s (falling through to fresh policy evaluation)",
 					req.ApprovalID,
 					req.AgentID, pa.Request.AgentID,
 					req.Scope, pa.Request.Scope,
@@ -692,6 +693,7 @@ func (s *Server) handleCheck(w http.ResponseWriter, r *http.Request) {
 					req.Domain, pa.Request.Domain,
 					req.URL, pa.Request.URL,
 					req.Action, pa.Request.Action,
+					argsDigestOutcome(req.Meta, pa.Request.Meta),
 				)
 				// Intentional fall-through: do NOT short-circuit, do NOT
 				// 4xx. Normal Engine.Check runs below.
@@ -919,6 +921,11 @@ func (s *Server) logAndRespond(w http.ResponseWriter, req policy.ActionRequest, 
 //	URL      — network scope identity (full-URL rules).
 //	Action   — Action+Paths style filesystem rules and any scope that
 //	           authorises by named action.
+//	meta["args_digest"] — the gates' keyed digest of the full tool
+//	           arguments (gateclient.ArgsDigest). The fields above are
+//	           projections that leave most arguments out and carry
+//	           others redacted. Bound only when the original carries
+//	           one: SDK callers send none and keep the field binding.
 //
 // NOT compared (legitimately drift across retries):
 //
@@ -926,9 +933,9 @@ func (s *Server) logAndRespond(w http.ResponseWriter, req policy.ActionRequest, 
 //	            invalidating an in-flight approval.
 //	EstCost   — cost-scoped retries recompute cost; binding it would
 //	            send every cost retry back for re-approval.
-//	Meta      — transport tags and trace ids are diagnostic, not
-//	            authorising; binding them would couple the security
-//	            check to telemetry.
+//	Meta      — apart from args_digest, transport tags and trace ids
+//	            are diagnostic, not authorising; binding them would
+//	            couple the security check to telemetry.
 //
 // SchemaVersion is validated earlier in handleCheck; ApprovalID is the
 // lookup key.
@@ -939,7 +946,34 @@ func matchesOriginalRequest(retry policy.ActionRequest, original policy.ActionRe
 		retry.Path == original.Path &&
 		retry.Domain == original.Domain &&
 		retry.URL == original.URL &&
-		retry.Action == original.Action
+		retry.Action == original.Action &&
+		argsDigestHonoured(argsDigestOutcome(retry.Meta, original.Meta))
+}
+
+// Outcomes of comparing a retry's args_digest with the original's. The
+// mismatch log names the outcome, never the digests.
+const (
+	argsDigestUnbound   = "unbound"   // original has none
+	argsDigestEqual     = "equal"     // retry has the same one
+	argsDigestMissing   = "missing"   // retry has none
+	argsDigestDifferent = "different" // retry has another
+)
+
+func argsDigestOutcome(retry, original map[string]string) string {
+	want, got := original[gateclient.MetaArgsDigestKey], retry[gateclient.MetaArgsDigestKey]
+	switch {
+	case want == "":
+		return argsDigestUnbound
+	case got == "":
+		return argsDigestMissing
+	case got != want:
+		return argsDigestDifferent
+	}
+	return argsDigestEqual
+}
+
+func argsDigestHonoured(outcome string) bool {
+	return outcome == argsDigestUnbound || outcome == argsDigestEqual
 }
 
 // resolvedApprovalToResult converts a PendingAction (resolved or not)
@@ -2297,6 +2331,7 @@ var dashboardHTML = `<!DOCTYPE html>
     .pending-item { background: #1a1500; border: 1px solid #332800; border-radius: 8px; padding: 14px; margin-bottom: 10px; }
     .pending-item .info { font-size: 13px; margin-bottom: 8px; }
     .pending-item .scope-badge { background: #222; color: #fbbf24; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+    .pending-item .args { font-family: 'SF Mono', monospace; font-size: 11px; color: #ccc; margin-top: 6px; max-height: 160px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
     .transport-chip { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-family: 'SF Mono', monospace; color: white; margin-right: 8px; vertical-align: baseline; }
     .transport-chip.sdk { background: #6c757d; }
     .transport-chip.mcp_gateway { background: #0ea5e9; }
@@ -2516,6 +2551,21 @@ var dashboardHTML = `<!DOCTYPE html>
           meta.textContent = 'Agent: ' + (item.request.agent_id || 'unknown') +
             ' \u2022 ' + new Date(item.created_at).toLocaleTimeString();
           div.appendChild(meta);
+
+          // The approval is bound to the full arguments, so show them;
+          // /api/pending serves them redacted. Agent-written: text only.
+          const reqMeta = item.request.meta || {};
+          const argKeys = Object.keys(reqMeta).filter(k => k.startsWith('arg_')).sort();
+          if (argKeys.length > 0) {
+            const args = document.createElement('div');
+            args.className = 'args';
+            argKeys.forEach(k => {
+              const row = document.createElement('div');
+              row.textContent = k.slice(4) + ': ' + reqMeta[k];
+              args.appendChild(row);
+            });
+            div.appendChild(args);
+          }
 
           const actions = document.createElement('div');
           actions.className = 'actions';
