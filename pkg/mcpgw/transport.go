@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -129,8 +130,9 @@ type StdioUpstream struct {
 	writeMu sync.Mutex
 
 	// onNotification, when non-nil, receives the method of every
-	// unsolicited notification frame from the upstream. Dispatched on
-	// a fresh goroutine by the stdout reader.
+	// unsolicited notification frame from the upstream. It is the
+	// coalesceNotifications wrapper, so the stdout reader can call it
+	// directly: it never blocks.
 	onNotification func(method string)
 
 	closeOnce sync.Once
@@ -186,10 +188,13 @@ type StdioUpstreamOptions struct {
 	CommandFactory CommandFactory
 	Logger         *transportLogger
 
-	// OnNotification is invoked (on its own goroutine, so a slow
-	// consumer cannot stall the stdout reader) for every unsolicited
-	// notification frame the upstream emits. The bridge uses it to
-	// forward notifications/tools/list_changed to the host. nil drops
+	// OnNotification is invoked (off the stdout reader's goroutine, so a
+	// slow consumer cannot stall it) for the unsolicited notification
+	// frames the upstream emits. Notifications are coalesced: calls are
+	// serialised, and a method already waiting for delivery is not
+	// delivered twice, so a flooding server cannot grow the gateway's
+	// memory. The bridge uses it to forward
+	// notifications/tools/list_changed to the host. nil drops
 	// notifications.
 	OnNotification func(method string)
 }
@@ -218,7 +223,7 @@ func NewStdioUpstreamWithOptions(spec UpstreamSpec, opts StdioUpstreamOptions) *
 		done:           make(chan struct{}),
 		backoff:        backoff,
 		commandFactory: factory,
-		onNotification: opts.OnNotification,
+		onNotification: coalesceNotifications(opts.OnNotification),
 	}
 }
 
@@ -377,7 +382,7 @@ func (u *StdioUpstream) readLoop(r io.Reader) {
 		var note Notification
 		if err := json.Unmarshal(line, &note); err == nil && note.Method != "" {
 			if u.onNotification != nil {
-				go u.onNotification(note.Method)
+				u.onNotification(note.Method)
 				continue
 			}
 			u.logger.Debugf("upstream %q: notification %q dropped (no sink)", u.spec.Namespace, note.Method)
@@ -444,6 +449,56 @@ func frameMethod(line []byte) string {
 		return ""
 	}
 	return probe.Method
+}
+
+// maxPendingNotifications caps the distinct notification methods
+// waiting for delivery from one upstream.
+const maxPendingNotifications = 16
+
+// coalesceNotifications wraps an OnNotification callback so that a
+// server flooding notifications can neither grow the gateway's memory
+// (one goroutine per frame, each blocked on the host's stdout) nor
+// flood the host. The returned func never blocks: methods are handed
+// to fn in order on at most one goroutine at a time, a method already
+// waiting is not queued again, and at most maxPendingNotifications
+// distinct methods wait. Dropping a repeat is safe because the bridge
+// forwards only tools/list_changed, a "re-pull the list" hint. nil
+// returns nil.
+func coalesceNotifications(fn func(method string)) func(method string) {
+	if fn == nil {
+		return nil
+	}
+	var (
+		mu      sync.Mutex
+		pending []string
+		running bool
+	)
+	drain := func() {
+		for {
+			mu.Lock()
+			if len(pending) == 0 {
+				running = false
+				mu.Unlock()
+				return
+			}
+			method := pending[0]
+			pending = pending[1:]
+			mu.Unlock()
+			fn(method)
+		}
+	}
+	return func(method string) {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(pending) >= maxPendingNotifications || slices.Contains(pending, method) {
+			return
+		}
+		pending = append(pending, method)
+		if !running {
+			running = true
+			go drain()
+		}
+	}
 }
 
 // safeSend pushes resp into ch without panicking if ch is closed.
