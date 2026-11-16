@@ -20,7 +20,7 @@ vanzik setup
 Choose **Connect Claude Code** (or Cursor, Gemini CLI, Codex CLI). The item shows when the agent looks installed: its settings folder exists or its command is on your `PATH`. Setup asks two things:
 
 1. **If your policy has no rules for the agent**, whether to add them (see [The policy](#the-policy)).
-2. **If Vanzik isn't running**: let calls through with a warning (the default), or block them. See [Failing open or closed](#failing-open-or-closed).
+2. **If Vanzik isn't running**: block them (preselected for a new connection), or let calls through with a warning. See [Failing open or closed](#failing-open-or-closed).
 
 It then adds Vanzik's entry to the agent's user settings, so every project is covered, and keeps the old file as `<file>.vanzik-backup`. Everything else in the file stays as it was. New sessions of the agent pick it up. **Disconnect** in the same menu removes the entry, and uninstalling Vanzik removes every agent's entry.
 
@@ -33,7 +33,7 @@ It then adds Vanzik's entry to the agent's user settings, so every project is co
 | **ALLOW** | Carries on. Claude Code, Gemini CLI and Codex get no answer at all, so their own permission rules and prompts still apply: Vanzik only takes permissions away. Cursor needs an answer from every permission hook, so it gets `{"permission":"allow"}`; Cursor's docs don't say whether that skips Cursor's own approval prompts. |
 | **DENY** | Blocks the call. The agent sees the reason, e.g. *Vanzik blocked this: Keys and cloud credentials are off-limits to Claude Code (rule deny:filesystem:read)*. |
 | **REQUIRE_APPROVAL** | Waits up to 5 minutes for someone to approve it — in the dashboard (`http://127.0.0.1:8080/dashboard`), with `vanzik approve <id>`, or through a notifier your policy sets up. Approved, the call runs and is audited as approved; denied or unanswered, it's blocked and the agent is told why. |
-| *No answer* (server not running, wrong API key, input the hook can't read) | Fail-open (the default): the call goes ahead with a warning that it wasn't checked. Fail-closed: the call is blocked. |
+| *No answer* (server not running, input the hook can't read, a wrong API key while an approval is pending) | Fail-open (the hook's default): the call goes ahead with a warning that it wasn't checked. Fail-closed: the call is blocked. |
 
 While a call waits for approval, the agent shows the hook running; keep the dashboard open or set up a notifier. Setup gives the hook 330 seconds (330000 ms for Gemini CLI, which counts milliseconds), longer than the 5-minute wait: the agents let a call through when a hook runs out of time, so the hook always answers first.
 
@@ -41,13 +41,13 @@ When one call stands for several checks — a Codex patch that touches three fil
 
 ## Failing open or closed
 
-By default a hook that can't get a verdict lets the call through with a warning, so the agent keeps working when the server is stopped. With `--fail-closed` on the hook's command — what setup writes when you choose **Block them** — such a call is blocked instead, with the reason and rule `deny:hook:fail_closed`:
+Without `--fail-closed` (the hook command's own default, and what setup writes when you choose **Let calls through with a warning**) a hook that can't get a verdict lets the call through with a warning, so the agent keeps working when the server is stopped. With `--fail-closed` on the hook's command — what setup preselects for a new connection and writes when you choose **Block them** — such a call is blocked instead, with the reason and rule `deny:hook:fail_closed`:
 
 ```
 Vanzik blocked this Bash call because it couldn't check it: can't reach it at http://localhost:8080 (connection refused). Start the server with 'vanzik setup', then ask Claude to try again. (rule deny:hook:fail_closed)
 ```
 
-That covers the server being down or slow to answer, a rejected API key, an approval that can't be finished, and input the hook can't read. For Cursor, setup also sets Cursor's own `failClosed: true`, so a hook that crashes or times out blocks the call too. The other agents let a call through when the hook itself crashes or times out, whatever the flag says.
+That covers the server being down or slow to answer, a rejected API key (only an approval-gated call hits this: `/v1/check` itself needs no key, but waiting for the approval does), an approval that can't be finished, and input the hook can't read. For Cursor, setup also sets Cursor's own `failClosed: true`, so a hook that crashes or times out blocks the call too. The other agents let a call through when the hook itself crashes or times out, whatever the flag says.
 
 Choose fail-closed when an unchecked call is worse than a stalled agent. To switch modes, connect the agent again and choose the other answer (and, for Codex, trust the changed hook under `/hooks`).
 

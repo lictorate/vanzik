@@ -571,13 +571,15 @@ func (s *setup) connectAgent(a agentIntegration) (bool, int) {
 			s.ok("Policy", "added the "+a.name+" rules to "+s.state.Policy+" (the old file is kept as .vanzik-backup)")
 		}
 	}
-	def := 0
-	if connected, failClosed := a.connected(); connected && failClosed {
-		def = 1
+	// A new connection preselects blocking; reconnecting keeps the mode the
+	// agent is already set to, so a deliberate fail-open choice survives.
+	def := 1
+	if connected, failClosed := a.connected(); connected && !failClosed {
+		def = 0
 	}
 	i, err := s.ui.Select("If Vanzik isn't running", []tui.Option{
-		{Label: "Let calls through with a warning", Hint: "default: " + a.name + " keeps working, unchecked"},
-		{Label: "Block them", Hint: "nothing runs unchecked; " + a.name + " can't use its tools until the server is back"},
+		{Label: "Let calls through with a warning", Hint: a.name + " keeps working, unchecked"},
+		{Label: "Block them", Hint: "recommended: nothing runs unchecked; " + a.name + " can't use its tools until the server is back"},
 	}, def)
 	if err != nil || i == tui.Back {
 		return back()
