@@ -457,7 +457,7 @@ Per-request gating metrics are emitted on the **central server's**
 
 The `vanzik_llmproxy_*` series are counted in the proxy's own process,
 which serves no `/metrics` endpoint. Because `pkg/metrics` is one
-shared registry, the central server's `/metrics` does list all six
+shared registry, the central server's `/metrics` does list all seven
 series, but always at 0: nothing in the server process increments
 them. Don't alert on them. Observable proxy behaviour (denials,
 overflows surfacing as denials) lands in the central server's audit

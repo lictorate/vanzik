@@ -82,7 +82,7 @@ Bucket boundaries are treated as a stable contract. Re-bucketing invalidates his
 
 **Neither proxy binary exposes `/metrics`.** The LLM API Proxy serves only its API routes plus `GET /healthz`; the MCP Gateway is a stdio bridge with no HTTP surface at all. Per-request gating metrics for both flow through the **central server's** `/metrics`, distinguished in the audit stream by `Entry.Transport` (`llm_api_proxy` / `mcp_gateway`). See [`PROXY_ARCHITECTURE.md`](PROXY_ARCHITECTURE.md) §8.
 
-The LLM proxy additionally records these series in its own process (`pkg/metrics`), which serves no `/metrics`. Because the registry is shared code, the central server's `/metrics` lists all six too, but they never move there: the two unlabelled ones read `0` and the four `provider` counters have no samples, because the counting happens in the proxy process, not the server. **Don't alert on them** — such an alert never fires. They matter only to code embedding the proxy in-process (they are listed here so the names stay reserved):
+The LLM proxy additionally records these series in its own process (`pkg/metrics`), which serves no `/metrics`. Because the registry is shared code, the central server's `/metrics` lists all seven too, but they never move there: the two unlabelled ones read `0` and the five `provider` counters have no samples, because the counting happens in the proxy process, not the server. **Don't alert on them** — such an alert never fires. They matter only to code embedding the proxy in-process (they are listed here so the names stay reserved):
 
 | Name | Type | Labels | Meaning |
 |---|---|---|---|
@@ -92,6 +92,7 @@ The LLM proxy additionally records these series in its own process (`pkg/metrics
 | `vanzik_llmproxy_non_streaming_overflow_total` | counter | `provider` | Same, for non-streaming responses. |
 | `vanzik_llmproxy_protocol_violation_total` | counter | `provider` | Streams refused fail-closed because the upstream's tool-call structure could not be bound to a gateable call: interleaved or conflicting `tool_use` blocks, tool input arriving with no block open, or tool calls spread across several OpenAI choices. The client-visible rule string names which — see `docs/LLM_API_PROXY.md` §5.4. |
 | `vanzik_llmproxy_undecodable_tool_call_total` | counter | `provider` | Non-streaming responses refused fail-closed because the body failed strict decode yet still carried a tool call a lenient client SDK would have executed ungated. Non-zero usually means an OpenAI-compatible shim is emitting a wrong-typed field. |
+| `vanzik_llmproxy_undecodable_content_encoding_total` | counter | `provider` | 2xx responses refused fail-closed because they still carried a `Content-Encoding` (`br`, `zstd`, `deflate`, stacked, or unrequested) after the proxy's gzip decoding, so the gate could not read the tool calls. Streaming and non-streaming. |
 
 The MCP gateway emits no metrics of its own; its decisions surface in the central server's audit stream and counters.
 

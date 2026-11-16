@@ -9,7 +9,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -343,5 +345,87 @@ func TestReadLoop_ServerInitiatedRequestLogLevel(t *testing.T) {
 		[]byte(`{"jsonrpc":"2.0","id":9,"result":{}}` + "\n")))
 	if strayBuf.Len() != 0 {
 		t.Errorf("stray response should stay at Debug (suppressed at info); got:\n%s", strayBuf.String())
+	}
+}
+
+// A server flooding notifications while the host is not reading must
+// not queue one goroutine (or one host frame) per notification: repeats
+// of a waiting method coalesce, and the queue is capped.
+func TestCoalesceNotificationsBoundsAFlood(t *testing.T) {
+	release := make(chan struct{})
+	var mu sync.Mutex
+	var got []string
+	notify := coalesceNotifications(func(method string) {
+		<-release // the host's stdout is full
+		mu.Lock()
+		got = append(got, method)
+		mu.Unlock()
+	})
+	before := runtime.NumGoroutine()
+	for i := 0; i < 100000; i++ {
+		notify(NotificationToolsListChanged)
+	}
+	for i := 0; i < 100; i++ {
+		notify(fmt.Sprintf("notifications/x%d", i))
+	}
+	if n := runtime.NumGoroutine() - before; n > 1 {
+		t.Fatalf("flood started %d goroutines; want at most 1", n)
+	}
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		mu.Lock()
+		n := len(got)
+		mu.Unlock()
+		// The first list_changed is in fn when the rest arrive; then at
+		// most maxPendingNotifications wait.
+		if n == 1+maxPendingNotifications {
+			break
+		}
+		if n > 1+maxPendingNotifications || time.Now().After(deadline) {
+			t.Fatalf("delivered %d notifications; want %d", n, 1+maxPendingNotifications)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if got[0] != NotificationToolsListChanged || got[1] != NotificationToolsListChanged {
+		t.Fatalf("got %q first; want list_changed delivered, then one coalesced copy queued", got[:2])
+	}
+
+	// Once drained, a new notification is delivered again.
+	done := make(chan string, 1)
+	coalesceNotifications(func(m string) { done <- m })("notifications/y")
+	select {
+	case m := <-done:
+		if m != "notifications/y" {
+			t.Fatalf("got %q", m)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("notification not delivered")
+	}
+}
+
+// A stalled sink (the host not reading its stdout) must see one blocked
+// call at most, however many frames the upstream sends: before the fix
+// every frame started a goroutine that blocked in the sink.
+func TestStdioUpstream_NotificationFloodReachesSinkOnce(t *testing.T) {
+	release := make(chan struct{})
+	var calls atomic.Int64
+	up := NewStdioUpstreamWithOptions(UpstreamSpec{Namespace: "flood", Command: "x"}, StdioUpstreamOptions{
+		Logger: newTransportLogger(&bytes.Buffer{}, "info"),
+		OnNotification: func(string) {
+			calls.Add(1)
+			<-release
+		},
+	})
+	t.Cleanup(func() { close(release) })
+
+	frame := `{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}` + "\n"
+	up.readLoop(strings.NewReader(strings.Repeat(frame, 20000)))
+
+	time.Sleep(100 * time.Millisecond) // let any stray goroutines reach the sink
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("sink entered %d times for a flood of 20000 frames; want 1", n)
 	}
 }
