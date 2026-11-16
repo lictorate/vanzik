@@ -80,6 +80,12 @@ func IncLLMProxyUndecodableToolCall(provider string) {
 func LLMProxyUndecodableToolCallFor(provider string) uint64 {
 	return Default.LLMProxyUndecodableToolCallFor(provider)
 }
+func IncLLMProxyUndecodableContentEncoding(provider string) {
+	Default.IncLLMProxyUndecodableContentEncoding(provider)
+}
+func LLMProxyUndecodableContentEncodingFor(provider string) uint64 {
+	return Default.LLMProxyUndecodableContentEncodingFor(provider)
+}
 func SetLLMProxyStreamsActive(n int64)       { Default.SetLLMProxyStreamsActive(n) }
 func AddLLMProxyStreamsActive(d int64) int64 { return Default.AddLLMProxyStreamsActive(d) }
 func IncLLMProxyStreamsRejected()            { Default.IncLLMProxyStreamsRejected() }

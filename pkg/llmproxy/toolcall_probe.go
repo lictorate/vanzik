@@ -84,13 +84,14 @@ func undecodableToolCallDecision(provider string) Decision {
 	}
 }
 
-// auditUndecodableToolCall records the refusal centrally, like
-// auditMalformedToolCalls. The proxy's metrics registry has no scrape
-// endpoint (docs/OBSERVABILITY.md), so otherwise it leaves no trace.
-// The entry has no tool name or arguments (nothing decoded), only rule,
-// tenant and agent. With a nil RecordForcedAudit it falls back to
-// PolicyCheck (engine verdict, ignored).
-func (s *Server) auditUndecodableToolCall(r *http.Request, provider, model string) {
+// auditNonStreamingRefusal records a gated non-streaming refusal
+// centrally, so it leaves a trace beyond the client's response: the
+// proxy's metrics registry has no scrape endpoint
+// (docs/OBSERVABILITY.md). The entry has no tool name or arguments
+// (nothing was decoded), only rule, tenant and agent. With a nil
+// RecordForcedAudit it falls back to PolicyCheck (engine verdict,
+// ignored).
+func (s *Server) auditNonStreamingRefusal(r *http.Request, provider, model string, decision Decision) {
 	check := ToolCallCheck{
 		Provider:        provider,
 		Model:           model,
@@ -104,7 +105,7 @@ func (s *Server) auditUndecodableToolCall(r *http.Request, provider, model strin
 		check.AgentID = "llm-proxy"
 	}
 	if s.RecordForcedAudit != nil {
-		s.RecordForcedAudit(r.Context(), &check, undecodableToolCallDecision(provider))
+		s.RecordForcedAudit(r.Context(), &check, decision)
 		return
 	}
 	_, _ = s.runPolicyCheck(r.Context(), check)

@@ -514,6 +514,36 @@ func TestHTTPUpstream_GetStreamForwardsNotifications(t *testing.T) {
 	notes.waitFor(t, NotificationToolsListChanged)
 }
 
+// The GET stream is server-controlled: a flood of notifications while the
+// sink is stalled must reach it once, not once per event.
+func TestHTTPUpstream_NotificationFloodReachesSinkOnce(t *testing.T) {
+	stub := newMCPStub(t)
+	stub.onGet = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		ev := "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}\n\n"
+		_, _ = io.WriteString(w, strings.Repeat(ev, 5000))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}
+	release := make(chan struct{})
+	var calls atomic.Int64
+	up := newTestHTTPUpstream(t, stub.url(), HTTPUpstreamOptions{OnNotification: func(string) {
+		calls.Add(1)
+		<-release
+	}})
+	t.Cleanup(func() { close(release) })
+	initUpstream(t, up)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for calls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(200 * time.Millisecond) // let the rest of the stream be read
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("sink entered %d times for a flood of 5000 events; want 1", n)
+	}
+}
+
 // Through the bridge: tools/list aggregates the HTTP upstream with a stdio
 // one, tools/call is gated before anything reaches the server, and an
 // unreachable HTTP upstream answers ErrCodeUpstreamUnavail.

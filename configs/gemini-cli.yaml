@@ -20,6 +20,23 @@
           - action: write
             paths: ["**/.ssh/**", "**/.aws/**", "**/.gnupg/**", "/etc/**", "/usr/**", "C:/Windows/**"]
             message: "Gemini CLI doesn't write to system folders or credentials"
+          # Vanzik's own files: the API key that can approve a pending action,
+          # and the policy that decides what Gemini CLI may do. Only the
+          # default folder is named; one moved with XDG_CONFIG_HOME is not.
+          - action: read
+            paths: ["**/.config/vanzik/**", "**/AppData/Roaming/vanzik/**"]
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          - action: write
+            paths: ["**/.config/vanzik/**", "**/AppData/Roaming/vanzik/**"]
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          # The hook files `vanzik setup` writes. Removing Vanzik's entry
+          # turns the checks off. A project's own .claude/settings.json
+          # matches too. This covers the file tools and shell redirections
+          # only: `cp`, an editor, or a folder moved with CLAUDE_CONFIG_DIR,
+          # CURSOR_CONFIG_DIR, GEMINI_CLI_HOME or CODEX_HOME get past it.
+          - action: write
+            paths: ["**/.claude/settings.json", "**/.cursor/hooks.json", "**/.gemini/settings.json", "**/.codex/hooks.json"]
+            message: "The hook settings that connect Vanzik are off-limits to Gemini CLI"
         require_approval:
           - action: read
             paths: ["**/.env", "**/.env.*"]
@@ -36,6 +53,139 @@
           - pattern: ":(){ :|:& };:"
           - pattern: "dd if=/dev/*"
           - pattern: "> /dev/sda"
+          # Vanzik's control plane. An agent that can approve its own pending
+          # action, read the saved API key or stop the server makes the
+          # checks optional. These are glob matches on the command text, so
+          # a determined agent can write the same call another way (a
+          # script, a variable, a hostname instead of a loopback address);
+          # they stop the plain forms, not a determined agent. The endpoint
+          # rules name a loopback address so another service's /v1/audit
+          # or a grep for the path isn't caught.
+          - pattern: "*localhost*/v1/approve/*"
+            message: "Approving actions is for you, not Gemini CLI"
+          - pattern: "*localhost*/v1/deny/*"
+            message: "Denying actions is for you, not Gemini CLI"
+          - pattern: "*localhost*/v1/audit*"
+            message: "Vanzik's audit endpoint is off-limits to Gemini CLI"
+          - pattern: "*localhost*/v1/t/*/approve/*"
+            message: "Approving actions is for you, not Gemini CLI"
+          - pattern: "*localhost*/v1/t/*/deny/*"
+            message: "Denying actions is for you, not Gemini CLI"
+          - pattern: "*localhost*/v1/t/*/audit*"
+            message: "Vanzik's audit endpoint is off-limits to Gemini CLI"
+          - pattern: "*127.0.0.1*/v1/approve/*"
+            message: "Approving actions is for you, not Gemini CLI"
+          - pattern: "*127.0.0.1*/v1/deny/*"
+            message: "Denying actions is for you, not Gemini CLI"
+          - pattern: "*127.0.0.1*/v1/audit*"
+            message: "Vanzik's audit endpoint is off-limits to Gemini CLI"
+          - pattern: "*127.0.0.1*/v1/t/*/approve/*"
+            message: "Approving actions is for you, not Gemini CLI"
+          - pattern: "*127.0.0.1*/v1/t/*/deny/*"
+            message: "Denying actions is for you, not Gemini CLI"
+          - pattern: "*127.0.0.1*/v1/t/*/audit*"
+            message: "Vanzik's audit endpoint is off-limits to Gemini CLI"
+          - pattern: "*[::1]*/v1/approve/*"
+            message: "Approving actions is for you, not Gemini CLI"
+          - pattern: "*[::1]*/v1/deny/*"
+            message: "Denying actions is for you, not Gemini CLI"
+          - pattern: "*[::1]*/v1/audit*"
+            message: "Vanzik's audit endpoint is off-limits to Gemini CLI"
+          - pattern: "*[::1]*/v1/t/*/approve/*"
+            message: "Approving actions is for you, not Gemini CLI"
+          - pattern: "*[::1]*/v1/t/*/deny/*"
+            message: "Denying actions is for you, not Gemini CLI"
+          - pattern: "*[::1]*/v1/t/*/audit*"
+            message: "Vanzik's audit endpoint is off-limits to Gemini CLI"
+          - pattern: "vanzik approve*"
+            message: "Approving actions is for you, not Gemini CLI"
+          - pattern: "*/vanzik approve*"
+            message: "Approving actions is for you, not Gemini CLI"
+          - pattern: "*vanzik.exe approve*"
+            message: "Approving actions is for you, not Gemini CLI"
+          - pattern: "vanzik deny*"
+            message: "Denying actions is for you, not Gemini CLI"
+          - pattern: "*/vanzik deny*"
+            message: "Denying actions is for you, not Gemini CLI"
+          - pattern: "*vanzik.exe deny*"
+            message: "Denying actions is for you, not Gemini CLI"
+          - pattern: "*/.config/vanzik"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          - pattern: "*/.config/vanzik *"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          - pattern: "*/.config/vanzik/*"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          - pattern: "*/vanzik/api-key*"
+            message: "Vanzik's API key is off-limits to Gemini CLI"
+          # Windows spells the variable AppData, APPDATA or appdata (names are
+          # case-insensitive), with either separator.
+          - pattern: "*AppData*\\vanzik"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          - pattern: "*AppData*\\vanzik *"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          - pattern: "*AppData*\\vanzik\\*"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          - pattern: "*AppData*/vanzik"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          - pattern: "*AppData*/vanzik *"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          - pattern: "*AppData*/vanzik/*"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          - pattern: "*APPDATA*\\vanzik"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          - pattern: "*APPDATA*\\vanzik *"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          - pattern: "*APPDATA*\\vanzik\\*"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          - pattern: "*APPDATA*/vanzik"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          - pattern: "*APPDATA*/vanzik *"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          - pattern: "*APPDATA*/vanzik/*"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          - pattern: "*appdata*\\vanzik"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          - pattern: "*appdata*\\vanzik *"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          - pattern: "*appdata*\\vanzik\\*"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          - pattern: "*appdata*/vanzik"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          - pattern: "*appdata*/vanzik *"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          - pattern: "*appdata*/vanzik/*"
+            message: "Vanzik's config folder (API key, policy) is off-limits to Gemini CLI"
+          # Only commands that name vanzik: `kill 1234` and `pkill node` stay
+          # allowed. launchctl and systemctl are limited to the verbs that
+          # stop or disable a service, so `systemctl status vanzik` works.
+          - pattern: "kill *vanzik*"
+            message: "Stopping Vanzik is off-limits to Gemini CLI"
+          - pattern: "pkill *vanzik*"
+            message: "Stopping Vanzik is off-limits to Gemini CLI"
+          - pattern: "killall *vanzik*"
+            message: "Stopping Vanzik is off-limits to Gemini CLI"
+          - pattern: "taskkill *vanzik*"
+            message: "Stopping Vanzik is off-limits to Gemini CLI"
+          - pattern: "launchctl* bootout *vanzik*"
+            message: "Stopping Vanzik is off-limits to Gemini CLI"
+          - pattern: "launchctl* unload *vanzik*"
+            message: "Stopping Vanzik is off-limits to Gemini CLI"
+          - pattern: "launchctl* stop *vanzik*"
+            message: "Stopping Vanzik is off-limits to Gemini CLI"
+          - pattern: "launchctl* remove *vanzik*"
+            message: "Stopping Vanzik is off-limits to Gemini CLI"
+          - pattern: "launchctl* kill *vanzik*"
+            message: "Stopping Vanzik is off-limits to Gemini CLI"
+          - pattern: "launchctl* disable *vanzik*"
+            message: "Stopping Vanzik is off-limits to Gemini CLI"
+          - pattern: "systemctl* stop *vanzik*"
+            message: "Stopping Vanzik is off-limits to Gemini CLI"
+          - pattern: "systemctl* kill *vanzik*"
+            message: "Stopping Vanzik is off-limits to Gemini CLI"
+          - pattern: "systemctl* disable *vanzik*"
+            message: "Stopping Vanzik is off-limits to Gemini CLI"
+          - pattern: "systemctl* mask *vanzik*"
+            message: "Stopping Vanzik is off-limits to Gemini CLI"
         require_approval:
           - pattern: "sudo *"
           - pattern: "rm -rf *"

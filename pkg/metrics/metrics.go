@@ -143,6 +143,9 @@ type Registry struct {
 	llmProxyUndecodableToolCallMu    sync.Mutex
 	llmProxyUndecodableToolCallCount map[string]uint64
 
+	llmProxyUndecodableContentEncodingMu    sync.Mutex
+	llmProxyUndecodableContentEncodingCount map[string]uint64
+
 	migrationStatusMu sync.Mutex
 	migrationStatus   map[migrationStatusKey]int64
 
@@ -160,20 +163,21 @@ type Registry struct {
 // NewRegistry returns an empty Registry with all series initialised.
 func NewRegistry() *Registry {
 	return &Registry{
-		requestRejectedCount:              map[string]uint64{},
-		approvalEvictedCount:              map[string]uint64{},
-		rateLimitEvictedCount:             map[string]uint64{},
-		sseDroppedCount:                   map[string]uint64{},
-		llmProxyBufferOverflowCount:       map[string]uint64{},
-		llmProxyNonStreamingOverflowCount: map[string]uint64{},
-		llmProxyProtocolViolationCount:    map[string]uint64{},
-		llmProxyUndecodableToolCallCount:  map[string]uint64{},
-		migrationStatus:                   map[migrationStatusKey]int64{},
-		notifyDroppedCount:                map[notifyDroppedKey]uint64{},
-		notifyDispatchHist:                map[string]*Histogram{},
-		requestDuration:                   newHistogram(durationBuckets),
-		policyEvalDuration:                newHistogram(durationBuckets),
-		auditWriteDuration:                newHistogram(durationBuckets),
+		requestRejectedCount:                    map[string]uint64{},
+		approvalEvictedCount:                    map[string]uint64{},
+		rateLimitEvictedCount:                   map[string]uint64{},
+		sseDroppedCount:                         map[string]uint64{},
+		llmProxyBufferOverflowCount:             map[string]uint64{},
+		llmProxyNonStreamingOverflowCount:       map[string]uint64{},
+		llmProxyProtocolViolationCount:          map[string]uint64{},
+		llmProxyUndecodableToolCallCount:        map[string]uint64{},
+		llmProxyUndecodableContentEncodingCount: map[string]uint64{},
+		migrationStatus:                         map[migrationStatusKey]int64{},
+		notifyDroppedCount:                      map[notifyDroppedKey]uint64{},
+		notifyDispatchHist:                      map[string]*Histogram{},
+		requestDuration:                         newHistogram(durationBuckets),
+		policyEvalDuration:                      newHistogram(durationBuckets),
+		auditWriteDuration:                      newHistogram(durationBuckets),
 	}
 }
 
@@ -235,6 +239,9 @@ func (r *Registry) Reset() {
 	r.llmProxyUndecodableToolCallMu.Lock()
 	r.llmProxyUndecodableToolCallCount = map[string]uint64{}
 	r.llmProxyUndecodableToolCallMu.Unlock()
+	r.llmProxyUndecodableContentEncodingMu.Lock()
+	r.llmProxyUndecodableContentEncodingCount = map[string]uint64{}
+	r.llmProxyUndecodableContentEncodingMu.Unlock()
 	r.migrationStatusMu.Lock()
 	r.migrationStatus = map[migrationStatusKey]int64{}
 	r.migrationStatusMu.Unlock()
@@ -566,6 +573,30 @@ func (r *Registry) LLMProxyUndecodableToolCallFor(provider string) uint64 {
 	r.llmProxyUndecodableToolCallMu.Lock()
 	defer r.llmProxyUndecodableToolCallMu.Unlock()
 	return r.llmProxyUndecodableToolCallCount[provider]
+}
+
+// IncLLMProxyUndecodableContentEncoding increments
+// vanzik_llmproxy_undecodable_content_encoding_total{provider=...}. A 2xx
+// upstream response that still carries a Content-Encoding after the
+// transport's own gzip decoding (br, zstd, deflate, stacked, or an
+// encoding the proxy never asked for) cannot be inspected for tool
+// calls, yet the client would decode and act on it, so the proxy refuses
+// it fail-closed. A non-zero rate means an upstream is compressing with
+// an encoding the proxy does not negotiate. See pkg/llmproxy/forward.go.
+func (r *Registry) IncLLMProxyUndecodableContentEncoding(provider string) {
+	if provider == "" {
+		provider = "unknown"
+	}
+	r.llmProxyUndecodableContentEncodingMu.Lock()
+	r.llmProxyUndecodableContentEncodingCount[provider]++
+	r.llmProxyUndecodableContentEncodingMu.Unlock()
+}
+
+// LLMProxyUndecodableContentEncodingFor returns the current count (for tests).
+func (r *Registry) LLMProxyUndecodableContentEncodingFor(provider string) uint64 {
+	r.llmProxyUndecodableContentEncodingMu.Lock()
+	defer r.llmProxyUndecodableContentEncodingMu.Unlock()
+	return r.llmProxyUndecodableContentEncodingCount[provider]
 }
 
 // SetLLMProxyStreamsActive updates the active-streams gauge, mirroring the
@@ -1023,6 +1054,9 @@ func (r *Registry) WritePrometheus(w io.Writer) {
 	writeLabeledCounter(w, "vanzik_llmproxy_undecodable_tool_call_total",
 		"LLM-proxy non-streaming responses refused fail-closed because the body failed strict decode yet still carried a tool call, which a lenient client SDK would have executed ungated, by provider.",
 		"provider", snapshotStringMap(&r.llmProxyUndecodableToolCallMu, r.llmProxyUndecodableToolCallCount))
+	writeLabeledCounter(w, "vanzik_llmproxy_undecodable_content_encoding_total",
+		"LLM-proxy 2xx responses refused fail-closed because they still carried a Content-Encoding the proxy could not decode, by provider.",
+		"provider", snapshotStringMap(&r.llmProxyUndecodableContentEncodingMu, r.llmProxyUndecodableContentEncodingCount))
 	writeDeprecations(w)
 }
 

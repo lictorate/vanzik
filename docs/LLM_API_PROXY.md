@@ -538,7 +538,7 @@ which is the signal to alert on. The proxy also increments
 `vanzik_llmproxy_undecodable_tool_call_total{provider}`, but it counts
 in the proxy process, which **serves no `/metrics`** (see
 [`OBSERVABILITY.md`](OBSERVABILITY.md)). The central server's
-`/metrics` does list all six `vanzik_llmproxy_*` series (the two
+`/metrics` does list all seven `vanzik_llmproxy_*` series (the two
 binaries share one metrics registry), but nothing there increments
 them, so they always read 0. Don't alert on any of them; alert on the
 audit rule.
@@ -572,16 +572,19 @@ refused rather than forwarded, each under its own stable rule string:
 |---|---|
 | `deny:llm_api_proxy:tool_use_interleaved` | **Anthropic.** A second `tool_use` content block opened before the first closed, or a block's `content_block_start.input` carries real arguments *and* `input_json_delta` fragments stream for the same block. Two argument sources, no way to tell which one the client will use. |
 | `deny:llm_api_proxy:orphaned_tool_input` | **Anthropic.** An `input_json_delta` arrived while no `tool_use` block was open. The fragments belong to a call the firewall never saw start, so no gate cycle can ever evaluate them. |
+| `deny:llm_api_proxy:undecodable_content_encoding` | **Both providers, streaming and non-streaming.** A 2xx upstream response still carried a `Content-Encoding` after the proxy's own decoding. The proxy never forwards the client's `Accept-Encoding`: it lets Go's HTTP transport negotiate gzip and decode it, so the gate always reads plain bytes. What remains encoded (`br`, `zstd`, `deflate`, stacked encodings, or an encoding the upstream sent unasked) cannot be read, and the client would decode and run it. The refusal is an HTTP 200 in the provider's shape, and `vanzik_llmproxy_undecodable_content_encoding_total{provider}` counts it. Clients receive uncompressed bodies from the proxy, and `--max-buffer-bytes` bounds the decoded size. |
 | `deny:llm_api_proxy:multi_choice_tool_calls` | **OpenAI.** Tool-call deltas arrived on more than one `choices[].index`. `tool_calls[i].index` is unique only *within* a choice, so two choices' fragments would merge into a single argument string the firewall gates and no client executes. |
 
-All three discard the buffered bytes and stop reading upstream. None is
-subject to `--fail-mode allow`: the guard is healthy, it simply cannot
-see what the client will execute.
+Every rule above discards the buffered bytes and stops reading upstream.
+None is subject to `--fail-mode allow`: the guard is healthy, it simply
+cannot see what the client will execute.
 
-**All three are recorded in the central audit trail**, as are the two
+**Every rule above is recorded in the central audit trail**, as are the
 buffer-cap refusals (`deny:llm_api_proxy:buffer_overflow`, emitted both
 for one oversized SSE event and for cumulative arguments past
-`--max-buffer-bytes`). Each entry carries the rule, tenant, agent and
+`--max-buffer-bytes`, and
+`deny:llm_api_proxy:non_streaming_buffer_overflow` for a non-streaming
+body past it). Each entry carries the rule, tenant, agent and
 provider, plus whatever tool identity the parser observed before
 refusing — often none, since a stream refused because its bytes cannot
 be bound to a call is by definition one where no call assembled.
