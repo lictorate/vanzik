@@ -113,9 +113,10 @@ const (
 	// clients disagree on which one they execute.
 	violationMixedFunctionCall
 
-	// violationToolNameConflict (OpenAI): a later name fragment differs
-	// from the first. SDKs disagree (openai-python concatenates,
-	// openai-node keeps the last), so no single name can be gated.
+	// violationToolNameConflict (OpenAI): a call carries a second
+	// non-empty name fragment. SDKs disagree (openai-python
+	// concatenates, openai-node keeps the last), so no single name can
+	// be gated.
 	violationToolNameConflict
 )
 
@@ -321,16 +322,17 @@ func (a *OpenAIToolCallAccumulator) FeedEvent(rawEvent []byte) (FeedResult, erro
 				}
 				if tc.Function != nil {
 					st.HasFunction = true
-					// SECURITY: clients disagree on name fragments
-					// (openai-python concatenates, openai-node keeps
-					// the last), so the first name is gated and a
-					// different later fragment fails the stream closed.
-					// A repeat of the same name is tolerated: some
-					// compatible servers send it on every delta.
-					if tc.Function.Name != "" && st.Name == "" {
+					// SECURITY: clients disagree on a name sent in
+					// more than one fragment (openai-python
+					// concatenates, so "bash" twice runs "bashbash";
+					// openai-node keeps the last), so a second
+					// non-empty fragment, identical or not, fails the
+					// stream closed.
+					if tc.Function.Name != "" {
+						if st.Name != "" {
+							return FeedResult{ProtocolViolation: true, violation: violationToolNameConflict}, nil
+						}
 						st.Name = tc.Function.Name
-					} else if tc.Function.Name != "" && tc.Function.Name != st.Name {
-						return FeedResult{ProtocolViolation: true, violation: violationToolNameConflict}, nil
 					}
 					if tc.Function.Arguments != "" {
 						// The cap applies to cumulative argument bytes,

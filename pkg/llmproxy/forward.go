@@ -237,8 +237,9 @@ func writeNonStreamingRefusal(
 	_, _ = w.Write(refusal)
 }
 
-// gateOpenAINonStreaming gates choices[*].message.tool_calls and stops
-// at the first non-ALLOW, returning denied=true and that call. The
+// gateOpenAINonStreaming gates every call in choices[*].message (its
+// tool_calls, then a legacy function_call; see gateableToolCalls) and
+// stops at the first non-ALLOW, returning denied=true and that call. The
 // caller then replaces the whole response, so no ALLOWed sibling's
 // arguments reach the agent.
 func (s *Server) gateOpenAINonStreaming(

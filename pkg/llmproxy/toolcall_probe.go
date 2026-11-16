@@ -10,10 +10,11 @@ package llmproxy
 // numeric field is enough; no attacker needed. (A JSON null or an extra
 // field does not fail the decode, so only wrong-typed values land here.)
 //
-// The probe types declare only the path to the tool-call array, so no
-// sibling field can fail the decode: the probe constrains nothing a
-// lenient client wouldn't. A substring search for "tool_calls" would
-// also match model prose and refuse ordinary answers.
+// The probe types declare only the paths to the tool calls (OpenAI
+// tool_calls and the legacy function_call), so no sibling field can
+// fail the decode: the probe constrains nothing a lenient client
+// wouldn't. A substring search for "tool_calls" would also match model
+// prose and refuse ordinary answers.
 
 import (
 	"bytes"
@@ -22,7 +23,8 @@ import (
 	"strings"
 )
 
-// openAIToolCallProbe declares only choices[].message.tool_calls.
+// openAIToolCallProbe declares only choices[].message.tool_calls and
+// choices[].message.function_call.
 type openAIToolCallProbe struct {
 	Choices []struct {
 		Message struct {

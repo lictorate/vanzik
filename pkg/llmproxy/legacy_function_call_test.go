@@ -3,9 +3,9 @@ package llmproxy
 // The legacy function_call shape (request `functions`) is still surfaced
 // by the OpenAI SDKs and executed by frameworks (LangChain's OpenAI
 // functions agent), so it is gated exactly like tool_calls, streaming and
-// non-streaming. Also pinned here: a streamed tool name whose fragments
-// disagree is refused, and a BOM-prefixed body carrying a call is refused
-// rather than forwarded ungated.
+// non-streaming. Also pinned here: a streamed tool name sent in more than
+// one non-empty fragment is refused, and a BOM-prefixed body carrying a
+// call is refused rather than forwarded ungated.
 //
 // Every test drives the real proxy or the accumulator through symbols
 // that predate the fix, so each one also runs against the base branch.
@@ -275,20 +275,33 @@ func TestToolNameConflict_Streaming_IsRefused(t *testing.T) {
 	}
 }
 
-// Some OpenAI-compatible servers repeat the full name on every delta.
-// Every client resolves that to a call the gate saw or to an unknown
-// tool, so it is gated, not refused.
-func TestToolNameRepeatedIdentical_Streaming_IsGated(t *testing.T) {
-	stream := pvOpenAIToolDelta(0, 0, "call_1", "bash", `{"command":`) +
-		pvOpenAIToolDelta(0, 0, "", "bash", `"ls"}`) +
-		pvOpenAIFinish(0, "tool_calls") +
-		"data: [DONE]\n\n"
-	spy := &pvCallSpy{decision: Decision{Allow: true}}
-	got := pvRunStream(t, "openai", stream, spy)
-	if got != stream {
-		t.Errorf("ALLOW must replay byte-identical;\n got %q\nwant %q", got, stream)
-	}
-	if seen := spy.seen(); len(seen) != 1 || seen[0].ToolName != "bash" || seen[0].Arguments["command"] != "ls" {
-		t.Errorf("PolicyCheck saw %+v, want one bash call", seen)
+// A repeat of the same name is a conflict too: openai-python
+// concatenates the fragments and runs "bashbash" (n repeats of X give
+// X^n), while openai-node keeps "bash", so the gated name is not the one
+// every client runs.
+func TestToolNameRepeatedIdentical_Streaming_IsRefused(t *testing.T) {
+	for _, tc := range []struct{ name, stream string }{
+		{"tool_calls", `data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"bash","arguments":"{\"com"}}]},"finish_reason":null}]}` + "\n\n" +
+			`data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"bash","arguments":"mand\": \"ls\"}"}}]},"finish_reason":null}]}` + "\n\n" +
+			pvOpenAIFinish(0, "tool_calls") +
+			"data: [DONE]\n\n"},
+		{"function_call", pvOpenAIFunctionCallDelta("bash", `{"com`) +
+			pvOpenAIFunctionCallDelta("bash", `mand": "ls"}`) +
+			pvOpenAIFinish(0, "function_call") +
+			"data: [DONE]\n\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, spy := runStreamWithAudit(t, "openai", tc.stream, 0)
+			if strings.Contains(got, `\"ls\"`) || strings.Contains(got, `mand`) {
+				t.Errorf("arguments leaked from a repeated-name stream: %q", got)
+			}
+			if !strings.Contains(got, "deny:llm_api_proxy:tool_name_conflict") {
+				t.Fatalf("want the tool_name_conflict refusal; got %q", got)
+			}
+			c := assertAudited(t, spy, "deny:llm_api_proxy:tool_name_conflict", "openai")
+			if c.ToolName != "bash" {
+				t.Errorf("audited tool name = %q, want bash", c.ToolName)
+			}
+		})
 	}
 }
