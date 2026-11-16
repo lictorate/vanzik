@@ -240,8 +240,9 @@ func buildLLMMeta(req *ToolCallCheck, scope string, red *notify.Redactor) map[st
 	return out
 }
 
-// projectPath returns the filesystem scope's path argument (a path
-// alias, else the source, else the destination), else "".
+// projectPath returns the filesystem scope's first non-empty path,
+// source or destination argument, in the shared table's key order,
+// else "".
 func projectPath(scope string, args map[string]interface{}) string {
 	if scope != "filesystem" {
 		return ""

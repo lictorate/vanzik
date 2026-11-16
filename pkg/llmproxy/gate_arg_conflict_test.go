@@ -70,6 +70,7 @@ func conflictGate(t *testing.T, g *conflictGuard, failMode string) *HTTPPolicyCl
 	t.Helper()
 	pol := &policy.Policy{ToolScopeMap: []policy.ToolScopeMapping{
 		{Pattern: "move_file", Scope: "filesystem"},
+		{Pattern: "copy_file", Scope: "filesystem"},
 		{Pattern: "submit_form", Scope: "data"},
 	}}
 	return NewHTTPPolicyClient(&Config{GuardURL: g.srv.URL, APIKey: "k", TenantID: "local", FailMode: failMode}, pol)
@@ -132,6 +133,39 @@ func TestLLMGate_ArgConflict(t *testing.T) {
 			}
 			if rec.Request.Meta["transport"] != "llm_api_proxy" || rec.Request.Meta["tool_name"] != c.tool {
 				t.Errorf("audit record meta = %v, want the gate's usual meta", rec.Request.Meta)
+			}
+		})
+	}
+}
+
+// The shared table keeps the filesystem key order both gates had: path
+// aliases, then destination, then src, then dst. Reading src first would
+// let {"destination":"/etc/passwd","src":"/tmp/x"} be checked as /tmp/x.
+func TestLLMGate_FilesystemKeyOrder(t *testing.T) {
+	cases := []struct {
+		name string
+		args map[string]interface{}
+		want string
+	}{
+		{"destination before src", map[string]interface{}{"destination": "/etc/passwd", "src": "/tmp/x"}, "/etc/passwd"},
+		{"src before dst", map[string]interface{}{"src": "/tmp/a", "dst": "/tmp/b"}, "/tmp/a"},
+		{"equal destination and dst", map[string]interface{}{"destination": "/tmp/b", "dst": "/tmp/b"}, "/tmp/b"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			g := newConflictGuard(t, http.StatusOK)
+			gate := conflictGate(t, g, "deny")
+			dec, err := gate.Check(context.Background(), toolCall("openai", "copy_file", c.args))
+			if err != nil || !dec.Allow {
+				t.Fatalf("got %+v, %v; want the engine's ALLOW (no conflict)", dec, err)
+			}
+			g.mu.Lock()
+			defer g.mu.Unlock()
+			if len(g.checks) != 1 || len(g.audits) != 0 {
+				t.Fatalf("%d checks, %d audits; want 1, 0", len(g.checks), len(g.audits))
+			}
+			if got := g.checks[0].Path; got != c.want {
+				t.Errorf("checked path = %q, want %q", got, c.want)
 			}
 		})
 	}

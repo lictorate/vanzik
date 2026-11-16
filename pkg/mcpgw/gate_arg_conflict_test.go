@@ -162,6 +162,77 @@ func TestGatewayGate_ArgConflict_FailModeAllowCannotOverride(t *testing.T) {
 	}
 }
 
+// mappedCheck runs one strict-mode call against an ALLOW-everything guard
+// and returns the mapped-scope request, the second of the dual check.
+func mappedCheck(t *testing.T, tool string, args map[string]interface{}) policy.ActionRequest {
+	t.Helper()
+	g := newConflictGuard(t, http.StatusOK)
+	dec, err := conflictGate(g, "deny").Check(context.Background(), toolsCallReq(tool, args))
+	if err != nil || !dec.Allow {
+		t.Fatalf("got %+v, %v; want the engine's ALLOW (no conflict)", dec, err)
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if len(g.checks) != 2 || len(g.audits) != 0 {
+		t.Fatalf("%d checks, %d audits; want 2 (mcp_tool + mapped), 0", len(g.checks), len(g.audits))
+	}
+	return g.checks[1]
+}
+
+// The shared table keeps the filesystem key order the gateway had: path
+// aliases, then destination, then src, then dst. Reading src first would
+// let {"destination":"/etc/passwd","src":"/tmp/x"} be checked as /tmp/x.
+func TestGatewayGate_FilesystemKeyOrder(t *testing.T) {
+	cases := []struct {
+		name string
+		args map[string]interface{}
+		want string
+	}{
+		{"destination before src", map[string]interface{}{"destination": "/etc/passwd", "src": "/tmp/x"}, "/etc/passwd"},
+		{"src before dst", map[string]interface{}{"src": "/tmp/a", "dst": "/tmp/b"}, "/tmp/a"},
+		{"equal destination and dst", map[string]interface{}{"destination": "/tmp/b", "dst": "/tmp/b"}, "/tmp/b"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := mappedCheck(t, "fs:copy_file", c.args).Path; got != c.want {
+				t.Errorf("checked path = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// One argument per call is checked, and a key the gateway took from the LLM
+// proxy's list can now win over one it read before. Each case below was
+// denied on v2.1.0's base and is now checked on the first key and
+// forwarded. Known gap, tracked for the multi-part check design (checking
+// every path-like value needs more than one check per call); these tests
+// pin the current behaviour so a change to it is deliberate.
+func TestGatewayGate_OneArgumentChecked_KnownGap(t *testing.T) {
+	cases := []struct {
+		name string
+		tool string
+		args map[string]interface{}
+		get  func(policy.ActionRequest) string
+		want string
+	}{
+		{"target beats destination", "fs:copy_file", map[string]interface{}{"target": "/tmp/x", "destination": "/etc/passwd"},
+			func(a policy.ActionRequest) string { return a.Path }, "/tmp/x"},
+		{"file beats src", "fs:copy_file", map[string]interface{}{"file": "/tmp/x", "src": "/etc/shadow"},
+			func(a policy.ActionRequest) string { return a.Path }, "/tmp/x"},
+		{"code beats args", "sh:run", map[string]interface{}{"code": "ls", "args": "rm -rf /"},
+			func(a policy.ActionRequest) string { return a.Command }, "ls"},
+		{"uri host beats domain", "fetch:get", map[string]interface{}{"uri": "https://ok.example/", "domain": "evil.example"},
+			func(a policy.ActionRequest) string { return a.Domain }, "ok.example"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.get(mappedCheck(t, c.tool, c.args)); got != c.want {
+				t.Errorf("checked %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
 // Fast mode projects no arguments, so it has nothing to conflict: one
 // mcp_tool check, as before.
 func TestGatewayGate_ArgConflict_FastModeUnchanged(t *testing.T) {

@@ -194,7 +194,7 @@ scope, in one table the MCP gateway shares
 | Scope | `command` | Other fields |
 |---|---|---|
 | `shell` | the `command` / `cmd` / `script` / `code` argument; else the tool name | — |
-| `filesystem` | `<tool_name> <path>` | `path` from `path`, `file_path`, `notebook_path`, `filepath`, `target`, `target_path`, `filename` or `file`; else the source `src`; else the destination `destination` or `dst`. `action` inferred from the tool name (read / write / delete …) |
+| `filesystem` | `<tool_name> <path>` | `path` from the first of `path`, `file_path`, `notebook_path`, `filepath`, `target`, `target_path`, `filename`, `file`, `destination`, `src` or `dst` (the path names are one group of aliases, `destination` and `dst` another, `src` a third); `action` inferred from the tool name (read / write / delete …) |
 | `network` | `<tool_name> <url>` | `url` from `url`, `uri`, `endpoint` or `target_url`; `domain` from that URL's host, else a `domain` / `host` / `hostname` argument |
 | `browser` | `<tool_name> <url>` | `url` and `domain` as for `network`; `action` is the tool name |
 | `data` | the `value` / `content` / `text` / `data` argument; else the tool name | — |
@@ -206,8 +206,10 @@ sets two aliases to different non-empty strings, such as
 `{"command": "ls", "cmd": "rm -rf /"}`, is denied with rule
 `deny:llm_api_proxy:conflicting_argument_alias` before any `/v1/check`
 call, whatever `--fail-mode` says, and recorded through the forced-audit
-path (§ 5.4 Audit fidelity). The reason names the keys, not their values. Equal values
-pass, and so do different roles: `src` and `dst` may differ. A `data`
+path (§ 5.4 Audit fidelity). The rule and reason name the keys, not
+their values; the audit entry's request carries the redacted arguments,
+like any other entry. Equal values pass, and so do different roles:
+`src` and `dst` may differ. A `data`
 tool's `url` / `uri` / `endpoint` / `target_url` arguments are aliases
 too, though the proxy doesn't project them.
 

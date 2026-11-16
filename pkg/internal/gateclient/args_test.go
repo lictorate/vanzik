@@ -70,31 +70,69 @@ func TestArgConflictReason_NamesKeysNotValues(t *testing.T) {
 	}
 }
 
-func TestScopeArg_RoleOrder(t *testing.T) {
-	args := map[string]interface{}{"dst": "/tmp/b", "src": "/tmp/a"}
-	if got := ScopeArg(args, "filesystem", ArgPath, ArgSource, ArgDestination); got != "/tmp/a" {
-		t.Errorf("ScopeArg = %q, want the source /tmp/a (roles are tried in the order given)", got)
+// Lookup order is per key: the filesystem path reads the path aliases,
+// then destination, then src, then dst, as both gates did before the
+// shared table.
+func TestScopeArg_KeyOrder(t *testing.T) {
+	fsPath := func(args map[string]interface{}) string {
+		return ScopeArg(args, "filesystem", ArgPath, ArgSource, ArgDestination)
 	}
-	args["file"] = "/tmp/c"
-	if got := ScopeArg(args, "filesystem", ArgPath, ArgSource, ArgDestination); got != "/tmp/c" {
-		t.Errorf("ScopeArg = %q, want the path /tmp/c", got)
+	cases := []struct {
+		name string
+		args map[string]interface{}
+		want string
+	}{
+		{"destination before src", map[string]interface{}{"destination": "/etc/passwd", "src": "/tmp/x"}, "/etc/passwd"},
+		{"src before dst", map[string]interface{}{"src": "/tmp/a", "dst": "/tmp/b"}, "/tmp/a"},
+		{"path alias first", map[string]interface{}{"file": "/tmp/c", "destination": "/tmp/d", "src": "/tmp/a"}, "/tmp/c"},
 	}
-	if got := ScopeArg(args, "network", ArgPath); got != "" {
+	for _, c := range cases {
+		if got := fsPath(c.args); got != c.want {
+			t.Errorf("%s: ScopeArg = %q, want %q", c.name, got, c.want)
+		}
+	}
+	if got := ScopeArg(map[string]interface{}{"path": "/tmp/x"}, "network", ArgPath); got != "" {
 		t.Errorf("ScopeArg for a role the scope lacks = %q, want \"\"", got)
 	}
 }
 
-// Roles of the Go table that the Python adapters read through one key or not
-// at all, and Go keys missing from a Python alias group. Recorded so this test
-// fails when either side changes; the Python side is deliberately not edited
-// here.
+// What the Python adapters lack, recorded exactly so this test fails when
+// either side changes; the Python side is deliberately not edited here.
 var (
-	pythonUnaliasedRoles = map[string]bool{ArgURL: true, ArgDomain: true, ArgDestination: true, ArgValue: true}
-	pythonMissingKeys    = map[string][]string{
+	// Go roles the Python adapters read through one key or not at all,
+	// with the Go keys each must have.
+	pythonUnaliasedRoles = map[string][]string{
+		ArgURL:         {"url", "uri", "endpoint", "target_url"},
+		ArgDomain:      {"domain", "host", "hostname"},
+		ArgDestination: {"destination", "dst"},
+		ArgValue:       {"value", "content", "text", "data"},
+	}
+	// Go keys missing from a Python alias group.
+	pythonMissingKeys = map[string][]string{
 		ArgCommand: {"script", "code"},
 		ArgPath:    {"notebook_path", "filepath", "target", "target_path", "filename", "file"},
 	}
 )
+
+// goRoleKeys returns each role's keys in table order, failing if a role has
+// different keys in different scopes.
+func goRoleKeys(t *testing.T) map[string][]string {
+	t.Helper()
+	out := map[string][]string{}
+	for scope, entries := range scopeArgs {
+		perScope := map[string][]string{}
+		for _, e := range entries {
+			perScope[e.role] = append(perScope[e.role], e.key)
+		}
+		for role, keys := range perScope {
+			if prev, ok := out[role]; ok && !reflect.DeepEqual(prev, keys) {
+				t.Errorf("role %q has different keys in different scopes (%s: %v vs %v)", role, scope, keys, prev)
+			}
+			out[role] = keys
+		}
+	}
+	return out
+}
 
 // TestArgTable_PythonAliases is a tripwire: the Python adapters keep their own
 // alias list (plugins/python/vanzik/adapters/_common.py, _ALIASES). It must
@@ -116,13 +154,14 @@ func TestArgTable_PythonAliases(t *testing.T) {
 		}
 	}
 
-	goKeys := map[string][]string{}
-	for scope, roles := range scopeArgs {
-		for _, r := range roles {
-			if prev, ok := goKeys[r.role]; ok && !reflect.DeepEqual(prev, r.keys) {
-				t.Errorf("role %q has different keys in different scopes (%s: %v vs %v)", r.role, scope, r.keys, prev)
+	goKeys := goRoleKeys(t)
+
+	// A recorded gap must still be a Go key, or the allowlist has gone stale.
+	for role, missing := range pythonMissingKeys {
+		for _, k := range missing {
+			if !contains(goKeys[role], k) {
+				t.Errorf("recorded Python gap %q is no longer a Go %q key (Go: %v); update pythonMissingKeys", k, role, goKeys[role])
 			}
-			goKeys[r.role] = r.keys
 		}
 	}
 
@@ -143,17 +182,25 @@ func TestArgTable_PythonAliases(t *testing.T) {
 				role, keys, want, gk, pythonMissingKeys[role])
 		}
 	}
+
 	for role, keys := range goKeys {
-		if _, ok := python[role]; ok || len(keys) < 2 {
+		if _, ok := python[role]; ok {
 			continue
 		}
-		if !pythonUnaliasedRoles[role] {
+		want, recorded := pythonUnaliasedRoles[role]
+		switch {
+		case recorded && !reflect.DeepEqual(keys, want):
+			t.Errorf("Go role %q keys = %v, recorded %v; the Python adapters don't alias it, so update _ALIASES or the record", role, keys, want)
+		case !recorded && len(keys) > 1:
 			t.Errorf("Go role %q has aliases %v the Python adapters don't list; add them to _ALIASES or record the gap", role, keys)
 		}
 	}
 	for role := range pythonUnaliasedRoles {
 		if _, ok := python[role]; ok {
 			t.Errorf("Python now aliases %q; remove it from pythonUnaliasedRoles", role)
+		}
+		if _, ok := goKeys[role]; !ok {
+			t.Errorf("recorded role %q is no longer in the Go table; update pythonUnaliasedRoles", role)
 		}
 	}
 }

@@ -273,8 +273,9 @@ func buildMappedActionRequest(req *ToolsCallRequest, mappedScope string) policy.
 
 	switch mappedScope {
 	case "filesystem":
-		// Path is the primary signal: a path alias, else the source, else
-		// the destination. Action is inferred from the tool-name verb.
+		// Path is the primary signal: the first non-empty path, source or
+		// destination argument in the shared table's key order. Action is
+		// inferred from the tool-name verb.
 		ar.Path = gateclient.ScopeArg(req.Arguments, mappedScope, gateclient.ArgPath, gateclient.ArgSource, gateclient.ArgDestination)
 		ar.Action = gateclient.InferFilesystemAction(req.ToolName)
 		ar.Command = req.FullName
