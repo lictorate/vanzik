@@ -32,9 +32,12 @@ module lictorate.com/vanzik/v2
 // intermediate certificates), reachable from proxy.Server.Start through
 // http.Server.ListenAndServe.
 //
+// go1.26.11 adds the fix for GO-2026-6859 (net/http), reported by govulncheck
+// against go1.26.10.
+//
 // With the go directive at the patched release, a separate `toolchain` line
 // is redundant (`go mod tidy` drops it); raise this line for future fixes.
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/fsnotify/fsnotify v1.10.1
