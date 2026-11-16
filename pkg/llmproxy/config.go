@@ -18,6 +18,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	"lictorate.com/vanzik/v2/internal/clihelp"
 	"lictorate.com/vanzik/v2/pkg/internal/gateclient"
@@ -51,6 +52,11 @@ const (
 	// cap is what bounds memory under fan-out: 100 streams at 1 MiB is
 	// about 200 MiB, while typical SDK concurrency is under 10.
 	DefaultMaxConcurrentStreams = 100
+
+	// DefaultUpstreamHeaderTimeout bounds the wait for upstream response
+	// headers. Non-streamed replies send headers only once generation
+	// ends, so this stays long; 0 disables it.
+	DefaultUpstreamHeaderTimeout = 10 * time.Minute
 )
 
 // Config is the proxy's parsed flag/env configuration, immutable after
@@ -100,6 +106,11 @@ type Config struct {
 	// excess requests get 503 + Retry-After: 5. 0 disables the cap.
 	MaxConcurrentStreams int
 
+	// UpstreamHeaderTimeout bounds the wait for upstream response
+	// headers after the request is written. 0 disables it. There is no
+	// idle timer on the body.
+	UpstreamHeaderTimeout time.Duration
+
 	// LogLevel is "info" or "debug".
 	LogLevel string
 
@@ -120,7 +131,7 @@ func ParseConfig(args []string) (*Config, error) {
 // must be in one group (TestConfig_HelpGroupsEveryFlag).
 var proxyFlagGroups = []clihelp.Group{
 	{Title: "Listening", Names: []string{"listen", "proxy-api-key", "max-concurrent-streams", "max-buffer-bytes"}},
-	{Title: "Model providers", Names: []string{"upstream-openai", "upstream-anthropic"}},
+	{Title: "Model providers", Names: []string{"upstream-openai", "upstream-anthropic", "upstream-header-timeout"}},
 	{Title: "Vanzik server", Names: []string{"guard-url", "api-key", "tenant-id"}},
 	{Title: "Policy", Names: []string{"policy"}},
 	{Title: "When the Vanzik server is unreachable", Names: []string{"fail-mode", "fail-audit-log"}},
@@ -166,6 +177,7 @@ Environment:
 	proxyAPIKey := fs.String("proxy-api-key", "", "Optional bearer the proxy itself enforces on inbound requests (X-Vanzik-Proxy-Auth). Empty = no proxy auth.")
 	maxBufferBytes := fs.Int("max-buffer-bytes", DefaultMaxBufferBytes, "Per-stream tool-call buffer cap in bytes")
 	maxConcurrentStreams := fs.Int("max-concurrent-streams", DefaultMaxConcurrentStreams, "Global cap on simultaneous streaming requests; 0 disables the cap. Excess requests are refused with 503 + Retry-After: 5.")
+	upstreamHeaderTimeout := fs.Duration("upstream-header-timeout", DefaultUpstreamHeaderTimeout, "Max wait for the model provider's response headers; 0 disables. Non-streamed replies send headers only when generation ends, so keep this long. A stalled upstream is answered with 502.")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -178,19 +190,20 @@ Environment:
 	}
 
 	cfg := &Config{
-		Listen:               *listen,
-		UpstreamOpenAI:       *upstreamOpenAI,
-		UpstreamAnthropic:    *upstreamAnthropic,
-		GuardURL:             *gate.GuardURL,
-		APIKey:               *gate.APIKey,
-		ProxyAPIKey:          *proxyAPIKey,
-		TenantID:             *gate.TenantID,
-		FailMode:             *gate.FailMode,
-		FailAuditLog:         *gate.FailAuditLog,
-		MaxBufferBytes:       *maxBufferBytes,
-		MaxConcurrentStreams: *maxConcurrentStreams,
-		LogLevel:             *gate.LogLevel,
-		PolicyPath:           *gate.PolicyPath,
+		Listen:                *listen,
+		UpstreamOpenAI:        *upstreamOpenAI,
+		UpstreamAnthropic:     *upstreamAnthropic,
+		GuardURL:              *gate.GuardURL,
+		APIKey:                *gate.APIKey,
+		ProxyAPIKey:           *proxyAPIKey,
+		TenantID:              *gate.TenantID,
+		FailMode:              *gate.FailMode,
+		FailAuditLog:          *gate.FailAuditLog,
+		MaxBufferBytes:        *maxBufferBytes,
+		MaxConcurrentStreams:  *maxConcurrentStreams,
+		UpstreamHeaderTimeout: *upstreamHeaderTimeout,
+		LogLevel:              *gate.LogLevel,
+		PolicyPath:            *gate.PolicyPath,
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -232,6 +245,10 @@ func (c *Config) Validate() error {
 	// Negative max-concurrent-streams is a typo; 0 disables the cap.
 	if c.MaxConcurrentStreams < 0 {
 		return fmt.Errorf("--max-concurrent-streams must be >= 0, got %d", c.MaxConcurrentStreams)
+	}
+
+	if c.UpstreamHeaderTimeout < 0 {
+		return fmt.Errorf("--upstream-header-timeout must be >= 0, got %s", c.UpstreamHeaderTimeout)
 	}
 
 	if c.TenantID == "" {
