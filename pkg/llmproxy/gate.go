@@ -121,6 +121,16 @@ func (c *HTTPPolicyClient) Check(ctx context.Context, req *ToolCallCheck) (Decis
 
 	scope := c.MapScope(req.ToolName)
 
+	// Two alias keys with different values: the check would see one and
+	// the tool may read the other. Decided here, before /v1/check, with a
+	// nil error so --fail-mode allow cannot turn it into an ALLOW. The
+	// engine never sees it, so it is recorded through the forced-audit path.
+	if conflict, ok := gateclient.FindArgConflict(req.Arguments, scope); ok {
+		d := Decision{Allow: false, Reason: conflict.Reason(), Rule: "deny:llm_api_proxy:conflicting_argument_alias"}
+		c.RecordForcedAudit(ctx, req, d)
+		return d, nil
+	}
+
 	ar := policy.ActionRequest{
 		SchemaVersion:   "v1",
 		Scope:           scope,
@@ -230,20 +240,14 @@ func buildLLMMeta(req *ToolCallCheck, scope string, red *notify.Redactor) map[st
 	return out
 }
 
-// projectPath returns the first path-like argument for filesystem
-// scope, else "".
+// projectPath returns the filesystem scope's first non-empty path,
+// source or destination argument, in the shared table's key order,
+// else "".
 func projectPath(scope string, args map[string]interface{}) string {
 	if scope != "filesystem" {
 		return ""
 	}
-	for _, k := range []string{"path", "file_path", "notebook_path", "filepath", "target", "target_path", "filename", "file", "destination", "src", "dst"} {
-		if v, ok := args[k]; ok {
-			if s, ok := v.(string); ok && s != "" {
-				return s
-			}
-		}
-	}
-	return ""
+	return gateclient.ScopeArg(args, scope, gateclient.ArgPath, gateclient.ArgSource, gateclient.ArgDestination)
 }
 
 // projectURL returns the first URL-like argument for network and
@@ -252,14 +256,7 @@ func projectURL(scope string, args map[string]interface{}) string {
 	if scope != "network" && scope != "browser" {
 		return ""
 	}
-	for _, k := range []string{"url", "uri", "endpoint", "target_url"} {
-		if v, ok := args[k]; ok {
-			if s, ok := v.(string); ok && s != "" {
-				return s
-			}
-		}
-	}
-	return ""
+	return gateclient.ScopeArg(args, scope, gateclient.ArgURL)
 }
 
 // projectDomain extracts a domain from a URL-like arg, or returns the
@@ -271,14 +268,7 @@ func projectDomain(scope string, args map[string]interface{}) string {
 	}
 	rawURL := projectURL(scope, args)
 	if rawURL == "" {
-		for _, k := range []string{"domain", "host", "hostname"} {
-			if v, ok := args[k]; ok {
-				if s, ok := v.(string); ok && s != "" {
-					return s
-				}
-			}
-		}
-		return ""
+		return gateclient.ScopeArg(args, scope, gateclient.ArgDomain)
 	}
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -302,11 +292,11 @@ func projectDomain(scope string, args map[string]interface{}) string {
 func formatLLMCommand(req *ToolCallCheck, scope string, red *notify.Redactor) string {
 	switch scope {
 	case "shell":
-		if cmd := gateclient.FirstStringArg(req.Arguments, "command", "cmd", "script", "code"); cmd != "" {
+		if cmd := gateclient.ScopeArg(req.Arguments, scope, gateclient.ArgCommand); cmd != "" {
 			return redactSingle(red, cmd)
 		}
 		// Tool name + args, so rules on a wrapper tool still fire.
-		if argStr := gateclient.FirstStringArg(req.Arguments, "args"); argStr != "" {
+		if argStr := gateclient.ScopeArg(req.Arguments, scope, gateclient.ArgArgs); argStr != "" {
 			return redactSingle(red, req.ToolName+" "+argStr)
 		}
 		return req.ToolName
@@ -327,7 +317,7 @@ func formatLLMCommand(req *ToolCallCheck, scope string, red *notify.Redactor) st
 
 	case "data":
 		// The submitted value, so data rules can match on it.
-		if v := gateclient.FirstStringArg(req.Arguments, "value", "content", "text", "data"); v != "" {
+		if v := gateclient.ScopeArg(req.Arguments, scope, gateclient.ArgValue); v != "" {
 			return redactSingle(red, v)
 		}
 		return req.ToolName

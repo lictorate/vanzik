@@ -320,6 +320,36 @@ The forwarded action proceeds **only if every check returns ALLOW**. If
 any denies, the call denies. If any requires approval, the call
 requires approval, with the first approval to fire.
 
+The argument names each mapped scope reads are listed in
+[`POLICY_REFERENCE.md`](POLICY_REFERENCE.md#field-projection-per-mapped-scope),
+in the order they're tried; the LLM API Proxy reads the same ones.
+
+**One argument per field is checked.** The mapped check carries one
+path, one URL, one command: the first non-empty name in that list wins,
+and the other arguments aren't checked. So the command comes from
+`command` / `cmd` / `script` / `code` before the tool name plus `args`,
+and the domain comes from the `url` / `uri` / `endpoint` / `target_url`
+host before any `domain` / `host` / `hostname` argument. A filesystem
+call that carries both a path-like name (`path`, `file_path`,
+`notebook_path`, `filepath`, `target`, `target_path`, `filename`,
+`file`) and a destination or source (`destination`, `src`, `dst`) is
+checked on the path-like name only. Of a destination and a source,
+`destination` is checked before `src`, and `src` before `dst`. Only a
+`paths` array is checked entry by entry.
+
+**Conflicting aliases are denied.** Several names can feed one field
+(`command` / `cmd` / `script` / `code`, say). If a mapped call sets two
+of them to different non-empty strings, such as
+`{"command": "ls", "cmd": "rm -rf /"}`, the check would see one while
+the tool may read the other, so the gateway denies the call with rule
+`deny:gateway:conflicting_argument_alias` before either check, whatever
+`--fail-mode` says. The rule and reason name the conflicting keys, not
+their values. The denial is recorded through `POST /v1/audit`, and the
+entry's request carries the arguments like any other gateway entry;
+give the gateway `--api-key` when the central server is keyed, or the
+record is refused and only logged. A move's `src` and `dst` are
+different fields and may differ.
+
 #### 4.4.1 Why dual-check
 
 Operators write existing scope rules:

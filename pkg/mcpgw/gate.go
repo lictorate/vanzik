@@ -17,6 +17,9 @@ package mcpgw
 //        A filesystem call with a `paths` array gets one mapped check
 //        per path, and every one must ALLOW.
 //     3. If any check DENYs or REQUIRE_APPROVALs, the first one wins.
+//     Before (1), a mapped call whose alias arguments disagree (two
+//     keys of one role in gateclient's table) is denied with
+//     Rule="deny:gateway:conflicting_argument_alias" and no /v1/check.
 //
 //   --policy-mode fast:
 //     Only step (1). The mapped scope is informational only; operators
@@ -39,6 +42,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -149,6 +153,19 @@ func (c *HTTPPolicyClient) Check(ctx context.Context, req *ToolsCallRequest) (De
 		return Decision{Allow: false, Reason: "nil tools/call request", Rule: "deny:gateway:invalid_request"}, nil
 	}
 
+	// The mapped scope is resolved up front so an argument conflict is
+	// refused before any /v1/check call. Fast mode projects no arguments,
+	// so there is nothing to conflict.
+	mappedScope, mapped := "", false
+	if pol := c.policy.Load(); pol != nil && !strings.EqualFold(c.PolicyMode, "fast") {
+		mappedScope, mapped = pol.MapToolScope(req.FullName)
+	}
+	if mapped {
+		if conflict, ok := gateclient.FindArgConflict(req.Arguments, mappedScope); ok {
+			return c.denyArgConflict(ctx, req, mappedScope, conflict), nil
+		}
+	}
+
 	// 1. mcp_tool scope check. Always runs.
 	//
 	// ApprovalID propagation: when the host retries a tools/call with
@@ -174,19 +191,9 @@ func (c *HTTPPolicyClient) Check(ctx context.Context, req *ToolsCallRequest) (De
 		return decMCP, nil
 	}
 
-	// 2. Mapped-scope check (strict only).
-	if strings.EqualFold(c.PolicyMode, "fast") {
-		return decMCP, nil
-	}
-
-	pol := c.policy.Load()
-	if pol == nil {
-		// No policy snapshot to read tool_scope_map from. Treat as
-		// "no mapping" — same outcome as a tool that no entry covers.
-		return decMCP, nil
-	}
-	mappedScope, ok := pol.MapToolScope(req.FullName)
-	if !ok {
+	// 2. Mapped-scope check (strict only). No policy snapshot counts as
+	// no mapping, the same outcome as a tool no entry covers.
+	if !mapped {
 		return decMCP, nil
 	}
 
@@ -266,20 +273,21 @@ func buildMappedActionRequest(req *ToolsCallRequest, mappedScope string) policy.
 
 	switch mappedScope {
 	case "filesystem":
-		// Path is the primary signal. Look at common arg names; first
-		// non-empty wins. Action is inferred from the tool-name verb.
-		ar.Path = gateclient.FirstStringArg(req.Arguments, "path", "file_path", "filepath", "target_path", "destination", "src", "dst")
+		// Path is the primary signal: the first non-empty path, source or
+		// destination argument in the shared table's key order. Action is
+		// inferred from the tool-name verb.
+		ar.Path = gateclient.ScopeArg(req.Arguments, mappedScope, gateclient.ArgPath, gateclient.ArgSource, gateclient.ArgDestination)
 		ar.Action = gateclient.InferFilesystemAction(req.ToolName)
 		ar.Command = req.FullName
 
 	case "network":
-		ar.URL = gateclient.FirstStringArg(req.Arguments, "url")
-		ar.Domain = mappedDomain(req.Arguments, ar.URL)
+		ar.URL = gateclient.ScopeArg(req.Arguments, mappedScope, gateclient.ArgURL)
+		ar.Domain = mappedDomain(req.Arguments, mappedScope, ar.URL)
 		ar.Command = req.FullName
 
 	case "browser":
-		ar.URL = gateclient.FirstStringArg(req.Arguments, "url")
-		ar.Domain = mappedDomain(req.Arguments, ar.URL)
+		ar.URL = gateclient.ScopeArg(req.Arguments, mappedScope, gateclient.ArgURL)
+		ar.Domain = mappedDomain(req.Arguments, mappedScope, ar.URL)
 		ar.Action = req.ToolName
 		ar.Command = req.FullName
 
@@ -288,10 +296,10 @@ func buildMappedActionRequest(req *ToolsCallRequest, mappedScope string) policy.
 		// argument, fall back to the namespaced tool name + serialised
 		// args so a "shell:run" with command="rm -rf /" matches a
 		// shell-scope deny on "rm -rf *".
-		cmd := gateclient.FirstStringArg(req.Arguments, "command", "cmd", "script")
+		cmd := gateclient.ScopeArg(req.Arguments, mappedScope, gateclient.ArgCommand)
 		if cmd == "" {
 			cmd = req.FullName
-			if argStr := gateclient.FirstStringArg(req.Arguments, "args"); argStr != "" {
+			if argStr := gateclient.ScopeArg(req.Arguments, mappedScope, gateclient.ArgArgs); argStr != "" {
 				cmd = cmd + " " + argStr
 			}
 		}
@@ -300,12 +308,12 @@ func buildMappedActionRequest(req *ToolsCallRequest, mappedScope string) policy.
 	case "data":
 		// Data scope: value being submitted. Tool-name doubles as the
 		// action label so existing data rules can key on it.
-		ar.Command = gateclient.FirstStringArg(req.Arguments, "value", "content", "text", "data")
+		ar.Command = gateclient.ScopeArg(req.Arguments, mappedScope, gateclient.ArgValue)
 		if ar.Command == "" {
 			ar.Command = req.FullName
 		}
 		ar.Action = "form_input"
-		ar.URL = gateclient.FirstStringArg(req.Arguments, "url")
+		ar.URL = gateclient.ScopeArg(req.Arguments, mappedScope, gateclient.ArgURL)
 		if ar.URL != "" {
 			if u, err := url.Parse(ar.URL); err == nil {
 				ar.Domain = u.Hostname()
@@ -365,9 +373,9 @@ func mappedActionRequests(req *ToolsCallRequest, mappedScope string) []policy.Ac
 // hostname argument counts only when there is no url argument: the model
 // writes the arguments, so it could otherwise pair an allow-listed domain
 // with a URL on another host. This matches the LLM API Proxy's projectDomain.
-func mappedDomain(args map[string]interface{}, rawURL string) string {
+func mappedDomain(args map[string]interface{}, scope, rawURL string) string {
 	if rawURL == "" {
-		return gateclient.FirstStringArg(args, "domain", "host", "hostname")
+		return gateclient.ScopeArg(args, scope, gateclient.ArgDomain)
 	}
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -387,6 +395,24 @@ func (c *HTTPPolicyClient) callV1Check(ctx context.Context, ar policy.ActionRequ
 		HTTPClient: c.HTTPClient,
 	}
 	return caller.CallV1Check(ctx, ar, gatewayFailModeRules)
+}
+
+// denyArgConflict refuses a call whose alias arguments disagree. The
+// engine never sees it, so the DENY is recorded through /v1/audit; a
+// failed record is logged and never changes the verdict.
+func (c *HTTPPolicyClient) denyArgConflict(ctx context.Context, req *ToolsCallRequest, mappedScope string, conflict gateclient.ArgConflict) Decision {
+	d := Decision{Allow: false, Reason: conflict.Reason(), Rule: "deny:gateway:conflicting_argument_alias"}
+	caller := gateclient.Caller{
+		GuardURL:   c.GuardURL,
+		APIKey:     c.APIKey,
+		TenantID:   c.TenantID,
+		UserAgent:  "vanzik-mcp-gateway/" + GatewayBuildVersion,
+		HTTPClient: c.HTTPClient,
+	}
+	if err := caller.RecordForcedAudit(ctx, buildMappedActionRequest(req, mappedScope), d.Reason, d.Rule); err != nil {
+		log.Printf("vanzik-mcp-gateway: forced-audit record failed (refusal unaffected): %v", err)
+	}
+	return d
 }
 
 // failModeDecision translates a /v1/check failure into the configured

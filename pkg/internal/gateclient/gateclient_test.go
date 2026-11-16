@@ -52,16 +52,17 @@ func TestInferFilesystemAction(t *testing.T) {
 	}
 }
 
-func TestFirstStringArg(t *testing.T) {
-	args := map[string]interface{}{"cmd": "ls", "empty": "", "n": 1}
-	if got := FirstStringArg(args, "command", "cmd"); got != "ls" {
-		t.Errorf("FirstStringArg = %q, want ls", got)
+// FirstStringArg's cases, carried over to the table lookup that replaced it.
+func TestScopeArg(t *testing.T) {
+	args := map[string]interface{}{"cmd": "ls", "value": "", "content": 1}
+	if got := ScopeArg(args, "shell", ArgCommand); got != "ls" {
+		t.Errorf("ScopeArg = %q, want ls", got)
 	}
-	if got := FirstStringArg(args, "empty", "n", "missing"); got != "" {
-		t.Errorf("FirstStringArg non-string/empty = %q, want \"\"", got)
+	if got := ScopeArg(args, "data", ArgValue); got != "" {
+		t.Errorf("ScopeArg non-string/empty = %q, want \"\"", got)
 	}
-	if got := FirstStringArg(nil, "command"); got != "" {
-		t.Errorf("FirstStringArg(nil) = %q, want \"\"", got)
+	if got := ScopeArg(nil, "shell", ArgCommand); got != "" {
+		t.Errorf("ScopeArg(nil) = %q, want \"\"", got)
 	}
 }
 
