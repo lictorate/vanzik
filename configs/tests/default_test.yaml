@@ -150,6 +150,16 @@ tests:
     expect: DENY
     expect_rule: "deny:mcp_tool:*:write_file"
 
+  - name: an MCP copy tool is denied, since it moves a denied file somewhere readable
+    request: {scope: mcp_tool, command: "fs:copy_file", agent_id: dev}
+    expect: DENY
+    expect_rule: "deny:mcp_tool:*:copy_file"
+
+  - name: an MCP append tool is denied
+    request: {scope: mcp_tool, command: "fs:append_file", agent_id: dev}
+    expect: DENY
+    expect_rule: "deny:mcp_tool:*:append_file"
+
   - name: a GitHub MCP tool needs approval
     request: {scope: mcp_tool, command: "github:list_issues", agent_id: dev}
     expect: REQUIRE_APPROVAL
