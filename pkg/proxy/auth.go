@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -286,6 +288,22 @@ func bearerToken(r *http.Request) string {
 func requireAuthOrSession(apiKey string, store *SessionStore, requireCSRF bool, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if apiKey == "" {
+			// Keyless: the server only listens on loopback, but a browser can
+			// still reach it (DNS rebinding makes a hostile page same-origin).
+			// A rebound page keeps its own Host header, so require a loopback one.
+			if !requestHostIsLoopback(r.Host) {
+				http.Error(w, "Forbidden: set --api-key to use this server under a non-loopback Host", http.StatusForbidden)
+				return
+			}
+			// A browser tags cross-origin requests with Origin. Without a key
+			// there is no secret for a page to lack, so accept only a same-origin
+			// (or Origin-less, non-browser) caller.
+			if o := r.Header.Get("Origin"); o != "" {
+				if u, err := url.Parse(o); err != nil || !strings.EqualFold(u.Host, r.Host) {
+					http.Error(w, "Forbidden: cross-origin request to a keyless server", http.StatusForbidden)
+					return
+				}
+			}
 			next(w, r)
 			return
 		}
@@ -315,4 +333,16 @@ func requireAuthOrSession(apiKey string, store *SessionStore, requireCSRF bool, 
 		}
 		next(w, r)
 	}
+}
+
+// requestHostIsLoopback reports whether an HTTP Host header names the local
+// machine: localhost, 127.0.0.0/8 or [::1], with or without a port and with
+// or without a trailing dot. 0.0.0.0, an empty Host and any other name are not.
+func requestHostIsLoopback(hostport string) bool {
+	h := hostport
+	if sh, _, err := net.SplitHostPort(hostport); err == nil {
+		h = sh
+	}
+	h = strings.ToLower(strings.TrimSuffix(h, "."))
+	return IsLoopbackHost(h)
 }

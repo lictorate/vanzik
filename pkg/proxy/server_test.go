@@ -947,6 +947,7 @@ func TestRequireAuthOrSession_NoAPIKey_AllowsAll(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/test", nil)
+	req.Host = "localhost:8080" // keyless mode requires a loopback Host
 	w := httptest.NewRecorder()
 	handler(w, req)
 
