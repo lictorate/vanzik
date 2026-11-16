@@ -58,17 +58,10 @@ func (s *Server) dispatchStreamingUpstream(
 	target := *upstream
 	target.Path = joinPath(upstream.Path, path)
 
-	var bodyReader io.Reader
-	if len(body) > 0 {
-		bodyReader = bytes.NewReader(body)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bodyReader)
+	req, err := newUpstreamRequest(ctx, http.MethodPost, &target, upstream.Host, srcHeader, body)
 	if err != nil {
 		return nil, fmt.Errorf("build streaming upstream request: %w", err)
 	}
-	copyForwardableHeaders(srcHeader, req.Header)
-	rewriteUserAgent(req.Header, srcHeader.Get("User-Agent"))
-	req.Host = upstream.Host
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -89,6 +82,65 @@ func (s *Server) copyStreamingResponseHeaders(w http.ResponseWriter, upstream *h
 		w.Header().Set("X-Accel-Buffering", "no")
 	}
 	w.WriteHeader(upstream.StatusCode)
+}
+
+// refuseUndecodableStreamEncoding refuses a 2xx stream whose body still
+// carries a Content-Encoding after net/http's own gzip decoding (see
+// newUpstreamRequest): SSE frames the gate cannot parse would reach
+// the client undecoded. Nothing has been written yet, so the refusal is
+// a complete HTTP 200 SSE stream like any other: a non-2xx would make
+// the SDK raise before the agent sees the reason. Reports whether it
+// refused.
+func (s *Server) refuseUndecodableStreamEncoding(w http.ResponseWriter, r *http.Request, provider, model string, resp *http.Response) bool {
+	enc := undecodedContentEncoding(resp.Header)
+	if enc == "" {
+		return false
+	}
+	metrics.IncLLMProxyUndecodableContentEncoding(provider)
+	decision := undecodableEncodingDecision(provider, enc)
+
+	copyForwardableHeaders(resp.Header, w.Header())
+	w.Header().Del("Content-Length")
+	w.Header().Del("Content-Encoding")
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	if provider == "anthropic" {
+		// The Anthropic SDKs reject a stream whose first event is not
+		// message_start; upstream's was discarded with the body.
+		_, _ = w.Write(anthropicMessageStartEvent(model))
+	}
+	_, _ = w.Write(s.buildRefusal(provider, decision,
+		&RefusalContext{Provider: provider, AnthropicToolUseIndex: -1, Model: model}))
+	// Flush before auditing so the refusal does not wait on the audit
+	// round trip, like the other stream refusals.
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	s.auditStreamRefusal(r, provider, decision, "", "")
+	return true
+}
+
+// anthropicMessageStartEvent opens a synthetic Anthropic stream. Empty
+// model becomes "vanzik-refusal", like the non-streaming refusals.
+func anthropicMessageStartEvent(model string) []byte {
+	if model == "" {
+		model = "vanzik-refusal"
+	}
+	body, _ := json.Marshal(map[string]interface{}{
+		"type": "message_start",
+		"message": map[string]interface{}{
+			"id":            "vanzik-refusal",
+			"type":          "message",
+			"role":          "assistant",
+			"model":         model,
+			"content":       []interface{}{},
+			"stop_reason":   nil,
+			"stop_sequence": nil,
+			"usage":         map[string]interface{}{"input_tokens": 0, "output_tokens": 0},
+		},
+	})
+	return []byte("event: message_start\ndata: " + string(body) + "\n\n")
 }
 
 // streamingForwardError writes a 502 envelope. Only valid before any
@@ -307,6 +359,10 @@ func (s *Server) handleStreamingChatCompletion(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	if s.refuseUndecodableStreamEncoding(w, r, "openai", "", upstreamResp) {
+		return
+	}
+
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		s.streamingForwardError(w, errors.New("response writer does not support flushing"))
@@ -320,7 +376,7 @@ func (s *Server) handleStreamingChatCompletion(w http.ResponseWriter, r *http.Re
 }
 
 // handleStreamingAnthropicMessages mirrors handleStreamingChatCompletion.
-func (s *Server) handleStreamingAnthropicMessages(w http.ResponseWriter, r *http.Request, body []byte, _ *AnthropicMessagesRequest) {
+func (s *Server) handleStreamingAnthropicMessages(w http.ResponseWriter, r *http.Request, body []byte, req *AnthropicMessagesRequest) {
 	if !s.admitStream(w) {
 		return
 	}
@@ -336,6 +392,10 @@ func (s *Server) handleStreamingAnthropicMessages(w http.ResponseWriter, r *http
 	if upstreamResp.StatusCode < 200 || upstreamResp.StatusCode >= 300 {
 		s.copyStreamingResponseHeaders(w, upstreamResp)
 		_, _ = io.Copy(w, upstreamResp.Body)
+		return
+	}
+
+	if s.refuseUndecodableStreamEncoding(w, r, "anthropic", req.Model, upstreamResp) {
 		return
 	}
 
