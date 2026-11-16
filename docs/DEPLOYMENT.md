@@ -245,6 +245,8 @@ Permissive-localhost is safe because:
 - State-changing endpoints require a CSRF token (`X-CSRF-Token`) that a cross-origin page cannot read.
 - Origins like `http://localhost.evil.com` are **rejected** — the trailing `:` on the localhost prefix blocks DNS-rebinding-style lookalikes.
 
+**Keyless servers do not serve other origins.** Without `--api-key` the approve, deny, audit and `/api/*` endpoints answer only a request whose `Host` is loopback (`localhost`, `127.0.0.0/8`, `[::1]`) and whose `Origin`, when present, is the same origin as that `Host`; anything else gets `403` before the handler runs. A page on another localhost port (a dev UI on `:3000`), a DNS-rebound hostname, `host.docker.internal`, a tunnel and a reverse proxy all fail that test, and `--allowed-origin` does not change it, because with no key there is no secret that tells a hostile page from a friendly one. To serve a UI from another origin or reach the server by another name, set `--api-key` and name the origin with `--allowed-origin`. `POST /v1/audit` additionally requires `Content-Type: application/json` in every mode.
+
 For production, set the exact origin of whatever frontend calls the Vanzik HTTP API directly. If the only consumer is agents (which speak HTTP, not browsers), you can leave `--allowed-origin` empty — agents do not send `Origin`.
 
 ---

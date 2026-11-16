@@ -167,10 +167,15 @@ func NewServer(cfg *Config) (*Server, error) {
 		return nil, fmt.Errorf("parse upstream-anthropic: %w", err)
 	}
 
+	// Clone so the timeout does not mutate the process-wide default.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = cfg.UpstreamHeaderTimeout
+
 	client := &http.Client{
+		Transport: transport,
 		// No end-to-end timeout: streams last as long as upstream and
 		// client agree. The request context (client disconnect)
-		// cancels.
+		// cancels. Only the header wait is bounded (transport above).
 		Timeout: 0,
 	}
 

@@ -36,6 +36,7 @@ func TestHandleAuditRecord_RecordsForcedDeny(t *testing.T) {
 	body, _ := json.Marshal(rec)
 
 	r := httptest.NewRequest(http.MethodPost, "/v1/audit", strings.NewReader(string(body)))
+	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.handleAuditRecord(w, r)
 
@@ -91,6 +92,7 @@ func TestHandleAuditRecord_ForcesDenyEvenIfCallerSendsAllowRule(t *testing.T) {
 	}
 	body, _ := json.Marshal(rec)
 	r := httptest.NewRequest(http.MethodPost, "/v1/audit", strings.NewReader(string(body)))
+	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.handleAuditRecord(w, r)
 
@@ -128,6 +130,7 @@ func TestHandleAuditRecord_Validation(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r := httptest.NewRequest(tc.method, "/v1/audit", strings.NewReader(tc.body))
+			r.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 			srv.handleAuditRecord(w, r)
 			if w.Code != tc.want {
@@ -154,6 +157,7 @@ func TestAuditRecord_MuxRoutingPOSTvsGET(t *testing.T) {
 
 	// Unauthenticated POST → 401 (endpoint is state-changing, Bearer required).
 	r := httptest.NewRequest(http.MethodPost, "/v1/audit", strings.NewReader(string(body)))
+	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	if w.Code != http.StatusUnauthorized {
@@ -162,6 +166,7 @@ func TestAuditRecord_MuxRoutingPOSTvsGET(t *testing.T) {
 
 	// Authenticated POST (Bearer bypasses CSRF) → records.
 	r = httptest.NewRequest(http.MethodPost, "/v1/audit", strings.NewReader(string(body)))
+	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Authorization", "Bearer test-secret")
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, r)

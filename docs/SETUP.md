@@ -166,8 +166,10 @@ curl -X POST http://localhost:8080/v1/check \
 ## Authentication
 
 By default (`--api-key` not set) the server binds to `127.0.0.1` only — safe
-for local dev, but approve/deny/audit/status are unauthenticated. For
-anything beyond local dev, set an API key:
+for local dev, but approve/deny/audit/status are unauthenticated and answer
+only a loopback `Host` with no cross-origin `Origin` (a UI on another
+localhost port, `host.docker.internal`, a tunnel or a reverse proxy gets
+`403`). For anything beyond local dev, set an API key:
 
 ```bash
 ./vanzik server \

@@ -76,6 +76,7 @@ vanzik-llm-proxy \
 | `--listen`               | address to bind (host:port). A non-loopback address — including an empty host such as `:8081`, which binds every interface — requires `--proxy-api-key` (§ 8.1). | `127.0.0.1:8081`             |
 | `--upstream-openai`      | base URL for OpenAI-shape requests                        | `https://api.openai.com`     |
 | `--upstream-anthropic`   | base URL for Anthropic-shape requests                     | `https://api.anthropic.com`  |
+| `--upstream-header-timeout` | max wait for the provider's response headers; `0` disables. Non-streamed replies send headers only when generation ends, so keep it long. On expiry the proxy answers with a `502` error envelope (streaming and non-streaming alike). No idle timer applies once headers arrive. | `10m` |
 | `--guard-url`            | central server `/v1/check` URL (from `VANZIK_URL` when unset) | `http://127.0.0.1:8080`      |
 | `--api-key`              | bearer for `/v1/check` **and** `POST /v1/audit` (from `VANZIK_API_KEY`, then the key `vanzik setup` saved). Required for full forced-refusal audit fidelity when the central server is keyed (§ 5.4 Audit fidelity); without it those audits fall back to the lower-fidelity `/v1/check` path. | unset (warn) |
 | `--proxy-api-key`        | optional key the proxy itself enforces on inbound API requests; callers send it in the `X-Vanzik-Proxy-Auth` header (`<key>` or `Bearer <key>`). Empty = no proxy auth; required for a non-loopback `--listen` (§ 8.1). | unset |
@@ -188,15 +189,30 @@ It has 47 entries:
 
 The capitalised names are Claude Code's built-in tools. A mapping
 carries no argument names: which arguments feed the check is fixed per
-scope (`pkg/llmproxy/gate.go`):
+scope, in one table the MCP gateway shares
+(`pkg/internal/gateclient/args.go`):
 
 | Scope | `command` | Other fields |
 |---|---|---|
 | `shell` | the `command` / `cmd` / `script` / `code` argument; else the tool name | — |
-| `filesystem` | `<tool_name> <path>` | `path` from `path`, `file_path`, `notebook_path`, `filepath`, `target`, `target_path`, `filename`, `file`, `destination`, `src` or `dst`; `action` inferred from the tool name (read / write / delete …) |
+| `filesystem` | `<tool_name> <path>` | `path` from the first of `path`, `file_path`, `notebook_path`, `filepath`, `target`, `target_path`, `filename`, `file`, `destination`, `src` or `dst` (the path names are one group of aliases, `destination` and `dst` another, `src` a third); `action` inferred from the tool name (read / write / delete …) |
 | `network` | `<tool_name> <url>` | `url` from `url`, `uri`, `endpoint` or `target_url`; `domain` from that URL's host, else a `domain` / `host` / `hostname` argument |
 | `browser` | `<tool_name> <url>` | `url` and `domain` as for `network`; `action` is the tool name |
+| `data` | the `value` / `content` / `text` / `data` argument; else the tool name | — |
 | `unmapped` | the tool name | — |
+
+The names in one cell are aliases: the check reads the first one set,
+but the tool reads whichever one its signature names. A tool call that
+sets two aliases to different non-empty strings, such as
+`{"command": "ls", "cmd": "rm -rf /"}`, is denied with rule
+`deny:llm_api_proxy:conflicting_argument_alias` before any `/v1/check`
+call, whatever `--fail-mode` says, and recorded through the forced-audit
+path (§ 5.4 Audit fidelity). The rule and reason name the keys, not
+their values; the audit entry's request carries the redacted arguments,
+like any other entry. Equal values pass, and so do different roles:
+`src` and `dst` may differ. A `data`
+tool's `url` / `uri` / `endpoint` / `target_url` arguments are aliases
+too, though the proxy doesn't project them.
 
 ### 4.2 Policy-YAML override
 

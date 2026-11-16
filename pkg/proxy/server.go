@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"runtime/debug"
@@ -975,14 +976,14 @@ func (s *Server) resolvedApprovalToResult(req policy.ActionRequest, pa *PendingA
 		return policy.CheckResult{
 			Decision:   policy.Allow,
 			Rule:       "allow:approved",
-			Reason:     fmt.Sprintf("approval %s resolved ALLOW by human", pa.ID),
+			Reason:     fmt.Sprintf("approval %s resolved ALLOW", pa.ID),
 			ApprovalID: pa.ID,
 		}
 	case policy.Deny:
 		return policy.CheckResult{
 			Decision:   policy.Deny,
 			Rule:       "deny:approved",
-			Reason:     fmt.Sprintf("approval %s resolved DENY by human", pa.ID),
+			Reason:     fmt.Sprintf("approval %s resolved DENY", pa.ID),
 			ApprovalID: pa.ID,
 		}
 	default:
@@ -1037,14 +1038,18 @@ func approvalIDFromRequest(r *http.Request, legacyPrefix string) string {
 // which auth mechanism admitted it and the peer address it arrived from.
 // Coarse by design — with single-key auth there is no identity to record —
 // but enough to reconstruct "who could have clicked this" in an incident.
-func resolutionActor(r *http.Request) (via, from string) {
+// A keyless server ignores credentials, so whatever the caller sent proves
+// nothing and is stamped "open" like any other unauthenticated caller.
+func resolutionActor(r *http.Request, keyed bool) (via, from string) {
 	switch {
+	case !keyed:
+		via = "open"
 	case r.Header.Get("Authorization") != "":
 		via = "bearer"
 	case hasSessionCookie(r):
 		via = "session"
 	default:
-		via = "open" // server running without --api-key
+		via = "open" // a keyed server reached without the auth wrapper (a direct handler call): nothing proved who called
 	}
 	from = r.RemoteAddr
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
@@ -1097,7 +1102,7 @@ func (s *Server) logResolution(pa *PendingAction) {
 		Result: policy.CheckResult{
 			SchemaVersion: SchemaVersionV1,
 			Decision:      policy.Decision(pa.Decision),
-			Reason:        fmt.Sprintf("approval %s resolved %s by human via %s from %s", pa.ID, pa.Decision, pa.ResolvedVia, pa.ResolvedFrom),
+			Reason:        fmt.Sprintf("approval %s resolved %s via %s from %s", pa.ID, pa.Decision, pa.ResolvedVia, pa.ResolvedFrom),
 			Rule:          "approval:resolved:" + pa.ResolvedVia,
 			ApprovalID:    pa.ID,
 		},
@@ -1124,7 +1129,7 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing id", http.StatusBadRequest)
 		return
 	}
-	via, from := resolutionActor(r)
+	via, from := resolutionActor(r, s.cfg.APIKey != "")
 	pa, err := s.approval.resolve(id, policy.Allow, TenantIDFromContext(r.Context()), via, from)
 	if err != nil {
 		writeResolveError(w, err)
@@ -1148,7 +1153,7 @@ func (s *Server) handleDeny(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing id", http.StatusBadRequest)
 		return
 	}
-	via, from := resolutionActor(r)
+	via, from := resolutionActor(r, s.cfg.APIKey != "")
 	pa, err := s.approval.resolve(id, policy.Deny, TenantIDFromContext(r.Context()), via, from)
 	if err != nil {
 		writeResolveError(w, err)
@@ -1268,6 +1273,13 @@ func (s *Server) handleAuditHead(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAuditRecord(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// A cross-origin page can POST text/plain without a preflight; requiring
+	// JSON closes that "simple request" route in every auth mode.
+	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
+		http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
 		return
 	}
 
