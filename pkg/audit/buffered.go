@@ -26,6 +26,14 @@ const (
 	closeFlushTimeout = 2 * time.Second
 )
 
+// closeDrainTimeout bounds how long Close waits for the workers to drain the
+// in-memory queue. A worker wedged in the underlying logger (hung disk,
+// locked DB) cannot be interrupted, so past this deadline Close persists
+// what is still queued to the overflow file and returns; a supervisor's
+// SIGKILL after a slow stop then no longer loses the queue. A var so tests
+// can shorten it.
+var closeDrainTimeout = 5 * time.Second
+
 // BufferedAsyncOpts configures NewBufferedAsyncLogger.
 //
 // Zero values for QueueSize, Workers, and RecoveryInterval are replaced
@@ -56,8 +64,10 @@ type BufferedAsyncOpts struct {
 //     Entries are durable across saturation but NOT ordered across it.
 //   - Close is idempotent (sync.Once). It signals shutdown through b.closed
 //     (the queue itself is never closed), lets workers drain what is
-//     queued, then runs a best-effort overflow drain bounded by a short
-//     timeout.
+//     queued for at most closeDrainTimeout, then runs a best-effort
+//     overflow drain bounded by a short timeout. If the workers are still
+//     busy at the deadline, what is left in the queue is written to the
+//     overflow file instead.
 //   - The recovery goroutine runs every RecoveryInterval. Each tick renames
 //     the overflow file to a `.draining.<ts>` sibling so concurrent Log()
 //     callers never see a partially drained file, enqueues each line
@@ -191,6 +201,13 @@ func (b *BufferedAsyncLogger) Query(filter QueryFilter) ([]Entry, error) {
 // closeFlushTimeout so a small backlog at shutdown still reaches the
 // underlying logger.
 //
+// Close returns even if the underlying logger is wedged. If the workers
+// finish within closeDrainTimeout, the overflow flush above follows, so the
+// bound is closeDrainTimeout + closeFlushTimeout. If they do not, Close skips
+// the flush and appends what is still queued to the overflow file for the
+// next process start, taking closeDrainTimeout plus those disk writes. The
+// entry each wedged worker is holding cannot be recovered.
+//
 // Close does NOT close the underlying logger; the caller owns that.
 //
 // b.queue is never closed: a close would race concurrent Log() sends.
@@ -198,8 +215,16 @@ func (b *BufferedAsyncLogger) Query(filter QueryFilter) ([]Entry, error) {
 func (b *BufferedAsyncLogger) Close() error {
 	b.closeOnce.Do(func() {
 		close(b.closed)
-		b.wg.Wait()
-		b.flushOverflowOnce(closeFlushTimeout)
+		done := make(chan struct{})
+		go func() { b.wg.Wait(); close(done) }()
+		select {
+		case <-done:
+			b.flushOverflowOnce(closeFlushTimeout)
+		case <-time.After(closeDrainTimeout):
+			n, failed := b.spillQueue()
+			log.Printf("WARN audit buffered: workers did not drain within %s; spilled %d queued entries to %s (%d failed)",
+				closeDrainTimeout, n, b.overflowPath, failed)
+		}
 	})
 	return nil
 }
@@ -437,6 +462,26 @@ func (b *BufferedAsyncLogger) tryDrainOverflow() {
 	}
 	if respilled > 0 {
 		log.Printf("INFO audit buffered: re-spilled %d entries (queue still saturated)", respilled)
+	}
+}
+
+// spillQueue moves whatever is still queued to the overflow file, for Close
+// when the workers are wedged. It returns how many entries it spilled and how
+// many it could not write.
+func (b *BufferedAsyncLogger) spillQueue() (spilled, failed int) {
+	for {
+		select {
+		case e := <-b.queue:
+			b.noteQueueDepth(-1)
+			if err := b.appendOverflow(e); err != nil {
+				failed++
+				continue
+			}
+			b.noteDroppedToOverflow()
+			spilled++
+		default:
+			return spilled, failed
+		}
 	}
 }
 
