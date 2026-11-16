@@ -591,6 +591,18 @@ func protocolViolationDecision(provider string, kind protocolViolationKind) Deci
 			Reason: "upstream returned tool calls on multiple choices; refused",
 			Rule:   "deny:llm_api_proxy:multi_choice_tool_calls",
 		}
+	case violationMixedFunctionCall:
+		return Decision{
+			Allow:  false,
+			Reason: "upstream mixed legacy function_call and tool_calls in one response; refused",
+			Rule:   "deny:llm_api_proxy:mixed_function_call",
+		}
+	case violationToolNameConflict:
+		return Decision{
+			Allow:  false,
+			Reason: "upstream streamed conflicting tool name fragments; refused",
+			Rule:   "deny:llm_api_proxy:tool_name_conflict",
+		}
 	default:
 		if provider == "anthropic" {
 			return Decision{

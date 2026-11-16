@@ -29,6 +29,10 @@ type openAIDeltaMessage struct {
 	Role      string                `json:"role,omitempty"`
 	Content   string                `json:"content,omitempty"`
 	ToolCalls []openAIToolCallDelta `json:"tool_calls,omitempty"`
+	// FunctionCall is the deprecated single-call shape (request
+	// `functions`). The OpenAI SDKs still surface it and frameworks
+	// still execute it, so it is gated like a tool_call.
+	FunctionCall *openAIToolCallFuncDelta `json:"function_call,omitempty"`
 }
 
 type openAIToolCallDelta struct {
@@ -103,6 +107,16 @@ const (
 	// choice, so fragments would merge into an argument string the
 	// firewall gates and no client executes.
 	violationMultiChoiceToolCalls
+
+	// violationMixedFunctionCall (OpenAI): legacy function_call and
+	// tool_calls deltas in one cycle. No real upstream mixes them, and
+	// clients disagree on which one they execute.
+	violationMixedFunctionCall
+
+	// violationToolNameConflict (OpenAI): a later name fragment differs
+	// from the first. SDKs disagree (openai-python concatenates,
+	// openai-node keeps the last), so no single name can be gated.
+	violationToolNameConflict
 )
 
 // OpenAIToolCallAccumulator assembles streaming tool_call fragments
@@ -132,6 +146,11 @@ type OpenAIToolCallAccumulator struct {
 	// deltas, or -1. A second choice with tool_calls is a protocol
 	// violation, and only this choice's finish_reason closes the cycle.
 	toolCallChoice int
+
+	// sawToolCalls / sawFunctionCall record which call shape this
+	// cycle carries; both set is violationMixedFunctionCall.
+	sawToolCalls    bool
+	sawFunctionCall bool
 }
 
 // NewOpenAIToolCallAccumulator returns an accumulator with the given
@@ -158,6 +177,8 @@ func (a *OpenAIToolCallAccumulator) Reset() {
 	a.active = false
 	a.completed = false
 	a.toolCallChoice = -1
+	a.sawToolCalls = false
+	a.sawFunctionCall = false
 }
 
 // complete assembles the calls and latches `completed`. Every
@@ -245,7 +266,7 @@ func (a *OpenAIToolCallAccumulator) FeedEvent(rawEvent []byte) (FeedResult, erro
 	// tool_call deltas can land on any choice.
 	hasToolCallDelta := false
 	for _, ch := range env.Choices {
-		if len(ch.Delta.ToolCalls) > 0 {
+		if len(ch.Delta.ToolCalls) > 0 || ch.Delta.FunctionCall != nil {
 			hasToolCallDelta = true
 			break
 		}
@@ -261,7 +282,7 @@ func (a *OpenAIToolCallAccumulator) FeedEvent(rawEvent []byte) (FeedResult, erro
 		// Accumulate before buffering so overflow aborts without
 		// storing the event.
 		for _, ch := range env.Choices {
-			if len(ch.Delta.ToolCalls) == 0 {
+			if len(ch.Delta.ToolCalls) == 0 && ch.Delta.FunctionCall == nil {
 				continue
 			}
 			// SECURITY: with n>1 each choice numbers its calls from
@@ -273,7 +294,23 @@ func (a *OpenAIToolCallAccumulator) FeedEvent(rawEvent []byte) (FeedResult, erro
 				return FeedResult{ProtocolViolation: true, violation: violationMultiChoiceToolCalls}, nil
 			}
 			a.toolCallChoice = ch.Index
-			for _, tc := range ch.Delta.ToolCalls {
+			if len(ch.Delta.ToolCalls) > 0 {
+				a.sawToolCalls = true
+			}
+			if ch.Delta.FunctionCall != nil {
+				a.sawFunctionCall = true
+			}
+			if a.sawToolCalls && a.sawFunctionCall {
+				return FeedResult{ProtocolViolation: true, violation: violationMixedFunctionCall}, nil
+			}
+			deltas := ch.Delta.ToolCalls
+			if ch.Delta.FunctionCall != nil {
+				// Legacy function_call is one call per message: it
+				// takes index 0, which no tool_call can share (mixing
+				// was refused above).
+				deltas = []openAIToolCallDelta{{Index: 0, Function: ch.Delta.FunctionCall}}
+			}
+			for _, tc := range deltas {
 				st, ok := a.byIndex[tc.Index]
 				if !ok {
 					st = &openAIToolCallState{Index: tc.Index}
@@ -284,11 +321,16 @@ func (a *OpenAIToolCallAccumulator) FeedEvent(rawEvent []byte) (FeedResult, erro
 				}
 				if tc.Function != nil {
 					st.HasFunction = true
-					// SECURITY: first non-empty name wins, matching
-					// client SDKs. Last-wins would let a second, different
-					// name be gated while the client executes the first.
+					// SECURITY: clients disagree on name fragments
+					// (openai-python concatenates, openai-node keeps
+					// the last), so the first name is gated and a
+					// different later fragment fails the stream closed.
+					// A repeat of the same name is tolerated: some
+					// compatible servers send it on every delta.
 					if tc.Function.Name != "" && st.Name == "" {
 						st.Name = tc.Function.Name
+					} else if tc.Function.Name != "" && tc.Function.Name != st.Name {
+						return FeedResult{ProtocolViolation: true, violation: violationToolNameConflict}, nil
 					}
 					if tc.Function.Arguments != "" {
 						// The cap applies to cumulative argument bytes,

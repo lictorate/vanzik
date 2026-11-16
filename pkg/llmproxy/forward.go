@@ -247,8 +247,9 @@ func (s *Server) gateOpenAINonStreaming(
 	resp *ChatCompletionResponse,
 ) (Decision, bool, ToolCallCheck) {
 	for _, choice := range resp.Choices {
-		for i := range choice.Message.ToolCalls {
-			tc := &choice.Message.ToolCalls[i]
+		calls := choice.Message.gateableToolCalls()
+		for i := range calls {
+			tc := &calls[i]
 			check := buildOpenAINonStreamingCheck(s, r, resp, tc)
 			decision, err := s.runPolicyCheck(ctx, check)
 			if err != nil {

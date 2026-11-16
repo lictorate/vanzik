@@ -59,6 +59,22 @@ type ChatCompletionMessage struct {
 	Role      string                       `json:"role"`
 	Content   *string                      `json:"content,omitempty"`
 	ToolCalls []ChatCompletionToolCallEcho `json:"tool_calls,omitempty"`
+	// FunctionCall is the deprecated single-call shape (request
+	// `functions`), still surfaced by the OpenAI SDKs and executed by
+	// frameworks, so it is gated like a tool_call.
+	FunctionCall *ChatCompletionToolEcho `json:"function_call,omitempty"`
+}
+
+// gateableToolCalls returns every call a client could execute from m:
+// tool_calls, then the legacy function_call as a call with an empty ID
+// (the legacy shape has none).
+func (m *ChatCompletionMessage) gateableToolCalls() []ChatCompletionToolCallEcho {
+	if m.FunctionCall == nil {
+		return m.ToolCalls
+	}
+	out := make([]ChatCompletionToolCallEcho, 0, len(m.ToolCalls)+1)
+	out = append(out, m.ToolCalls...)
+	return append(out, ChatCompletionToolCallEcho{Type: "function", Function: *m.FunctionCall})
 }
 
 // ChatCompletionToolCallEcho is a tool call in a response.
