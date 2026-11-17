@@ -94,9 +94,11 @@ type protocolViolationKind uint8
 
 const (
 	// violationInterleavedToolUse (Anthropic): a second tool_use opened
-	// before the first closed, or start-seeded input conflicts with
-	// input_json_deltas. Anthropic emits blocks serially; an interleaved
-	// second tool_use would pass ungated once the first cycle resets.
+	// before the first closed, start-seeded input conflicts with
+	// input_json_deltas, or a content_block_start carries a key that
+	// differs from a field name only in case. Anthropic emits blocks
+	// serially; an interleaved second tool_use would pass ungated once
+	// the first cycle resets.
 	violationInterleavedToolUse protocolViolationKind = iota
 
 	// violationOrphanedToolInput (Anthropic): input_json_delta with no
