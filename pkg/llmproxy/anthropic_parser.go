@@ -101,8 +101,9 @@ type AnthropicAccumulator struct {
 	// the message. Reset keeps them: the client keeps every block of
 	// the message, including those of finished cycles. One accumulator
 	// serves one stream, and a stream carries one message. They are not
-	// cleared on a repeated message_start, because anthropic-python
-	// ignores one and keeps the content it already has.
+	// cleared on a repeated message_start: anthropic-python ignores one
+	// and keeps the content it already has, and @anthropic-ai/sdk
+	// rejects one outright.
 	startCount   int
 	startIndexes map[int]bool
 }
@@ -187,13 +188,22 @@ func (a *AnthropicAccumulator) FeedEvent(rawEvent []byte) (FeedResult, error) {
 		return FeedResult{}, fmt.Errorf("anthropic parser: malformed event JSON: %w", err)
 	}
 
+	// SECURITY: encoding/json matches keys case-insensitively and the
+	// client SDKs match them exactly, so a `"Type"` beside `"type"`
+	// makes the gate and the client read different values: event or
+	// block types, indexes, ids, names, inputs. No reading is safe;
+	// refuse. The event's own keys are checked here, before the switch,
+	// because the switch trusts the decoded type. The same input just
+	// decoded into env, so this decode cannot fail.
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(dataLine, &fields)
+	if hasCaseVariantKey(fields, anthropicEventKeys[:]) {
+		return FeedResult{ProtocolViolation: true, violation: violationInterleavedToolUse}, nil
+	}
+
 	switch env.Type {
 	case "content_block_start":
-		// SECURITY: encoding/json matches keys case-insensitively and
-		// the client SDKs match them exactly, so a `"Type"` beside
-		// `"type"` makes the gate and the client read different block
-		// types (or ids, names, inputs). No reading is safe; refuse.
-		if startHasCaseVariantKey(dataLine) {
+		if blockHasCaseVariantKey(fields["content_block"]) {
 			return FeedResult{ProtocolViolation: true, violation: violationInterleavedToolUse}, nil
 		}
 		inPlace := env.Index == a.startCount && !a.startIndexes[env.Index]
@@ -378,32 +388,30 @@ func isEmptyJSONObject(seed []byte) bool {
 	return true
 }
 
-// anthropicStartKeys are the keys FeedEvent reads from a
-// content_block_start event and its content_block.
-var anthropicStartKeys = [...]string{"type", "index", "content_block", "id", "name", "input"}
+// anthropicEventKeys and anthropicBlockKeys are the keys FeedEvent
+// reads from an event (anthropicEventEnvelope) and from a
+// content_block_start's content_block.
+var (
+	anthropicEventKeys = [...]string{"type", "index", "content_block", "delta"}
+	anthropicBlockKeys = [...]string{"type", "id", "name", "input"}
+)
 
-// startHasCaseVariantKey reports whether a content_block_start event,
-// or its content_block, has a key that encoding/json would fold onto
-// one of anthropicStartKeys without being spelled exactly like it.
-// strings.EqualFold is the fold encoding/json uses (see its fold.go).
-func startHasCaseVariantKey(dataLine []byte) bool {
-	var event map[string]json.RawMessage
-	if json.Unmarshal(dataLine, &event) != nil {
-		return false
-	}
-	if hasCaseVariantKey(event) {
-		return true
-	}
+// blockHasCaseVariantKey is hasCaseVariantKey for a content_block
+// object; anything else (absent, not an object) reports false.
+func blockHasCaseVariantKey(raw json.RawMessage) bool {
 	var block map[string]json.RawMessage
-	if json.Unmarshal(event["content_block"], &block) != nil {
+	if json.Unmarshal(raw, &block) != nil {
 		return false
 	}
-	return hasCaseVariantKey(block)
+	return hasCaseVariantKey(block, anthropicBlockKeys[:])
 }
 
-func hasCaseVariantKey(obj map[string]json.RawMessage) bool {
+// hasCaseVariantKey reports whether obj has a key that encoding/json
+// would fold onto one of keys without being spelled exactly like it.
+// strings.EqualFold is the fold encoding/json uses (see its fold.go).
+func hasCaseVariantKey(obj map[string]json.RawMessage, keys []string) bool {
 	for k := range obj {
-		for _, want := range anthropicStartKeys {
+		for _, want := range keys {
 			if k != want && strings.EqualFold(k, want) {
 				return true
 			}

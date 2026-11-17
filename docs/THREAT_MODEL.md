@@ -48,7 +48,7 @@ The provider is trusted for the *content* of its answers but **not for the struc
 |---|---|---|
 | Interleaved second `tool_use` block | `anthropic_parser.go` (`FeedEvent`) | A second block opening while one is still buffering would be flushed ungated when the first cycle resets. The whole stream is refused. |
 | Start-seeded input plus streamed deltas | `anthropic_parser.go` | Two argument sources would concatenate into invalid JSON and the gate would evaluate a truncated view. Refused. |
-| Case-variant keys in a block start | `anthropic_parser.go` | Go's JSON decoder folds key case and the SDKs don't, so `"Type"` beside `"type"` would let the gate and the client read different block types or arguments. Refused (`deny:llm_api_proxy:tool_use_interleaved`). |
+| Case-variant keys in an event or a block start | `anthropic_parser.go` | Go's JSON decoder folds key case and the SDKs don't, so `"Type"` beside `"type"` would let the gate and the client read different event types, block types or arguments. Checked on every event's own keys and on each `content_block`. Refused (`deny:llm_api_proxy:tool_use_interleaved`). |
 | Function name sent in fragments | `openai_parser.go` | A second name fragment for the same call, identical or not, would make the gate evaluate a different name than some client executes: openai-python concatenates name fragments and openai-node keeps the last. The stream is refused (`deny:llm_api_proxy:tool_name_conflict`). |
 | Legacy `function_call` mixed with `tool_calls` | `openai_parser.go` | Clients disagree on which shape they execute. The stream is refused (`deny:llm_api_proxy:mixed_function_call`). A legacy `function_call` on its own is gated like any tool call. |
 

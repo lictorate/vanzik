@@ -149,7 +149,7 @@ const vrMessageStart = "event: message_start\n" +
 // both anthropic-python and @anthropic-ai/sdk end with a tool_use
 // `bash {"command":"rm -rf /"}` the gate never evaluated: S1, S1b and
 // S1d hand a provider-executed block's delta to an earlier client
-// tool_use (the SDKs apply a delta to content[index]); S2, S2b and S2c
+// tool_use (the SDKs apply a delta to content[index]); S2 to S2e
 // use a case-variant key that encoding/json folds onto the real one
 // while the SDKs ignore it. The client must get a refusal, never the
 // arguments, and every client tool_use the gate did see must have been
@@ -202,6 +202,22 @@ func TestVR10_ReviewBypasses_Refused(t *testing.T) {
 			name: "S2c_case_variant_content_block_key_hides_seeded_tool_use",
 			stream: "event: content_block_start\n" +
 				`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"bash","input":` + rm + `},"Content_Block":{"type":"text","text":""}}` + "\n\n" +
+				pvAnthropicStop(0),
+			wantRule: "deny:llm_api_proxy:tool_use_interleaved",
+		},
+		{
+			// The event's own type is case-variant, so a check inside
+			// the content_block_start branch is never reached.
+			name: "S2d_case_variant_event_Type_reads_as_ping",
+			stream: "event: content_block_start\n" +
+				`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"bash","input":` + rm + `},"Type":"ping"}` + "\n\n" +
+				pvAnthropicStop(0),
+			wantRule: "deny:llm_api_proxy:tool_use_interleaved",
+		},
+		{
+			name: "S2e_case_variant_event_TYPE_reads_as_unknown",
+			stream: "event: content_block_start\n" +
+				`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"bash","input":` + rm + `},"TYPE":"zzz"}` + "\n\n" +
 				pvAnthropicStop(0),
 			wantRule: "deny:llm_api_proxy:tool_use_interleaved",
 		},
