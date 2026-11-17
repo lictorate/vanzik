@@ -250,8 +250,10 @@ func TestAudit_H3_hasDuplicateJSONKeys(t *testing.T) {
 	}
 }
 
-// The OpenAI accumulator keeps the first function name for an index, as
-// first-wins clients do.
+// No single name can be gated when a later fragment names a different
+// tool for the same index: openai-python concatenates name fragments and
+// openai-node keeps the last, so the accumulator refuses the stream
+// rather than gating the first name.
 func TestAudit_M1_OpenAIToolNameFirstWins(t *testing.T) {
 	acc := NewOpenAIToolCallAccumulator(0)
 
@@ -259,22 +261,21 @@ func TestAudit_M1_OpenAIToolNameFirstWins(t *testing.T) {
 	ev1 := []byte(`data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{}"}}]},"finish_reason":null}]}` + "\n\n")
 	// Fragment 2: a SECOND, different name "bash" for the same index.
 	ev2 := []byte(`data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"bash"}}]},"finish_reason":null}]}` + "\n\n")
-	ev3 := []byte(`data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n")
 
 	if _, err := acc.FeedEvent(ev1); err != nil {
 		t.Fatalf("ev1: %v", err)
 	}
-	if _, err := acc.FeedEvent(ev2); err != nil {
+	res, err := acc.FeedEvent(ev2)
+	if err != nil {
 		t.Fatalf("ev2: %v", err)
 	}
-	res, err := acc.FeedEvent(ev3)
-	if err != nil {
-		t.Fatalf("ev3: %v", err)
+	if !res.ProtocolViolation {
+		t.Fatalf("conflicting name fragment = %+v, want a protocol violation", res)
 	}
-	if !res.Completed || len(res.CompletedToolCalls) != 1 {
-		t.Fatalf("expected 1 completed tool call, got %+v", res)
+	if rule := protocolViolationDecision("openai", res.violation).Rule; rule != "deny:llm_api_proxy:tool_name_conflict" {
+		t.Errorf("rule = %q, want deny:llm_api_proxy:tool_name_conflict", rule)
 	}
-	if name := res.CompletedToolCalls[0].ToolName; name != "read_file" {
-		t.Errorf("tool name = %q, want \"read_file\" (first-wins)", name)
+	if name, _ := acc.pendingIdentity(); name != "read_file" {
+		t.Errorf("audit identity = %q, want the first name, the one the gate would have seen", name)
 	}
 }

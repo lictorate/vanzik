@@ -143,9 +143,9 @@ Two paths:
    field order, whitespace, and any caller-specific quirks the
    upstream might key on).
 4. Stream the upstream response back to the client. If the response
-   contains `tool_calls` (OpenAI) or `tool_use` content blocks
-   (Anthropic), gate them before forwarding the response body. See
-   § 5.
+   contains `tool_calls` or a legacy `function_call` (OpenAI) or
+   `tool_use` content blocks (Anthropic), gate them before forwarding
+   the response body. See § 5.
 
 #### Streaming (`stream: true` or `Accept: text/event-stream`)
 
@@ -304,9 +304,20 @@ Critical observations:
 - `tool_calls[i].id` may appear only on the **first** delta for that
   index. Subsequent deltas for the same index have only `function`
   fields.
-- `function.name` may be split across deltas in principle; in practice
-  it always arrives whole on the first delta. The accumulator handles
-  fragmentation for both `name` and `arguments` defensively.
+- `function.name` arrives whole on the first delta in practice. Clients
+  disagree on a name sent in fragments (openai-python concatenates them,
+  openai-node keeps the last), so the proxy refuses a stream that sends
+  a second non-empty name fragment for the same call, identical or not
+  (`deny:llm_api_proxy:tool_name_conflict`, § 5.4): openai-python turns
+  `bash` sent twice into `bashbash`. `arguments` fragments are
+  concatenated.
+- A request that sends the deprecated `functions` parameter gets
+  `delta.function_call` (one call, no `id`, `finish_reason:
+  "function_call"`) instead of `tool_calls`. The OpenAI SDKs still
+  surface it and frameworks still execute it, so it is gated exactly
+  like a `tool_calls` entry, streaming and non-streaming. A stream that
+  carries both shapes is refused
+  (`deny:llm_api_proxy:mixed_function_call`).
 - `arguments` is a **JSON-encoded string** in the wire format (yes — the
   field is a string, not an object). Concatenating fragments and
   parsing the result yields the actual argument object.
@@ -526,7 +537,10 @@ not imply "the client cannot use it".
 
 Before falling back to passthrough the proxy asks the narrower
 question — does this body carry a tool call at all? — using a probe that
-constrains only the path to `tool_calls` / `tool_use` and nothing else.
+constrains only the path to `tool_calls`, `function_call` / `tool_use`
+and nothing else. The probe also skips a leading UTF-8 byte order mark:
+`encoding/json` rejects one, but Python's `json.loads` on bytes skips it
+and runs the calls behind it.
 If one is present the response is refused under the fixed rule
 `deny:llm_api_proxy:undecodable_tool_call`. If none is present the body
 passes through unchanged.
@@ -575,6 +589,8 @@ refused rather than forwarded, each under its own stable rule string:
 | `deny:llm_api_proxy:orphaned_tool_input` | **Anthropic.** An `input_json_delta` arrived while no `tool_use` block was open. The fragments belong to a call the firewall never saw start, so no gate cycle can ever evaluate them. |
 | `deny:llm_api_proxy:undecodable_content_encoding` | **Both providers, streaming and non-streaming.** A 2xx upstream response still carried a `Content-Encoding` after the proxy's own decoding. The proxy never forwards the client's `Accept-Encoding`: it lets Go's HTTP transport negotiate gzip and decode it, so the gate always reads plain bytes. What remains encoded (`br`, `zstd`, `deflate`, stacked encodings, or an encoding the upstream sent unasked) cannot be read, and the client would decode and run it. The refusal is an HTTP 200 in the provider's shape, and `vanzik_llmproxy_undecodable_content_encoding_total{provider}` counts it. Clients receive uncompressed bodies from the proxy, and `--max-buffer-bytes` bounds the decoded size. |
 | `deny:llm_api_proxy:multi_choice_tool_calls` | **OpenAI.** Tool-call deltas arrived on more than one `choices[].index`. `tool_calls[i].index` is unique only *within* a choice, so two choices' fragments would merge into a single argument string the firewall gates and no client executes. |
+| `deny:llm_api_proxy:mixed_function_call` | **OpenAI.** One response streamed both a legacy `function_call` and `tool_calls`. No real upstream mixes them, and clients disagree on which one they execute. |
+| `deny:llm_api_proxy:tool_name_conflict` | **OpenAI.** A call (`tool_calls[i]` or a legacy `function_call`) carried a second non-empty `name` fragment, identical to the first or not. openai-python concatenates the fragments (`bash` twice becomes `bashbash`) and openai-node keeps the last, so no single name can be gated. A server that repeats the full name on every delta is refused too. |
 
 Every rule above discards the buffered bytes and stops reading upstream.
 None is subject to `--fail-mode allow`: the guard is healthy, it simply
