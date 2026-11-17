@@ -426,7 +426,8 @@ Algorithm (Anthropic): identical structure, but:
 - Plain `text` blocks pass through immediately. Only `tool_use` blocks
   buffer.
 - Provider-executed blocks pass through ungated, including their
-  `input_json_delta` fragments: `server_tool_use` (server tools such as
+  `input_json_delta` fragments, when the block's index is its position
+  in the message's content and no earlier block used that index: `server_tool_use` (server tools such as
   web search, web fetch and code execution) and `mcp_tool_use` (the MCP
   connector). The provider runs these calls and client SDKs never
   execute them. Their result blocks (`web_search_tool_result`,
@@ -593,8 +594,8 @@ refused rather than forwarded, each under its own stable rule string:
 
 | Rule | Trigger |
 |---|---|
-| `deny:llm_api_proxy:tool_use_interleaved` | **Anthropic.** A second `tool_use` content block opened before the first closed, or a block's `content_block_start.input` carries real arguments *and* `input_json_delta` fragments stream for the same block. Two argument sources, no way to tell which one the client will use. |
-| `deny:llm_api_proxy:orphaned_tool_input` | **Anthropic.** An `input_json_delta` arrived while no `tool_use` block was open, and no provider-executed block (`server_tool_use`, `mcp_tool_use`) was open at its index. The fragments belong to a call the firewall never saw start, so no gate cycle can ever evaluate them. |
+| `deny:llm_api_proxy:tool_use_interleaved` | **Anthropic.** A second `tool_use` content block opened before the first closed, or a block's `content_block_start.input` carries real arguments *and* `input_json_delta` fragments stream for the same block. Two argument sources, no way to tell which one the client will use. Also a `content_block_start` (event or `content_block`) with a key that differs from `type`, `index`, `content_block`, `id`, `name` or `input` only in case: Go's JSON decoder matches keys case-insensitively and the SDKs match them exactly, so the firewall and the client would read different values. |
+| `deny:llm_api_proxy:orphaned_tool_input` | **Anthropic.** An `input_json_delta` arrived while no `tool_use` block was open, and no provider-executed block (`server_tool_use`, `mcp_tool_use`) was open at its index in place: its index must equal its position in the message's content, and no earlier block of the message may have used that index. The SDKs apply a delta to `content[index]`, so a reused or out-of-position index would hand the fragments to an earlier block, possibly an already-gated `tool_use`. |
 | `deny:llm_api_proxy:undecodable_content_encoding` | **Both providers, streaming and non-streaming.** A 2xx upstream response still carried a `Content-Encoding` after the proxy's own decoding. The proxy never forwards the client's `Accept-Encoding`: it lets Go's HTTP transport negotiate gzip and decode it, so the gate always reads plain bytes. What remains encoded (`br`, `zstd`, `deflate`, stacked encodings, or an encoding the upstream sent unasked) cannot be read, and the client would decode and run it. The refusal is an HTTP 200 in the provider's shape, and `vanzik_llmproxy_undecodable_content_encoding_total{provider}` counts it. Clients receive uncompressed bodies from the proxy, and `--max-buffer-bytes` bounds the decoded size. |
 | `deny:llm_api_proxy:multi_choice_tool_calls` | **OpenAI.** Tool-call deltas arrived on more than one `choices[].index`. `tool_calls[i].index` is unique only *within* a choice, so two choices' fragments would merge into a single argument string the firewall gates and no client executes. |
 | `deny:llm_api_proxy:mixed_function_call` | **OpenAI.** One response streamed both a legacy `function_call` and `tool_calls`. No real upstream mixes them, and clients disagree on which one they execute. |
