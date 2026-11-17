@@ -153,6 +153,16 @@ func (s *Server) forwardWithToolCallGating(
 	// bodies pay nothing for it.
 	switch provider {
 	case "openai":
+		// Checked on the text a lenient client decodes, before the typed
+		// decode, so a BOM, a UTF-16 body or a wrong-typed field cannot
+		// hide a second spelling the probe would then resolve as Go does.
+		if hasCaseVariantKeys(jsonTextAsUTF8(bodyBytes)) {
+			metrics.IncLLMProxyProtocolViolation("openai")
+			decision := protocolViolationDecision("openai", violationCaseVariantKey)
+			s.auditNonStreamingRefusal(r, "openai", reqModel, decision)
+			writeNonStreamingRefusal(s, w, resp.Header, "openai", decision, ToolCallCheck{Provider: "openai"}, reqModel)
+			return nil
+		}
 		var parsed ChatCompletionResponse
 		if err := json.Unmarshal(bodyBytes, &parsed); err != nil {
 			if hasLenientToolCall(bodyBytes, "openai") {

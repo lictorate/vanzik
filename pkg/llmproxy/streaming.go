@@ -416,6 +416,12 @@ func (s *Server) handleStreamingAnthropicMessages(w http.ResponseWriter, r *http
 func (s *Server) runOpenAIStreamLoop(w http.ResponseWriter, flusher http.Flusher, r *http.Request, body io.Reader) {
 	acc := NewOpenAIToolCallAccumulator(hardCappedBufferBytes(s.cfg.MaxBufferBytes))
 	reader := bufio.NewReader(body)
+	// bomStream: the stream began with a UTF-8 BOM. openai-node strips it
+	// and runs a call in the first event, which the parser cannot see as
+	// a data line and would pass through; openai-python drops that event.
+	// Clients disagree on what such a stream holds, so its first tool
+	// call refuses it rather than being gated.
+	bomStream, firstEvent := false, true
 
 	for {
 		event, err := readSSEEvent(reader, hardCappedBufferBytes(s.cfg.MaxBufferBytes*2))
@@ -436,7 +442,25 @@ func (s *Server) runOpenAIStreamLoop(w http.ResponseWriter, flusher http.Flusher
 		}
 
 		if len(event) > 0 {
-			result, ferr := acc.FeedEvent(event)
+			feed := event
+			if firstEvent && bytes.HasPrefix(event, utf8BOM) {
+				// Stripped only so the parser can see whether the event
+				// carries a call; a passed-through event keeps its BOM.
+				bomStream, feed = true, event[len(utf8BOM):]
+			}
+			firstEvent = false
+			result, ferr := acc.FeedEvent(feed)
+			if bomStream && acc.active {
+				metrics.IncLLMProxyUndecodableToolCall("openai")
+				decision := undecodableToolCallDecision("openai")
+				refusal := s.buildRefusal("openai", decision,
+					&RefusalContext{Provider: "openai", AnthropicToolUseIndex: -1})
+				_, _ = w.Write(refusal)
+				flusher.Flush()
+				name, id := acc.pendingIdentity()
+				s.auditStreamRefusal(r, "openai", decision, name, id)
+				return
+			}
 			if ferr != nil && !result.Completed && !isEOF {
 				// Malformed non-completion delta: drop it rather than inject
 				// bytes. Corruption that affects a decision surfaces at
@@ -602,6 +626,12 @@ func protocolViolationDecision(provider string, kind protocolViolationKind) Deci
 			Allow:  false,
 			Reason: "upstream streamed conflicting tool name fragments; refused",
 			Rule:   "deny:llm_api_proxy:tool_name_conflict",
+		}
+	case violationCaseVariantKey:
+		return Decision{
+			Allow:  false,
+			Reason: "upstream response carries keys that differ only in case; refused",
+			Rule:   "deny:llm_api_proxy:case_variant_key",
 		}
 	default:
 		if provider == "anthropic" {

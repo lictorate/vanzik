@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -118,6 +119,10 @@ const (
 	// concatenates, openai-node keeps the last), so no single name can
 	// be gated.
 	violationToolNameConflict
+
+	// violationCaseVariantKey (OpenAI): an envelope object carries two
+	// spellings of a key the gate reads (see hasCaseVariantKeys).
+	violationCaseVariantKey
 )
 
 // OpenAIToolCallAccumulator assembles streaming tool_call fragments
@@ -262,6 +267,9 @@ func (a *OpenAIToolCallAccumulator) FeedEvent(rawEvent []byte) (FeedResult, erro
 	var env openAIDeltaEnvelope
 	if err := json.Unmarshal(dataLine, &env); err != nil {
 		return FeedResult{}, fmt.Errorf("openai parser: malformed delta JSON: %w", err)
+	}
+	if hasCaseVariantKeys(dataLine) {
+		return FeedResult{ProtocolViolation: true, violation: violationCaseVariantKey}, nil
 	}
 
 	// tool_call deltas can land on any choice.
@@ -494,4 +502,140 @@ func extractOpenAIDataLine(rawEvent []byte) (dataLine []byte, isDone bool, hasDa
 		return bb, true, true
 	}
 	return bb, false, true
+}
+
+// envelopeKeys maps each key the gate reads in one envelope object to
+// the keys it reads in the object (or each object of the array) under
+// that key; nil marks a leaf.
+type envelopeKeys map[string]envelopeKeys
+
+// openAIEnvelopeKeys covers the non-streaming response and the stream
+// chunk: the response, choices[], message or delta, tool_calls[], and
+// function or function_call.
+var openAIEnvelopeKeys = func() envelopeKeys {
+	function := envelopeKeys{"name": nil, "arguments": nil}
+	message := envelopeKeys{
+		"tool_calls":    {"index": nil, "id": nil, "function": function},
+		"function_call": function,
+	}
+	return envelopeKeys{
+		"model":   nil,
+		"choices": {"index": nil, "message": message, "delta": message, "finish_reason": nil},
+	}
+}()
+
+// openAIEnvelopeNames is every key in openAIEnvelopeKeys, once.
+var openAIEnvelopeNames = func() [][]byte {
+	seen := map[string]bool{}
+	var walk func(envelopeKeys)
+	walk = func(keys envelopeKeys) {
+		for name, sub := range keys {
+			seen[name] = true
+			walk(sub)
+		}
+	}
+	walk(openAIEnvelopeKeys)
+	names := make([][]byte, 0, len(seen))
+	for name := range seen {
+		names = append(names, []byte(name))
+	}
+	return names
+}()
+
+// hasCaseVariantKeys reports whether an OpenAI envelope object in data
+// holds two keys that both fold to one key the gate reads.
+// encoding/json matches keys case-insensitively (Unicode folding, so
+// "ſ" matches "s") and keeps the last, while the Python and JS SDKs
+// read only the exact key: with "function_call":{rm} and
+// "Function_Call":{ls} the gate sees ls and the client runs rm. Data
+// that is not JSON reports false; the typed decode decides what
+// happens to it.
+func hasCaseVariantKeys(data []byte) bool {
+	// Every stream event comes through here, and decoding each envelope
+	// level costs several times the typed decode, so decode only when a
+	// string in data could be a second spelling of a gated key.
+	if !hasFoldedNameString(data, openAIEnvelopeNames) {
+		return false
+	}
+	return caseVariantKeysIn(data, openAIEnvelopeKeys)
+}
+
+// hasFoldedNameString reports whether data holds a JSON string that
+// could unescape to a case variant of one of names (all lowercase
+// ASCII): one with a \u escape, or one with an uppercase or non-ASCII
+// byte that folds to a name. A second spelling of a key must be such a
+// string: other escapes yield characters no name contains, and a
+// lowercase ASCII string folds only to itself.
+func hasFoldedNameString(data []byte, names [][]byte) bool {
+	for i := 0; i < len(data); i++ {
+		if data[i] != '"' {
+			continue
+		}
+		start := i + 1
+		folds := false
+		j := start
+		for ; j < len(data) && data[j] != '"'; j++ {
+			switch c := data[j]; {
+			case c == '\\':
+				if j+1 < len(data) && data[j+1] == 'u' {
+					return true
+				}
+				j++
+			case c >= 'A' && c <= 'Z', c >= 0x80:
+				folds = true
+			}
+		}
+		if folds {
+			s := data[start:min(j, len(data))]
+			for _, name := range names {
+				if bytes.EqualFold(s, name) {
+					return true
+				}
+			}
+		}
+		i = j
+	}
+	return false
+}
+
+// caseVariantKeysIn is hasCaseVariantKeys without the pre-scan, for the
+// object, or array of objects, in data that keys describes.
+func caseVariantKeysIn(data []byte, keys envelopeKeys) bool {
+	data = bytes.TrimLeft(data, " \t\r\n")
+	if len(data) == 0 {
+		return false
+	}
+	switch data[0] {
+	case '[':
+		var elems []json.RawMessage
+		if json.Unmarshal(data, &elems) != nil {
+			return false
+		}
+		for _, e := range elems {
+			if caseVariantKeysIn(e, keys) {
+				return true
+			}
+		}
+	case '{':
+		var obj map[string]json.RawMessage
+		if json.Unmarshal(data, &obj) != nil {
+			return false
+		}
+		var seen []string
+		for k, v := range obj {
+			for name, sub := range keys {
+				if !strings.EqualFold(k, name) {
+					continue
+				}
+				if slices.Contains(seen, name) {
+					return true
+				}
+				seen = append(seen, name)
+				if sub != nil && caseVariantKeysIn(v, sub) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
