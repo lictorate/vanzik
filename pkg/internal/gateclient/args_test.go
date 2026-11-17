@@ -9,6 +9,21 @@ import (
 	"testing"
 )
 
+func TestIsSecretKeyName(t *testing.T) {
+	hits := []string{"password", "Password", "api_token", "AUTH_TOKEN", "GITHUB_TOKEN", "secret", "ApiKey", "apikey", "MY_AUTH"}
+	misses := []string{"path", "command", "url", "name", "x"}
+	for _, k := range hits {
+		if !IsSecretKeyName(k) {
+			t.Errorf("IsSecretKeyName(%q) = false, want true", k)
+		}
+	}
+	for _, k := range misses {
+		if IsSecretKeyName(k) {
+			t.Errorf("IsSecretKeyName(%q) = true, want false", k)
+		}
+	}
+}
+
 func TestFindArgConflict(t *testing.T) {
 	cases := []struct {
 		name     string
