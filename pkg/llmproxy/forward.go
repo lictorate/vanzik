@@ -155,8 +155,8 @@ func (s *Server) forwardWithToolCallGating(
 	case "openai":
 		// Checked on the text a lenient client decodes, before the typed
 		// decode, so a BOM, a UTF-16 body or a wrong-typed field cannot
-		// hide a second spelling the probe would then resolve as Go does.
-		if hasCaseVariantKeys(jsonTextAsUTF8(bodyBytes)) {
+		// hide a variant spelling the probe would then fold as Go does.
+		if hasOpenAICaseVariantKey(jsonTextAsUTF8(bodyBytes)) {
 			metrics.IncLLMProxyProtocolViolation("openai")
 			decision := protocolViolationDecision("openai", violationCaseVariantKey)
 			s.auditNonStreamingRefusal(r, "openai", reqModel, decision)

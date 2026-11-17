@@ -325,7 +325,7 @@ func TestOpenAIParser_ExtractDataLine_SpaceTolerant(t *testing.T) {
 	}
 }
 
-func TestHasCaseVariantKeys(t *testing.T) {
+func TestHasOpenAICaseVariantKey(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		data string
@@ -346,10 +346,11 @@ func TestHasCaseVariantKeys(t *testing.T) {
 		{"escaped variant", `{"choices":[{"message":{"tool_calls":[],"` + jsonEscapeT + `ool_calls":[]}}]}`, true},
 		{"escaped exact key (a duplicate, not a variant)", `{"choices":[{"message":{"tool_calls":[],"` + jsonEscapet + `ool_calls":[]}}]}`, false},
 		{"long-s variant", `{"choices":[{"message":{"tool_calls":[],"tool_callſ":[]}}]}`, true},
+		{"lone variant (Go reads it, the SDKs do not)", `{"choices":[{"message":{"Function_Call":{"name":"bash"}}}]}`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := hasCaseVariantKeys([]byte(tc.data)); got != tc.want {
-				t.Errorf("hasCaseVariantKeys(%s) = %v, want %v", tc.data, got, tc.want)
+			if got := hasOpenAICaseVariantKey([]byte(tc.data)); got != tc.want {
+				t.Errorf("hasOpenAICaseVariantKey(%s) = %v, want %v", tc.data, got, tc.want)
 			}
 		})
 	}

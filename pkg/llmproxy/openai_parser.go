@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 )
@@ -122,8 +123,8 @@ const (
 	// be gated.
 	violationToolNameConflict
 
-	// violationCaseVariantKey (OpenAI): an envelope object carries two
-	// spellings of a key the gate reads (see hasCaseVariantKeys).
+	// violationCaseVariantKey (OpenAI): an envelope object carries a
+	// case variant of a key the gate reads (see hasOpenAICaseVariantKey).
 	violationCaseVariantKey
 )
 
@@ -270,7 +271,7 @@ func (a *OpenAIToolCallAccumulator) FeedEvent(rawEvent []byte) (FeedResult, erro
 	if err := json.Unmarshal(dataLine, &env); err != nil {
 		return FeedResult{}, fmt.Errorf("openai parser: malformed delta JSON: %w", err)
 	}
-	if hasCaseVariantKeys(dataLine) {
+	if hasOpenAICaseVariantKey(dataLine) {
 		return FeedResult{ProtocolViolation: true, violation: violationCaseVariantKey}, nil
 	}
 
@@ -544,29 +545,30 @@ var openAIEnvelopeNames = func() [][]byte {
 	return names
 }()
 
-// hasCaseVariantKeys reports whether an OpenAI envelope object in data
-// holds two keys that both fold to one key the gate reads.
-// encoding/json matches keys case-insensitively (Unicode folding, so
-// "ſ" matches "s") and keeps the last, while the Python and JS SDKs
-// read only the exact key: with "function_call":{rm} and
-// "Function_Call":{ls} the gate sees ls and the client runs rm. Data
-// that is not JSON reports false; the typed decode decides what
-// happens to it.
-func hasCaseVariantKeys(data []byte) bool {
+// hasOpenAICaseVariantKey reports whether an OpenAI envelope object in
+// data has a key that encoding/json would fold onto a key the gate
+// reads without being spelled exactly like it. encoding/json matches
+// keys case-insensitively (Unicode folding, so "ſ" matches "s") and
+// keeps the last, while the Python and JS SDKs read only the exact key:
+// with "function_call":{rm} and "Function_Call":{ls} the gate sees ls
+// and the client runs rm. A lone variant is refused too, as in the
+// Anthropic parser (hasCaseVariantKey). Data that is not JSON reports
+// false; the typed decode decides what happens to it.
+func hasOpenAICaseVariantKey(data []byte) bool {
 	// Every stream event comes through here, and decoding each envelope
 	// level costs several times the typed decode, so decode only when a
-	// string in data could be a second spelling of a gated key.
+	// string in data could be a variant spelling of a gated key.
 	if !hasFoldedNameString(data, openAIEnvelopeNames) {
 		return false
 	}
-	return caseVariantKeysIn(data, openAIEnvelopeKeys)
+	return envelopeHasCaseVariantKey(data, openAIEnvelopeKeys)
 }
 
 // hasFoldedNameString reports whether data holds a JSON string that
 // could unescape to a case variant of one of names (all lowercase
 // ASCII): one with a \u escape, or one with an uppercase or non-ASCII
-// byte that folds to a name. A second spelling of a key must be such a
-// string: other escapes yield characters no name contains, and a
+// byte that folds to a name. A variant spelling of a key must be such
+// a string: other escapes yield characters no name contains, and a
 // lowercase ASCII string folds only to itself.
 func hasFoldedNameString(data []byte, names [][]byte) bool {
 	for i := 0; i < len(data); i++ {
@@ -600,9 +602,10 @@ func hasFoldedNameString(data []byte, names [][]byte) bool {
 	return false
 }
 
-// caseVariantKeysIn is hasCaseVariantKeys without the pre-scan, for the
-// object, or array of objects, in data that keys describes.
-func caseVariantKeysIn(data []byte, keys envelopeKeys) bool {
+// envelopeHasCaseVariantKey is hasOpenAICaseVariantKey without the
+// pre-scan, for the object, or array of objects, in data that keys
+// describes.
+func envelopeHasCaseVariantKey(data []byte, keys envelopeKeys) bool {
 	data = bytes.TrimLeft(data, " \t\r\n")
 	if len(data) == 0 {
 		return false
@@ -614,7 +617,7 @@ func caseVariantKeysIn(data []byte, keys envelopeKeys) bool {
 			return false
 		}
 		for _, e := range elems {
-			if caseVariantKeysIn(e, keys) {
+			if envelopeHasCaseVariantKey(e, keys) {
 				return true
 			}
 		}
@@ -623,19 +626,12 @@ func caseVariantKeysIn(data []byte, keys envelopeKeys) bool {
 		if json.Unmarshal(data, &obj) != nil {
 			return false
 		}
-		var seen []string
-		for k, v := range obj {
-			for name, sub := range keys {
-				if !strings.EqualFold(k, name) {
-					continue
-				}
-				if slices.Contains(seen, name) {
-					return true
-				}
-				seen = append(seen, name)
-				if sub != nil && caseVariantKeysIn(v, sub) {
-					return true
-				}
+		if hasCaseVariantKey(obj, slices.Collect(maps.Keys(keys))) {
+			return true
+		}
+		for name, sub := range keys {
+			if v, ok := obj[name]; ok && sub != nil && envelopeHasCaseVariantKey(v, sub) {
+				return true
 			}
 		}
 	}

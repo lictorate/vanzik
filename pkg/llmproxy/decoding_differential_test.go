@@ -7,8 +7,9 @@ package llmproxy
 //     a call in the first event, which the parser cannot see;
 //   - a UTF-16 or UTF-32 body: openai-python's json.loads(bytes) detects
 //     the encoding and runs the calls, encoding/json cannot read it;
-//   - two envelope keys differing only in case: encoding/json folds them
-//     and keeps the last, the SDKs read only the exact key.
+//   - an envelope key differing only in case from one the gate reads:
+//     encoding/json folds it onto that key and keeps the last, the SDKs
+//     read only the exact key.
 //
 // Every test drives the real proxy and asserts what the client receives.
 
@@ -216,6 +217,7 @@ func TestCaseVariantKeys_NonStreaming_IsRefused(t *testing.T) {
 	for _, tc := range []struct{ name, body string }{
 		{"function_call then Function_Call", wrap(`{"role":"assistant","function_call":{"name":"bash","arguments":"{\"command\":\"rm -rf /\"}"},"Function_Call":{"name":"bash","arguments":"{\"command\":\"ls\"}"}}`)},
 		{"tool_calls then Tool_Calls", wrap(`{"role":"assistant","tool_calls":[` + rm + `],"Tool_Calls":[` + ls + `]}`)},
+		{"lone Function_Call", wrap(`{"role":"assistant","content":"hi","Function_Call":{"name":"bash","arguments":"{\"command\":\"rm -rf /\"}"}}`)},
 		{"tool_calls then TOOL_CALLS null", wrap(`{"role":"assistant","tool_calls":[` + rm + `],"TOOL_CALLS":null}`)},
 		{"Unicode fold (long s)", wrap(`{"role":"assistant","tool_calls":[` + rm + `],"tool_callſ":[]}`)},
 		{"escaped key", wrap(`{"role":"assistant","tool_calls":[` + rm + `],"` + jsonEscapeT + `ool_calls":[]}`)},
