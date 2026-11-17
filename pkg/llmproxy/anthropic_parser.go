@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // anthropicEventEnvelope types only the fields the parser reads.
@@ -38,10 +39,26 @@ type anthropicEventDeltaShape struct {
 	StopReason  string `json:"stop_reason,omitempty"`
 }
 
+// anthropicProviderExecutedBlocks holds the content block types whose
+// call the provider runs itself: server tools (web search, web fetch,
+// code execution, tool search) arrive as server_tool_use, MCP connector
+// calls as mcp_tool_use. They stream their input as input_json_delta
+// like a client tool_use, but no client SDK executes them, so the
+// parser forwards those deltas instead of refusing them as orphaned.
+// A new provider-executed type needs only an entry here. Result blocks
+// (web_search_tool_result, mcp_tool_result, ...) arrive whole, with no
+// input deltas, so they need no entry.
+// Docs: https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools
+// and https://platform.claude.com/docs/en/agents-and-tools/mcp-connector
+var anthropicProviderExecutedBlocks = map[string]bool{
+	"server_tool_use": true,
+	"mcp_tool_use":    true,
+}
+
 // anthropicBlockState tracks one content block; only tool_use gates.
 type anthropicBlockState struct {
 	Index     int
-	Type      string // "text" | "tool_use"
+	Type      string // content_block.type, e.g. "text", "tool_use", "server_tool_use"
 	ID        string
 	Name      string
 	InputJSON bytes.Buffer
@@ -51,6 +68,11 @@ type anthropicBlockState struct {
 	// use input_json_delta, so a later delta for a seeded block is a
 	// conflict and fails closed.
 	startSeeded bool
+	// inPlace: the block's index was its position in the message's
+	// content when it started, and no earlier block used that index.
+	// The SDKs apply a delta to content[index], so only then does a
+	// delta reach this block and not an earlier one.
+	inPlace bool
 }
 
 // AnthropicAccumulator is the Anthropic counterpart of
@@ -74,6 +96,16 @@ type AnthropicAccumulator struct {
 
 	bufferedEvents [][]byte
 	bufferedBytes  int
+
+	// startCount and startIndexes record every content_block_start of
+	// the message. Reset keeps them: the client keeps every block of
+	// the message, including those of finished cycles. One accumulator
+	// serves one stream, and a stream carries one message. They are not
+	// cleared on a repeated message_start: anthropic-python ignores one
+	// and keeps the content it already has, and @anthropic-ai/sdk
+	// rejects one outright.
+	startCount   int
+	startIndexes map[int]bool
 }
 
 // NewAnthropicAccumulator returns an accumulator with the given
@@ -83,6 +115,7 @@ func NewAnthropicAccumulator(maxBufferBytes int) *AnthropicAccumulator {
 		maxBufferBytes:     maxBufferBytes,
 		blocks:             map[int]*anthropicBlockState{},
 		activeToolUseIndex: -1,
+		startIndexes:       map[int]bool{},
 	}
 }
 
@@ -155,8 +188,27 @@ func (a *AnthropicAccumulator) FeedEvent(rawEvent []byte) (FeedResult, error) {
 		return FeedResult{}, fmt.Errorf("anthropic parser: malformed event JSON: %w", err)
 	}
 
+	// SECURITY: encoding/json matches keys case-insensitively and the
+	// client SDKs match them exactly, so a `"Type"` beside `"type"`
+	// makes the gate and the client read different values: event or
+	// block types, indexes, ids, names, inputs. No reading is safe;
+	// refuse. The event's own keys are checked here, before the switch,
+	// because the switch trusts the decoded type. The same input just
+	// decoded into env, so this decode cannot fail.
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(dataLine, &fields)
+	if hasCaseVariantKey(fields, anthropicEventKeys[:]) {
+		return FeedResult{ProtocolViolation: true, violation: violationInterleavedToolUse}, nil
+	}
+
 	switch env.Type {
 	case "content_block_start":
+		if blockHasCaseVariantKey(fields["content_block"]) {
+			return FeedResult{ProtocolViolation: true, violation: violationInterleavedToolUse}, nil
+		}
+		inPlace := env.Index == a.startCount && !a.startIndexes[env.Index]
+		a.startCount++
+		a.startIndexes[env.Index] = true
 		if env.ContentBlock != nil && env.ContentBlock.Type == "tool_use" {
 			// SECURITY: a second tool_use opening while one buffers
 			// would be flushed when the first cycle Resets, and its
@@ -193,8 +245,9 @@ func (a *AnthropicAccumulator) FeedEvent(rawEvent []byte) (FeedResult, error) {
 		}
 		if env.ContentBlock != nil {
 			a.blocks[env.Index] = &anthropicBlockState{
-				Index: env.Index,
-				Type:  env.ContentBlock.Type,
+				Index:   env.Index,
+				Type:    env.ContentBlock.Type,
+				inPlace: inPlace,
 			}
 		}
 		return FeedResult{PassThrough: true}, nil
@@ -225,8 +278,15 @@ func (a *AnthropicAccumulator) FeedEvent(rawEvent []byte) (FeedResult, error) {
 		}
 		// SECURITY: an input_json_delta with no tool_use open carries
 		// arguments no cycle will gate, and a client that rebuilds
-		// input from deltas would execute them. Refuse.
+		// input from deltas would execute them. Refuse, unless a
+		// provider-executed block is open in place at that index: the
+		// provider runs that call, and no client executes it. A block
+		// out of place would hand the delta to an earlier block in the
+		// client, possibly an already-gated tool_use.
 		if env.Delta != nil && env.Delta.Type == "input_json_delta" {
+			if st := a.blocks[env.Index]; st != nil && !st.Closed && st.inPlace && anthropicProviderExecutedBlocks[st.Type] {
+				return FeedResult{PassThrough: true}, nil
+			}
 			return FeedResult{ProtocolViolation: true, violation: violationOrphanedToolInput}, nil
 		}
 		return FeedResult{PassThrough: true}, nil
@@ -246,6 +306,11 @@ func (a *AnthropicAccumulator) FeedEvent(rawEvent []byte) (FeedResult, error) {
 				return a.complete()
 			}
 			return res, nil
+		}
+		// A delta after this stop has no open block to belong to, so it
+		// must not inherit a provider-executed block's pass-through.
+		if st := a.blocks[env.Index]; st != nil {
+			st.Closed = true
 		}
 		return FeedResult{PassThrough: true}, nil
 
@@ -321,6 +386,38 @@ func isEmptyJSONObject(seed []byte) bool {
 		}
 	}
 	return true
+}
+
+// anthropicEventKeys and anthropicBlockKeys are the keys FeedEvent
+// reads from an event (anthropicEventEnvelope) and from a
+// content_block_start's content_block.
+var (
+	anthropicEventKeys = [...]string{"type", "index", "content_block", "delta"}
+	anthropicBlockKeys = [...]string{"type", "id", "name", "input"}
+)
+
+// blockHasCaseVariantKey is hasCaseVariantKey for a content_block
+// object; anything else (absent, not an object) reports false.
+func blockHasCaseVariantKey(raw json.RawMessage) bool {
+	var block map[string]json.RawMessage
+	if json.Unmarshal(raw, &block) != nil {
+		return false
+	}
+	return hasCaseVariantKey(block, anthropicBlockKeys[:])
+}
+
+// hasCaseVariantKey reports whether obj has a key that encoding/json
+// would fold onto one of keys without being spelled exactly like it.
+// strings.EqualFold is the fold encoding/json uses (see its fold.go).
+func hasCaseVariantKey(obj map[string]json.RawMessage, keys []string) bool {
+	for k := range obj {
+		for _, want := range keys {
+			if k != want && strings.EqualFold(k, want) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // totalAnthropicArgsLen sums InputJSON bytes across tool_use blocks.
