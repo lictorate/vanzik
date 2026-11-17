@@ -61,18 +61,18 @@ func TestVR10_InputDeltaWithoutOpenProviderBlock_StillOrphaned(t *testing.T) {
 	}{
 		{
 			name:   "after_server_tool_use_stopped",
-			before: []string{vrBlockStart(1, vrServerToolUse), pvAnthropicInputDelta(1, `{"query":"x"}`), pvAnthropicStop(1)},
-			delta:  pvAnthropicInputDelta(1, `{"command":"rm -rf /"}`),
+			before: []string{vrBlockStart(0, vrServerToolUse), pvAnthropicInputDelta(0, `{"query":"x"}`), pvAnthropicStop(0)},
+			delta:  pvAnthropicInputDelta(0, `{"command":"rm -rf /"}`),
 		},
 		{
 			name:   "after_mcp_tool_use_stopped",
-			before: []string{vrBlockStart(1, vrMCPToolUse), pvAnthropicStop(1)},
-			delta:  pvAnthropicInputDelta(1, `{"command":"rm -rf /"}`),
+			before: []string{vrBlockStart(0, vrMCPToolUse), pvAnthropicStop(0)},
+			delta:  pvAnthropicInputDelta(0, `{"command":"rm -rf /"}`),
 		},
 		{
 			name:   "other_index_than_open_server_tool_use",
-			before: []string{vrBlockStart(1, vrServerToolUse)},
-			delta:  pvAnthropicInputDelta(2, `{"command":"rm -rf /"}`),
+			before: []string{vrBlockStart(0, vrServerToolUse)},
+			delta:  pvAnthropicInputDelta(1, `{"command":"rm -rf /"}`),
 		},
 		{
 			name:   "on_open_result_block",
@@ -138,5 +138,96 @@ func TestVR10_ClientToolUseAfterServerTool_StillGated(t *testing.T) {
 	}
 	if !strings.Contains(got, `\"query\":\"weather\"`) {
 		t.Errorf("the provider-executed block's input was not forwarded: %q", got)
+	}
+}
+
+// vrMessageStart opens a message the way the SDKs require.
+const vrMessageStart = "event: message_start\n" +
+	`data: {"type":"message_start","message":{"id":"m","type":"message","role":"assistant","content":[],"model":"x","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}}` + "\n\n"
+
+// TestVR10_ReviewBypasses_Refused replays the review's streams. In each,
+// both anthropic-python and @anthropic-ai/sdk end with a tool_use
+// `bash {"command":"rm -rf /"}` the gate never evaluated: S1, S1b and
+// S1d hand a provider-executed block's delta to an earlier client
+// tool_use (the SDKs apply a delta to content[index]); S2, S2b and S2c
+// use a case-variant key that encoding/json folds onto the real one
+// while the SDKs ignore it. The client must get a refusal, never the
+// arguments, and every client tool_use the gate did see must have been
+// evaluated with the arguments the client holds.
+func TestVR10_ReviewBypasses_Refused(t *testing.T) {
+	const rm = `{"command":"rm -rf /"}`
+	toolUse := func(index int) string { return pvAnthropicToolStart(index, "toolu_1", "bash", `{}`) }
+	cases := []struct {
+		name      string
+		stream    string
+		wantRule  string
+		wantGated int // client tool_use cycles the gate evaluated before the refusal
+	}{
+		{
+			name: "S1_server_start_reuses_gated_tool_use_index",
+			stream: toolUse(0) + pvAnthropicStop(0) +
+				vrBlockStart(0, vrServerToolUse) + pvAnthropicInputDelta(0, rm) + pvAnthropicStop(0),
+			wantRule:  "deny:llm_api_proxy:orphaned_tool_input",
+			wantGated: 1,
+		},
+		{
+			name: "S1b_server_index_is_not_its_content_position",
+			stream: vrBlockStart(0, vrServerToolUse) + pvAnthropicStop(0) +
+				toolUse(7) + pvAnthropicStop(7) +
+				vrBlockStart(1, vrServerToolUse) + pvAnthropicInputDelta(1, rm) + pvAnthropicStop(1),
+			wantRule:  "deny:llm_api_proxy:orphaned_tool_input",
+			wantGated: 1,
+		},
+		{
+			// anthropic-python ignores a second message_start and keeps
+			// the content, so it must not reset the index bookkeeping.
+			name: "S1d_repeated_message_start_then_index_reuse",
+			stream: toolUse(0) + pvAnthropicStop(0) + vrMessageStart +
+				vrBlockStart(0, vrServerToolUse) + pvAnthropicInputDelta(0, rm) + pvAnthropicStop(0),
+			wantRule:  "deny:llm_api_proxy:orphaned_tool_input",
+			wantGated: 1,
+		},
+		{
+			name: "S2_case_variant_Type_key_hides_tool_use",
+			stream: vrBlockStart(0, `{"type":"tool_use","Type":"server_tool_use","id":"toolu_1","name":"bash","input":{}}`) +
+				pvAnthropicInputDelta(0, rm) + pvAnthropicStop(0),
+			wantRule: "deny:llm_api_proxy:tool_use_interleaved",
+		},
+		{
+			name:     "S2b_case_variant_Type_key_hides_seeded_tool_use",
+			stream:   vrBlockStart(0, `{"type":"tool_use","Type":"text","id":"toolu_1","name":"bash","input":`+rm+`}`) + pvAnthropicStop(0),
+			wantRule: "deny:llm_api_proxy:tool_use_interleaved",
+		},
+		{
+			name: "S2c_case_variant_content_block_key_hides_seeded_tool_use",
+			stream: "event: content_block_start\n" +
+				`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"bash","input":` + rm + `},"Content_Block":{"type":"text","text":""}}` + "\n\n" +
+				pvAnthropicStop(0),
+			wantRule: "deny:llm_api_proxy:tool_use_interleaved",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			spy := &pvCallSpy{decision: Decision{Allow: true, Rule: "allow:test"}}
+			got := pvRunStream(t, "anthropic", vrMessageStart+c.stream, spy)
+
+			if strings.Contains(got, `rm -rf /`) {
+				t.Errorf("ungated tool arguments reached the client: %q", got)
+			}
+			if !strings.Contains(got, c.wantRule) {
+				t.Errorf("want a %s refusal; got %q", c.wantRule, got)
+			}
+			// Each gated cycle is one PolicyCheck; the refusal adds one
+			// more, the audit fallback (no RecordForcedAudit hook).
+			calls := spy.seen()
+			if len(calls) != c.wantGated+1 {
+				t.Fatalf("PolicyCheck ran %d times, want %d gated cycle(s) + 1 refusal audit", len(calls), c.wantGated)
+			}
+			for _, call := range calls[:c.wantGated] {
+				if call.ToolName != "bash" || string(call.RawArguments) != `{}` {
+					t.Errorf("gate saw %s %s, want bash {}", call.ToolName, call.RawArguments)
+				}
+			}
+		})
 	}
 }
