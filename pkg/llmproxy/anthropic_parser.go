@@ -38,10 +38,26 @@ type anthropicEventDeltaShape struct {
 	StopReason  string `json:"stop_reason,omitempty"`
 }
 
+// anthropicProviderExecutedBlocks holds the content block types whose
+// call the provider runs itself: server tools (web search, web fetch,
+// code execution, tool search) arrive as server_tool_use, MCP connector
+// calls as mcp_tool_use. They stream their input as input_json_delta
+// like a client tool_use, but no client SDK executes them, so the
+// parser forwards those deltas instead of refusing them as orphaned.
+// A new provider-executed type needs only an entry here. Result blocks
+// (web_search_tool_result, mcp_tool_result, ...) arrive whole, with no
+// input deltas, so they need no entry.
+// Docs: https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools
+// and https://platform.claude.com/docs/en/agents-and-tools/mcp-connector
+var anthropicProviderExecutedBlocks = map[string]bool{
+	"server_tool_use": true,
+	"mcp_tool_use":    true,
+}
+
 // anthropicBlockState tracks one content block; only tool_use gates.
 type anthropicBlockState struct {
 	Index     int
-	Type      string // "text" | "tool_use"
+	Type      string // content_block.type, e.g. "text", "tool_use", "server_tool_use"
 	ID        string
 	Name      string
 	InputJSON bytes.Buffer
@@ -225,8 +241,13 @@ func (a *AnthropicAccumulator) FeedEvent(rawEvent []byte) (FeedResult, error) {
 		}
 		// SECURITY: an input_json_delta with no tool_use open carries
 		// arguments no cycle will gate, and a client that rebuilds
-		// input from deltas would execute them. Refuse.
+		// input from deltas would execute them. Refuse, unless a
+		// provider-executed block is open at that index: the provider
+		// runs that call, and no client executes it.
 		if env.Delta != nil && env.Delta.Type == "input_json_delta" {
+			if st := a.blocks[env.Index]; st != nil && !st.Closed && anthropicProviderExecutedBlocks[st.Type] {
+				return FeedResult{PassThrough: true}, nil
+			}
 			return FeedResult{ProtocolViolation: true, violation: violationOrphanedToolInput}, nil
 		}
 		return FeedResult{PassThrough: true}, nil
@@ -246,6 +267,11 @@ func (a *AnthropicAccumulator) FeedEvent(rawEvent []byte) (FeedResult, error) {
 				return a.complete()
 			}
 			return res, nil
+		}
+		// A delta after this stop has no open block to belong to, so it
+		// must not inherit a provider-executed block's pass-through.
+		if st := a.blocks[env.Index]; st != nil {
+			st.Closed = true
 		}
 		return FeedResult{PassThrough: true}, nil
 
