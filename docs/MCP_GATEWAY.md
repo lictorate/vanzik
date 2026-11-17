@@ -567,6 +567,10 @@ entry is written (`vanzik serve --audit-redact`, on by default), through
 keys, GitHub tokens, Slack tokens, `key=value` secret patterns,
 `sk-…` and Google API keys, JWTs, PEM private keys and
 `Authorization` / `x-api-key` header values are scrubbed.
+Those patterns match `key=value`, not a bare value, so the gateway
+itself sends an argument whose name contains `password`, `token`,
+`secret`, `api_key`, `apikey` or `auth` as `[REDACTED]`, as the LLM API
+Proxy does. The `args_digest` is taken from the real values.
 
 `session_id` comes from the MCP client's name (`mcp-gateway:<name>`), so
 two hosts running the same client share a session, and its
