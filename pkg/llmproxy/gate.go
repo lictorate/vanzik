@@ -15,7 +15,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync/atomic"
 
 	"lictorate.com/vanzik/v2/pkg/internal/gateclient"
@@ -360,23 +359,12 @@ func projectMetaArgs(args map[string]interface{}, red *notify.Redactor) map[stri
 		}
 		// DefaultRedactor matches `key=value`, not a bare value, so
 		// secret-named keys are redacted by name.
-		if isSecretKeyName(k) {
+		if gateclient.IsSecretKeyName(k) {
 			s = "[REDACTED]"
 		}
 		out[k] = s
 	}
 	return out
-}
-
-// isSecretKeyName reports whether an argument name implies a secret.
-func isSecretKeyName(k string) bool {
-	lk := strings.ToLower(k)
-	for _, needle := range []string{"password", "token", "secret", "api_key", "apikey", "auth"} {
-		if strings.Contains(lk, needle) {
-			return true
-		}
-	}
-	return false
 }
 
 // redactSingle redacts one string by wrapping it in a notify.Event, the

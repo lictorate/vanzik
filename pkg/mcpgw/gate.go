@@ -256,6 +256,11 @@ func buildMcpMeta(req *ToolsCallRequest, digestKey []byte) map[string]string {
 					out["arg_"+k] = string(b)
 				}
 			}
+			// The central redactor matches `key=value`, not a bare
+			// value, so secret-named arguments are masked by name.
+			if gateclient.IsSecretKeyName(k) {
+				out["arg_"+k] = "[REDACTED]"
+			}
 		}
 	}
 	// The bytes the bridge forwards upstream on ALLOW, so an approval
