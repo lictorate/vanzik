@@ -162,6 +162,15 @@ func TestAnthropicParser_ActiveToolUseIndex(t *testing.T) {
 	if got := acc.ActiveToolUseIndex(); got != -1 {
 		t.Errorf("idle: ActiveToolUseIndex = %d, want -1", got)
 	}
+	// A tool_use's index must be its content position: blocks 0-2 first.
+	for i := 0; i < 3; i++ {
+		if _, err := acc.FeedEvent([]byte(pvAnthropicTextStart(i))); err != nil {
+			t.Fatalf("text block %d: %v", i, err)
+		}
+		if _, err := acc.FeedEvent([]byte(pvAnthropicStop(i))); err != nil {
+			t.Fatalf("text block %d stop: %v", i, err)
+		}
+	}
 	startEvent := []byte("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":3,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_z\",\"name\":\"bash\",\"input\":{}}}\n\n")
 	if _, err := acc.FeedEvent(startEvent); err != nil {
 		t.Fatalf("start: %v", err)

@@ -64,6 +64,10 @@ func BenchmarkAnthropicFeedEvent_ToolUseCycle(b *testing.B) {
 			b.Fatalf("unexpected: res=%+v err=%v", res, err)
 		}
 		acc.Reset()
+		// Each iteration is a new message: a tool_use reusing index 0
+		// within one message is refused.
+		acc.startCount = 0
+		clear(acc.startIndexes)
 	}
 }
 

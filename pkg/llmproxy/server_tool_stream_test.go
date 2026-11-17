@@ -171,12 +171,15 @@ func TestVR10_ReviewBypasses_Refused(t *testing.T) {
 			wantGated: 1,
 		},
 		{
+			// The tool_use at content[1] with index 7 is itself out of
+			// place, so the stream is refused there (VR-16), before the
+			// server_tool_use's delta could reach it.
 			name: "S1b_server_index_is_not_its_content_position",
 			stream: vrBlockStart(0, vrServerToolUse) + pvAnthropicStop(0) +
 				toolUse(7) + pvAnthropicStop(7) +
 				vrBlockStart(1, vrServerToolUse) + pvAnthropicInputDelta(1, rm) + pvAnthropicStop(1),
-			wantRule:  "deny:llm_api_proxy:orphaned_tool_input",
-			wantGated: 1,
+			wantRule:  "deny:llm_api_proxy:tool_use_interleaved",
+			wantGated: 0,
 		},
 		{
 			// anthropic-python ignores a second message_start and keeps
