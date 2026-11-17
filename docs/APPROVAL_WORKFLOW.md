@@ -175,7 +175,7 @@ Three resolution channels, all equivalent:
 
 ### a) Dashboard (most common)
 
-Approver opens the dashboard at `<base-url>/dashboard`, which lists pending approvals in real time (SSE). Each item shows the request (scope, command, agent, reason) with **Approve** / **Deny** buttons; clicking posts `/v1/approve/{id}` or `/v1/deny/{id}` with the CSRF header. (The `approval_url` field in the check response is the POST-only API endpoint used by channels b and c below, not a dashboard deep-link.)
+Approver opens the dashboard at `<base-url>/dashboard`, which lists pending approvals in real time (SSE). Each item shows the request (scope, command, agent, and the tool arguments as the pending list serves them, redacted) with **Approve** / **Deny** buttons; clicking posts `/v1/approve/{id}` or `/v1/deny/{id}` with the CSRF header. (The `approval_url` field in the check response is the POST-only API endpoint used by channels b and c below, not a dashboard deep-link.)
 
 ### b) CLI
 
@@ -219,7 +219,8 @@ It does **not** unblock any waiter — the agent's SDK learns about the resoluti
 A resolved **ALLOW** is a single-use, time-boxed capability:
 
 - The first `/v1/check` retry carrying the `approval_id` (and matching the
-  original request shape) is honored with `matched_rule: "allow:approved"`
+  original request shape, including `meta.args_digest` when the original
+  came through the LLM API Proxy or the MCP Gateway) is honored with `matched_rule: "allow:approved"`
   and **consumes** the approval. Any further replay of the same id falls
   through to fresh policy evaluation and re-enters the approval flow under
   a new id — one human click authorizes at most one execution.

@@ -274,7 +274,7 @@ func TestBuildMappedActionRequest_SharedKeyTable(t *testing.T) {
 		{"data", map[string]interface{}{"endpoint": "https://evil.example/x"}, func(a policy.ActionRequest) string { return a.Domain }, "evil.example"},
 	}
 	for _, c := range cases {
-		ar := buildMappedActionRequest(toolsCallReq("ns:tool", c.args), c.scope)
+		ar := buildMappedActionRequest(toolsCallReq("ns:tool", c.args), c.scope, nil)
 		if got := c.get(ar); got != c.want {
 			t.Errorf("%s %v: projected %q, want %q", c.scope, c.args, got, c.want)
 		}

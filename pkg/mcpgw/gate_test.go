@@ -499,7 +499,7 @@ func TestHTTPPolicyClient_SendsBearerHeader(t *testing.T) {
 func TestBuildMappedActionRequest_FilesystemArgs(t *testing.T) {
 	ar := buildMappedActionRequest(toolsCallReq("fs:read_file", map[string]interface{}{
 		"path": "/etc/shadow",
-	}), "filesystem")
+	}), "filesystem", nil)
 	if ar.Path != "/etc/shadow" {
 		t.Errorf("expected Path=/etc/shadow, got %q", ar.Path)
 	}
@@ -511,7 +511,7 @@ func TestBuildMappedActionRequest_FilesystemArgs(t *testing.T) {
 func TestBuildMappedActionRequest_NetworkArgs(t *testing.T) {
 	ar := buildMappedActionRequest(toolsCallReq("github:fetch_issue", map[string]interface{}{
 		"url": "https://api.github.com/repos/x/y/issues/1",
-	}), "network")
+	}), "network", nil)
 	if ar.URL == "" {
 		t.Fatalf("URL should be populated")
 	}
@@ -538,7 +538,7 @@ func TestBuildMappedActionRequest_URLHostBeatsDomainArgs(t *testing.T) {
 	}
 	for _, scope := range []string{"network", "browser"} {
 		for _, c := range cases {
-			ar := buildMappedActionRequest(toolsCallReq("web:get", c.args), scope)
+			ar := buildMappedActionRequest(toolsCallReq("web:get", c.args), scope, nil)
 			if ar.Domain != c.want {
 				t.Errorf("%s/%s: Domain = %q, want %q", scope, c.name, ar.Domain, c.want)
 			}
@@ -549,7 +549,7 @@ func TestBuildMappedActionRequest_URLHostBeatsDomainArgs(t *testing.T) {
 func TestBuildMappedActionRequest_ShellArgs(t *testing.T) {
 	ar := buildMappedActionRequest(toolsCallReq("runner:execute", map[string]interface{}{
 		"command": "rm -rf /",
-	}), "shell")
+	}), "shell", nil)
 	if ar.Command != "rm -rf /" {
 		t.Errorf("expected Command='rm -rf /', got %q", ar.Command)
 	}
@@ -758,7 +758,7 @@ func TestHTTPPolicyClient_PlainDeny_NoLocalFallback(t *testing.T) {
 func TestMappedActionRequests_OneCheckPerPath(t *testing.T) {
 	ars := mappedActionRequests(toolsCallReq("fs:read_multiple_files", map[string]interface{}{
 		"paths": []interface{}{"/tmp/a", "/etc/shadow", 7},
-	}), "filesystem")
+	}), "filesystem", nil)
 	var got []string
 	for _, ar := range ars {
 		if ar.Scope != "filesystem" || ar.Action != "read" {
@@ -773,7 +773,7 @@ func TestMappedActionRequests_OneCheckPerPath(t *testing.T) {
 	// A single path argument alongside the array is checked too.
 	ars = mappedActionRequests(toolsCallReq("fs:read_multiple_files", map[string]interface{}{
 		"path": "/tmp", "paths": []string{"/tmp/a"},
-	}), "filesystem")
+	}), "filesystem", nil)
 	if len(ars) != 2 || ars[0].Path != "/tmp" || ars[1].Path != "/tmp/a" {
 		t.Errorf("expected [/tmp /tmp/a], got %+v", ars)
 	}
@@ -781,7 +781,7 @@ func TestMappedActionRequests_OneCheckPerPath(t *testing.T) {
 	// Other scopes ignore `paths`.
 	if ars := mappedActionRequests(toolsCallReq("x:run_command", map[string]interface{}{
 		"command": "ls", "paths": []interface{}{"/a", "/b"},
-	}), "shell"); len(ars) != 1 {
+	}), "shell", nil); len(ars) != 1 {
 		t.Errorf("expected one shell check, got %d", len(ars))
 	}
 }

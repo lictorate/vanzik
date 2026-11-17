@@ -747,7 +747,9 @@ Each top-level tool argument becomes a `meta["arg_<key>"]` entry,
 redacted via `pkg/notify.DefaultRedactor`; `command` is redacted the
 same way. `stream` is present only for streaming responses, and
 `approval_id` is added when the request carried
-`X-Vanzik-Approval-ID`.
+`X-Vanzik-Approval-ID`. `args_digest` is a keyed digest of the tool
+name and the unredacted arguments, which binds an approval to them
+(§ 11.3).
 
 For an unmapped scope: `request.scope = "unmapped"`,
 `request.command = "<tool_name>"`, and the arguments are the same
@@ -919,9 +921,18 @@ resume:
 
 The server's replay checks still apply: the id unlocks only the action
 that was approved (same agent, scope, command, path, domain, URL and
-action), only once, and only within the approval-validity window.
-Anything else in the retried response is evaluated fresh, so a
-different command is paused or denied as usual. Without the header a
+action, and the same tool arguments), only once, and only within the
+approval-validity window. The arguments are compared through
+`meta.args_digest`, a keyed digest of the tool name and the full,
+unredacted arguments the proxy adds to every check. Key order and
+whitespace don't change it, so the model can re-serialise the call;
+any other change does, including a password the audit entry shows as
+`[REDACTED]`. With `--api-key` the key derives from it, so an approval
+survives a proxy restart and works through any proxy sharing the key.
+Without one the key is random per process, and a retry after a restart
+asks for approval again. Anything else in the retried response is
+evaluated fresh, so a different command is paused or denied as usual.
+Without the header a
 retry gets a new `REQUIRE_APPROVAL` with a new id. The proxy reads the
 header for `/v1/check` only and does not forward it upstream. (The MCP
 Gateway carries the same id in `_meta.dev.vanzik/approval_id`; see

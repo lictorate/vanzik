@@ -15,7 +15,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync/atomic"
 
 	"lictorate.com/vanzik/v2/pkg/internal/gateclient"
@@ -73,18 +72,22 @@ type HTTPPolicyClient struct {
 	// denials made while the central server is unreachable. nil (the
 	// other fail modes, or --fail-audit-log "") records nothing.
 	fallback *gateclient.FallbackAuditWriter
+
+	// argsDigestKey keys meta["args_digest"] (gateclient.NewArgsDigestKey).
+	argsDigestKey [32]byte
 }
 
 // NewHTTPPolicyClient builds a gate client from cfg and an initial
 // policy. The caller should call SetPolicy on every policy reload.
 func NewHTTPPolicyClient(cfg *Config, pol *policy.Policy) *HTTPPolicyClient {
 	c := &HTTPPolicyClient{
-		GuardURL:   cfg.GuardURL,
-		APIKey:     cfg.APIKey,
-		TenantID:   cfg.TenantID,
-		FailMode:   cfg.FailMode,
-		HTTPClient: &http.Client{Timeout: DefaultGuardHTTPTimeout},
-		redactor:   notify.DefaultRedactor(),
+		GuardURL:      cfg.GuardURL,
+		APIKey:        cfg.APIKey,
+		TenantID:      cfg.TenantID,
+		FailMode:      cfg.FailMode,
+		HTTPClient:    &http.Client{Timeout: DefaultGuardHTTPTimeout},
+		redactor:      notify.DefaultRedactor(),
+		argsDigestKey: gateclient.NewArgsDigestKey(cfg.APIKey),
 	}
 	if cfg.FailMode == "fail-closed-with-audit" {
 		c.fallback = gateclient.NewFallbackAuditWriter(cfg.FailAuditLog)
@@ -142,7 +145,7 @@ func (c *HTTPPolicyClient) Check(ctx context.Context, req *ToolCallCheck) (Decis
 		Domain:          projectDomain(scope, req.Arguments),
 		URL:             projectURL(scope, req.Arguments),
 		ApprovalID:      req.ApprovalID,
-		Meta:            buildLLMMeta(req, scope, c.redactor),
+		Meta:            buildLLMMeta(req, scope, c.redactor, c.argsDigestKey[:]),
 	}
 	if scope == "filesystem" {
 		ar.Action = gateclient.InferFilesystemAction(req.ToolName)
@@ -185,7 +188,7 @@ func (c *HTTPPolicyClient) RecordForcedAudit(ctx context.Context, req *ToolCallC
 		Domain:          projectDomain(scope, req.Arguments),
 		URL:             projectURL(scope, req.Arguments),
 		ApprovalID:      req.ApprovalID,
-		Meta:            buildLLMMeta(req, scope, c.redactor),
+		Meta:            buildLLMMeta(req, scope, c.redactor, c.argsDigestKey[:]),
 	}
 	if scope == "filesystem" {
 		ar.Action = gateclient.InferFilesystemAction(req.ToolName)
@@ -217,7 +220,7 @@ func (c *HTTPPolicyClient) RecordForcedAudit(ctx context.Context, req *ToolCallC
 
 // buildLLMMeta builds the /v1/check meta map, with argument values
 // redacted so secrets don't reach the audit log.
-func buildLLMMeta(req *ToolCallCheck, scope string, red *notify.Redactor) map[string]string {
+func buildLLMMeta(req *ToolCallCheck, scope string, red *notify.Redactor, digestKey []byte) map[string]string {
 	out := map[string]string{
 		"transport":    "llm_api_proxy",
 		"provider":     req.Provider,
@@ -237,6 +240,9 @@ func buildLLMMeta(req *ToolCallCheck, scope string, red *notify.Redactor) map[st
 	for k, v := range projectMetaArgs(req.Arguments, red) {
 		out["arg_"+k] = v
 	}
+	// Taken from the unredacted bytes the client will execute, so an
+	// approval doesn't carry over to arguments the projection hides.
+	out[gateclient.MetaArgsDigestKey] = gateclient.ArgsDigest(digestKey, req.ToolName, req.RawArguments)
 	return out
 }
 
@@ -353,23 +359,12 @@ func projectMetaArgs(args map[string]interface{}, red *notify.Redactor) map[stri
 		}
 		// DefaultRedactor matches `key=value`, not a bare value, so
 		// secret-named keys are redacted by name.
-		if isSecretKeyName(k) {
+		if gateclient.IsSecretKeyName(k) {
 			s = "[REDACTED]"
 		}
 		out[k] = s
 	}
 	return out
-}
-
-// isSecretKeyName reports whether an argument name implies a secret.
-func isSecretKeyName(k string) bool {
-	lk := strings.ToLower(k)
-	for _, needle := range []string{"password", "token", "secret", "api_key", "apikey", "auth"} {
-		if strings.Contains(lk, needle) {
-			return true
-		}
-	}
-	return false
 }
 
 // redactSingle redacts one string by wrapping it in a notify.Event, the

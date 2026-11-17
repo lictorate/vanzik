@@ -85,6 +85,19 @@ func hasRole(roles []string, role string) bool {
 	return false
 }
 
+// IsSecretKeyName reports whether an argument name implies a secret. The
+// default redactor matches `key=value`, not a bare value, so both gates
+// mask these arguments' meta values by name.
+func IsSecretKeyName(k string) bool {
+	lk := strings.ToLower(k)
+	for _, needle := range []string{"password", "token", "secret", "api_key", "apikey", "auth"} {
+		if strings.Contains(lk, needle) {
+			return true
+		}
+	}
+	return false
+}
+
 // ArgConflict is a role whose alias keys carry different values.
 type ArgConflict struct {
 	Role string

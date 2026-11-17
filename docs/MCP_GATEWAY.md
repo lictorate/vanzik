@@ -555,9 +555,9 @@ entries:
 ```
 
 Both entries carry the same meta: `namespace`, `tool_name`, `transport`,
-`gateway_connection`, `approval_id` (on a retry that carries one) and one
-`arg_<key>` per tool argument. A string argument is stored as is; any
-other value is JSON-encoded. Only the mapped entry has `path`, `url`,
+`gateway_connection`, `approval_id` (on a retry that carries one),
+`args_digest` (§ 6.2) and one `arg_<key>` per tool argument. A string
+argument is stored as is; any other value is JSON-encoded. Only the mapped entry has `path`, `url`,
 `domain` or `action`, projected from the arguments (§ 4.4).
 
 The `arg_<key>` values are **redacted** by the central server before the
@@ -567,6 +567,10 @@ entry is written (`vanzik serve --audit-redact`, on by default), through
 keys, GitHub tokens, Slack tokens, `key=value` secret patterns,
 `sk-…` and Google API keys, JWTs, PEM private keys and
 `Authorization` / `x-api-key` header values are scrubbed.
+Those patterns match `key=value`, not a bare value, so the gateway
+itself sends an argument whose name contains `password`, `token`,
+`secret`, `api_key`, `apikey` or `auth` as `[REDACTED]`, as the LLM API
+Proxy does. The `args_digest` is taken from the real values.
 
 `session_id` comes from the MCP client's name (`mcp-gateway:<name>`), so
 two hosts running the same client share a session, and its
@@ -647,6 +651,20 @@ central server owns the truth:
      to normal policy evaluation. An attacker who guesses an id
      gains nothing; an honest caller with a stale id gets correct
      enforcement.
+   - **a different call** → falls through to normal policy
+     evaluation, which asks for a new approval where the policy
+     requires one. The id covers only the call that was approved:
+     the same agent, scope, tool and projected fields, and the same
+     arguments. The gateway sends `meta.args_digest`, a keyed digest
+     of the tool name and the arguments it forwards upstream, and
+     the server honours the id only for a retry with the same
+     digest. Key order doesn't change it; any argument value does,
+     including one the audit entry shows redacted.
+
+The digest key derives from `--api-key`, so an approval survives a
+gateway restart and works through any gateway sharing the key.
+Without `--api-key` the key is random per process, and a retry after a
+restart asks for approval again.
 
 The gateway never queries `/v1/status/{id}` directly on the retry —
 that endpoint is reserved for the polling SDK clients. The dual-check
@@ -666,7 +684,8 @@ The gateway is single-process per MCP host, but the central
 in-process call-signature on the gateway, we'd drop the mapping every
 time the gateway restarted. Echoing the id through `_meta` is
 restart-safe and doesn't require synchronisation across multiple
-gateway instances behind a load balancer.
+gateway instances behind a load balancer, as long as they share
+`--api-key` (the `args_digest` key derives from it; § 6.2).
 
 ---
 
