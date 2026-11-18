@@ -229,11 +229,10 @@ func writeNonStreamingRefusal(
 	// The refusal's length differs from the upstream body's.
 	copyForwardableHeaders(srcHeader, w.Header())
 	w.Header().Del("Content-Length")
-	// The refusal is plain JSON whatever the upstream body was.
+	// The refusal is plain UTF-8 JSON whatever the upstream body was; its
+	// Content-Type may name another charset (utf-16-le).
 	w.Header().Del("Content-Encoding")
-	if w.Header().Get("Content-Type") == "" {
-		w.Header().Set("Content-Type", "application/json")
-	}
+	w.Header().Set("Content-Type", "application/json")
 
 	refusal := s.buildRefusal(provider, decision, &RefusalContext{
 		Provider:              provider,
