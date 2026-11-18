@@ -558,13 +558,16 @@ If one is present the response is refused under the fixed rule
 passes through unchanged: a UTF-16 answer with no call carries nothing
 to gate, so it reaches the client as before.
 
-The same rule refuses an OpenAI **stream** whose first bytes are a
-UTF-8 byte order mark, at its first tool call. The parser cannot read
-the first event behind the mark, while openai-node strips it and runs
-the call in it (openai-python drops that event), so the clients
-disagree on what the stream holds. The proxy does not strip the mark
-and gate: it refuses, stream-shaped, and audits once. Such a stream
-with no tool call is forwarded unchanged, mark included.
+The same rule refuses an OpenAI **stream** in which any line starts
+with a UTF-8 byte order mark (the stream's first bytes, or any later
+line), at its first tool call. openai-node decodes each SSE line on its
+own and drops a leading mark, so such a line is a data line to it and
+it runs the call on it; openai-python ignores the line. The clients
+disagree on what the stream holds. The proxy reads such a line as
+openai-node does only to see whether it carries a call (the
+case-variant check below sees it too); it does not gate it: it
+refuses, stream-shaped, and audits once. Such a stream with no tool
+call is forwarded unchanged, marks included.
 
 **Where to see it.** The refusal is recorded in the **central audit
 trail** with the DENY the client actually received, via the same

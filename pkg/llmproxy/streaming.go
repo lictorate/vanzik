@@ -416,12 +416,13 @@ func (s *Server) handleStreamingAnthropicMessages(w http.ResponseWriter, r *http
 func (s *Server) runOpenAIStreamLoop(w http.ResponseWriter, flusher http.Flusher, r *http.Request, body io.Reader) {
 	acc := NewOpenAIToolCallAccumulator(hardCappedBufferBytes(s.cfg.MaxBufferBytes))
 	reader := bufio.NewReader(body)
-	// bomStream: the stream began with a UTF-8 BOM. openai-node strips it
-	// and runs a call in the first event, which the parser cannot see as
-	// a data line and would pass through; openai-python drops that event.
-	// Clients disagree on what such a stream holds, so its first tool
-	// call refuses it rather than being gated.
-	bomStream, firstEvent := false, true
+	// bomStream: a line of the stream began with a UTF-8 BOM. openai-node
+	// decodes each line separately and drops a leading BOM, so it runs a
+	// call on such a line, which the parser cannot see as a data line and
+	// would pass through; openai-python ignores the line. Clients
+	// disagree on what such a stream holds, so its first tool call
+	// refuses it rather than being gated.
+	bomStream := false
 
 	for {
 		event, err := readSSEEvent(reader, hardCappedBufferBytes(s.cfg.MaxBufferBytes*2))
@@ -442,13 +443,10 @@ func (s *Server) runOpenAIStreamLoop(w http.ResponseWriter, flusher http.Flusher
 		}
 
 		if len(event) > 0 {
-			feed := event
-			if firstEvent && bytes.HasPrefix(event, utf8BOM) {
-				// Stripped only so the parser can see whether the event
-				// carries a call; a passed-through event keeps its BOM.
-				bomStream, feed = true, event[len(utf8BOM):]
-			}
-			firstEvent = false
+			// Stripped only so the parser sees the lines openai-node sees;
+			// a passed-through event keeps its BOMs.
+			feed, hasBOMLine := stripLineBOMs(event)
+			bomStream = bomStream || hasBOMLine
 			result, ferr := acc.FeedEvent(feed)
 			if bomStream && acc.active {
 				metrics.IncLLMProxyUndecodableToolCall("openai")
@@ -530,6 +528,24 @@ func (s *Server) runOpenAIStreamLoop(w http.ResponseWriter, flusher http.Flusher
 			return
 		}
 	}
+}
+
+// stripLineBOMs returns event with one UTF-8 BOM removed from the start
+// of each line, and whether any line had one. openai-node decodes every
+// SSE line with a TextDecoder that drops a leading BOM.
+func stripLineBOMs(event []byte) ([]byte, bool) {
+	if !bytes.Contains(event, utf8BOM) {
+		return event, false
+	}
+	out := make([]byte, 0, len(event))
+	found := false
+	for _, line := range bytes.SplitAfter(event, []byte("\n")) {
+		if bytes.HasPrefix(line, utf8BOM) {
+			line, found = line[len(utf8BOM):], true
+		}
+		out = append(out, line...)
+	}
+	return out, found
 }
 
 // gateAndFlushOpenAI gates each completed call. On all-ALLOW it replays
