@@ -389,3 +389,28 @@ func TestProbeSucceedsWhereStrictDecodeFails(t *testing.T) {
 		t.Error("probe failed on an Anthropic body a lenient client would execute")
 	}
 }
+
+func TestJSONTextAsUTF8(t *testing.T) {
+	// Non-ASCII text, including a rune outside the BMP (a UTF-16
+	// surrogate pair).
+	const text = "{\"choices\":[{\"message\":{\"content\":\"h\xc3\xa9 \xf0\x9f\x98\x80\"}}]}"
+	cases := []struct{ name, in string }{
+		{"UTF-8", text},
+		{"UTF-8 BOM", bomPrefix + text},
+	}
+	for _, enc := range encodings {
+		cases = append(cases, struct{ name, in string }{enc.name, enc.encode(text)})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := string(jsonTextAsUTF8([]byte(tc.in))); got != text {
+				t.Errorf("got %q, want %q", got, text)
+			}
+		})
+	}
+	for _, in := range []string{``, `{}`, `"x"`, "{\"a\":1}", `[1]`} {
+		if got := string(jsonTextAsUTF8([]byte(in))); got != in {
+			t.Errorf("jsonTextAsUTF8(%q) = %q, want it unchanged", in, got)
+		}
+	}
+}

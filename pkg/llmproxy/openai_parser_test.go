@@ -324,3 +324,34 @@ func TestOpenAIParser_ExtractDataLine_SpaceTolerant(t *testing.T) {
 		})
 	}
 }
+
+func TestHasOpenAICaseVariantKey(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data string
+		want bool
+	}{
+		{"plain response", rmToolCallBody, false},
+		{"plain stream chunk", `{"choices":[{"index":0,"delta":{"content":"Tool_Calls"},"finish_reason":null}]}`, false},
+		{"exact duplicate key (every parser keeps the last)", `{"choices":[{"message":{"tool_calls":[],"tool_calls":[]}}]}`, false},
+		{"variant of a key the gate does not read", `{"choices":[{"message":{"content":"a","Content":"b"}}]}`, false},
+		{"variant outside the envelope", `{"usage":{"index":1,"Index":2},"choices":[]}`, false},
+		{"variant inside the arguments string", `{"choices":[{"message":{"tool_calls":[{"function":{"arguments":"{\"Name\":1,\"name\":2}"}}]}}]}`, false},
+		{"not JSON", `{"Tool_Calls"`, false},
+		{"model then Model", `{"model":"a","Model":"b"}`, true},
+		{"index then INDEX in a choice", `{"choices":[{"index":0,"INDEX":1}]}`, true},
+		{"id then Id in a tool call", `{"choices":[{"delta":{"tool_calls":[{"id":"a","Id":"b"}]}}]}`, true},
+		{"name then nAME in function_call", `{"choices":[{"message":{"function_call":{"name":"a","nAME":"b"}}}]}`, true},
+		{"variant in a later choice", `{"choices":[{"index":0},{"delta":{"tool_calls":[],"Tool_calls":[]}}]}`, true},
+		{"escaped variant", `{"choices":[{"message":{"tool_calls":[],"` + jsonEscapeT + `ool_calls":[]}}]}`, true},
+		{"escaped exact key (a duplicate, not a variant)", `{"choices":[{"message":{"tool_calls":[],"` + jsonEscapet + `ool_calls":[]}}]}`, false},
+		{"long-s variant", `{"choices":[{"message":{"tool_calls":[],"tool_callſ":[]}}]}`, true},
+		{"lone variant (Go reads it, the SDKs do not)", `{"choices":[{"message":{"Function_Call":{"name":"bash"}}}]}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hasOpenAICaseVariantKey([]byte(tc.data)); got != tc.want {
+				t.Errorf("hasOpenAICaseVariantKey(%s) = %v, want %v", tc.data, got, tc.want)
+			}
+		})
+	}
+}

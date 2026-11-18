@@ -153,6 +153,16 @@ func (s *Server) forwardWithToolCallGating(
 	// bodies pay nothing for it.
 	switch provider {
 	case "openai":
+		// Checked on the text a lenient client decodes, before the typed
+		// decode, so a BOM, a UTF-16 body or a wrong-typed field cannot
+		// hide a variant spelling the probe would then fold as Go does.
+		if hasOpenAICaseVariantKey(jsonTextAsUTF8(bodyBytes)) {
+			metrics.IncLLMProxyProtocolViolation("openai")
+			decision := protocolViolationDecision("openai", violationCaseVariantKey)
+			s.auditNonStreamingRefusal(r, "openai", reqModel, decision)
+			writeNonStreamingRefusal(s, w, resp.Header, "openai", decision, ToolCallCheck{Provider: "openai"}, reqModel)
+			return nil
+		}
 		var parsed ChatCompletionResponse
 		if err := json.Unmarshal(bodyBytes, &parsed); err != nil {
 			if hasLenientToolCall(bodyBytes, "openai") {
@@ -219,11 +229,10 @@ func writeNonStreamingRefusal(
 	// The refusal's length differs from the upstream body's.
 	copyForwardableHeaders(srcHeader, w.Header())
 	w.Header().Del("Content-Length")
-	// The refusal is plain JSON whatever the upstream body was.
+	// The refusal is plain UTF-8 JSON whatever the upstream body was; its
+	// Content-Type may name another charset (utf-16-le).
 	w.Header().Del("Content-Encoding")
-	if w.Header().Get("Content-Type") == "" {
-		w.Header().Set("Content-Type", "application/json")
-	}
+	w.Header().Set("Content-Type", "application/json")
 
 	refusal := s.buildRefusal(provider, decision, &RefusalContext{
 		Provider:              provider,

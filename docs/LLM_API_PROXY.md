@@ -547,12 +547,27 @@ not imply "the client cannot use it".
 Before falling back to passthrough the proxy asks the narrower
 question — does this body carry a tool call at all? — using a probe that
 constrains only the path to `tool_calls`, `function_call` / `tool_use`
-and nothing else. The probe also skips a leading UTF-8 byte order mark:
-`encoding/json` rejects one, but Python's `json.loads` on bytes skips it
-and runs the calls behind it.
+and nothing else. The probe reads the body the way Python's
+`json.loads` on bytes does (openai-python and anthropic-python decode
+responses that way): it skips a leading UTF-8 byte order mark, and it
+reads a UTF-16 or UTF-32 body, detected by its byte order mark or, as
+in RFC 4627 §3, by which of its first four bytes are zero.
+`encoding/json` reads neither, while the SDK runs the calls in both.
 If one is present the response is refused under the fixed rule
 `deny:llm_api_proxy:undecodable_tool_call`. If none is present the body
-passes through unchanged.
+passes through unchanged: a UTF-16 answer with no call carries nothing
+to gate, so it reaches the client as before.
+
+The same rule refuses an OpenAI **stream** in which any line starts
+with a UTF-8 byte order mark (the stream's first bytes, or any later
+line), at its first tool call. openai-node decodes each SSE line on its
+own and drops a leading mark, so such a line is a data line to it and
+it runs the call on it; openai-python ignores the line. The clients
+disagree on what the stream holds. The proxy reads such a line as
+openai-node does only to see whether it carries a call (the
+case-variant check below sees it too); it does not gate it: it
+refuses, stream-shaped, and audits once. Such a stream with no tool
+call is forwarded unchanged, marks included.
 
 **Where to see it.** The refusal is recorded in the **central audit
 trail** with the DENY the client actually received, via the same
@@ -600,6 +615,7 @@ refused rather than forwarded, each under its own stable rule string:
 | `deny:llm_api_proxy:multi_choice_tool_calls` | **OpenAI.** Tool-call deltas arrived on more than one `choices[].index`. `tool_calls[i].index` is unique only *within* a choice, so two choices' fragments would merge into a single argument string the firewall gates and no client executes. |
 | `deny:llm_api_proxy:mixed_function_call` | **OpenAI.** One response streamed both a legacy `function_call` and `tool_calls`. No real upstream mixes them, and clients disagree on which one they execute. |
 | `deny:llm_api_proxy:tool_name_conflict` | **OpenAI.** A call (`tool_calls[i]` or a legacy `function_call`) carried a second non-empty `name` fragment, identical to the first or not. openai-python concatenates the fragments (`bash` twice becomes `bashbash`) and openai-node keeps the last, so no single name can be gated. A server that repeats the full name on every delta is refused too. |
+| `deny:llm_api_proxy:case_variant_key` | **OpenAI, streaming and non-streaming.** An envelope object (the response, `choices[]`, `message`, `delta`, `tool_calls[]`, `function`, `function_call`) carries a key that differs only in case from a key the gate reads, such as `Function_Call` beside `function_call`. Go's decoder matches keys case-insensitively (with Unicode folding, so `ſ` matches `s`) and keeps the last; the SDKs read only the exact key, so the gate would evaluate one call and the client run another. A variant without the exact key beside it is refused too, as in the Anthropic check above. The check runs on every gated OpenAI body and stream event, including a body behind a BOM or in UTF-16. Exact duplicate keys are not refused: every parser keeps the last. |
 
 Every rule above discards the buffered bytes and stops reading upstream.
 None is subject to `--fail-mode allow`: the guard is healthy, it simply

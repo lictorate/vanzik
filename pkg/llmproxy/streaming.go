@@ -416,6 +416,13 @@ func (s *Server) handleStreamingAnthropicMessages(w http.ResponseWriter, r *http
 func (s *Server) runOpenAIStreamLoop(w http.ResponseWriter, flusher http.Flusher, r *http.Request, body io.Reader) {
 	acc := NewOpenAIToolCallAccumulator(hardCappedBufferBytes(s.cfg.MaxBufferBytes))
 	reader := bufio.NewReader(body)
+	// bomStream: a line of the stream began with a UTF-8 BOM. openai-node
+	// decodes each line separately and drops a leading BOM, so it runs a
+	// call on such a line, which the parser cannot see as a data line and
+	// would pass through; openai-python ignores the line. Clients
+	// disagree on what such a stream holds, so its first tool call
+	// refuses it rather than being gated.
+	bomStream := false
 
 	for {
 		event, err := readSSEEvent(reader, hardCappedBufferBytes(s.cfg.MaxBufferBytes*2))
@@ -436,7 +443,22 @@ func (s *Server) runOpenAIStreamLoop(w http.ResponseWriter, flusher http.Flusher
 		}
 
 		if len(event) > 0 {
-			result, ferr := acc.FeedEvent(event)
+			// Stripped only so the parser sees the lines openai-node sees;
+			// a passed-through event keeps its BOMs.
+			feed, hasBOMLine := stripLineBOMs(event)
+			bomStream = bomStream || hasBOMLine
+			result, ferr := acc.FeedEvent(feed)
+			if bomStream && acc.active {
+				metrics.IncLLMProxyUndecodableToolCall("openai")
+				decision := undecodableToolCallDecision("openai")
+				refusal := s.buildRefusal("openai", decision,
+					&RefusalContext{Provider: "openai", AnthropicToolUseIndex: -1})
+				_, _ = w.Write(refusal)
+				flusher.Flush()
+				name, id := acc.pendingIdentity()
+				s.auditStreamRefusal(r, "openai", decision, name, id)
+				return
+			}
 			if ferr != nil && !result.Completed && !isEOF {
 				// Malformed non-completion delta: drop it rather than inject
 				// bytes. Corruption that affects a decision surfaces at
@@ -506,6 +528,24 @@ func (s *Server) runOpenAIStreamLoop(w http.ResponseWriter, flusher http.Flusher
 			return
 		}
 	}
+}
+
+// stripLineBOMs returns event with one UTF-8 BOM removed from the start
+// of each line, and whether any line had one. openai-node decodes every
+// SSE line with a TextDecoder that drops a leading BOM.
+func stripLineBOMs(event []byte) ([]byte, bool) {
+	if !bytes.Contains(event, utf8BOM) {
+		return event, false
+	}
+	out := make([]byte, 0, len(event))
+	found := false
+	for _, line := range bytes.SplitAfter(event, []byte("\n")) {
+		if bytes.HasPrefix(line, utf8BOM) {
+			line, found = line[len(utf8BOM):], true
+		}
+		out = append(out, line...)
+	}
+	return out, found
 }
 
 // gateAndFlushOpenAI gates each completed call. On all-ALLOW it replays
@@ -602,6 +642,12 @@ func protocolViolationDecision(provider string, kind protocolViolationKind) Deci
 			Allow:  false,
 			Reason: "upstream streamed conflicting tool name fragments; refused",
 			Rule:   "deny:llm_api_proxy:tool_name_conflict",
+		}
+	case violationCaseVariantKey:
+		return Decision{
+			Allow:  false,
+			Reason: "upstream response carries keys that differ only in case; refused",
+			Rule:   "deny:llm_api_proxy:case_variant_key",
 		}
 	default:
 		if provider == "anthropic" {
