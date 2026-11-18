@@ -118,6 +118,28 @@ func TestVR16_ParserDifferentials_Refused(t *testing.T) {
 			wantGated: 1,
 		},
 		{
+			// The gate adds nothing for a null partial_json and holds
+			// {"command":"ls","x":""}; @anthropic-ai/sdk appends the
+			// literal null and anthropic-python raises TypeError.
+			name: "delta_partial_json_null",
+			stream: toolUse(0, "toolu_1") +
+				vr16DeltaEvent(0, `{"type":"input_json_delta","partial_json":"{\"command\":\"ls\",\"x\":\""}`) +
+				vr16DeltaEvent(0, `{"type":"input_json_delta","partial_json":null}`) +
+				vr16DeltaEvent(0, `{"type":"input_json_delta","partial_json":"\"}"}`) +
+				pvAnthropicStop(0),
+			wantRule: ruleInter,
+		},
+		{
+			// As above, with undefined in @anthropic-ai/sdk.
+			name: "delta_partial_json_missing",
+			stream: toolUse(0, "toolu_1") +
+				vr16DeltaEvent(0, `{"type":"input_json_delta","partial_json":"{\"command\":\"ls\",\"x\":\""}`) +
+				vr16DeltaEvent(0, `{"type":"input_json_delta"}`) +
+				vr16DeltaEvent(0, `{"type":"input_json_delta","partial_json":"\"}"}`) +
+				pvAnthropicStop(0),
+			wantRule: ruleInter,
+		},
+		{
 			name: "delta_Text_beside_text",
 			stream: pvAnthropicTextStart(0) +
 				vr16DeltaEvent(0, `{"type":"text_delta","text":"hi","Text":"rm -rf /"}`) + pvAnthropicStop(0),

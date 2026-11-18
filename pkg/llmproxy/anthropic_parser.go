@@ -259,11 +259,21 @@ func (a *AnthropicAccumulator) FeedEvent(rawEvent []byte) (FeedResult, error) {
 	case "content_block_delta":
 		// SECURITY: the delta object's keys get the event's case-variant
 		// check: `"Type":"text_delta"` beside `"type":"input_json_delta"`
-		// would hide arguments from the gate that the SDKs apply.
-		if objectHasCaseVariantKey(fields["delta"], anthropicDeltaKeys[:]) {
+		// would hide arguments from the gate that the SDKs apply. An
+		// absent or non-object delta leaves the map nil.
+		var delta map[string]json.RawMessage
+		_ = json.Unmarshal(fields["delta"], &delta)
+		if hasCaseVariantKey(delta, anthropicDeltaKeys[:]) {
 			return FeedResult{ProtocolViolation: true, violation: violationInterleavedToolUse}, nil
 		}
 		isInput := env.Delta != nil && env.Delta.Type == "input_json_delta"
+		// SECURITY: a null or missing partial_json decodes to "" and adds
+		// nothing for the gate, while @anthropic-ai/sdk appends the
+		// literal `null` or `undefined` to the input. Other non-strings
+		// already fail the envelope decode.
+		if isInput && !isJSONString(delta["partial_json"]) {
+			return FeedResult{ProtocolViolation: true, violation: violationInterleavedToolUse}, nil
+		}
 		if a.activeToolUseIndex >= 0 {
 			// SECURITY: an input delta for another index would be
 			// flushed after this cycle's gate, unread by it, and the SDKs
@@ -423,6 +433,12 @@ func objectHasCaseVariantKey(raw json.RawMessage, keys []string) bool {
 		return false
 	}
 	return hasCaseVariantKey(obj, keys)
+}
+
+// isJSONString reports whether raw, a value encoding/json has already
+// validated, is a JSON string.
+func isJSONString(raw json.RawMessage) bool {
+	return len(raw) > 0 && raw[0] == '"'
 }
 
 // hasCaseVariantKey reports whether obj has a key that encoding/json
