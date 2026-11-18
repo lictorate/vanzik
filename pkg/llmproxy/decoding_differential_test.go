@@ -3,8 +3,8 @@ package llmproxy
 // Responses the proxy and a client SDK decode differently must be
 // refused, not gated on the proxy's reading:
 //
-//   - a stream starting with a UTF-8 BOM: openai-node strips it and runs
-//     a call in the first event, which the parser cannot see;
+//   - a stream line starting with a UTF-8 BOM: openai-node strips it and
+//     runs a call on that line, which the parser cannot see;
 //   - a UTF-16 or UTF-32 body: openai-python's json.loads(bytes) detects
 //     the encoding and runs the calls, encoding/json cannot read it;
 //   - an envelope key differing only in case from one the gate reads:
@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -94,12 +95,20 @@ func assertRefusedStream(t *testing.T, got string, spy *forcedAuditSpy, rule str
 	assertAudited(t, spy, rule, "openai")
 }
 
-// --- UTF-8 BOM at the start of a stream ------------------------------------
+// --- UTF-8 BOM at the start of a stream line -------------------------------
 
+// openai-node decodes each SSE line on its own and drops a leading BOM,
+// so a BOM-prefixed line anywhere in the stream is a data line to it.
 func TestBOMStream_WithToolCall_IsRefused(t *testing.T) {
 	roleEvent := `data: {"choices":[{"index":0,"delta":{"role":"assistant","content":null},"finish_reason":null}]}` + "\n\n"
 	tcEvent := `data: {"choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call_rm","type":"function","function":{"name":"bash","arguments":"{\"command\":\"rm -rf /\"}"}}]},"finish_reason":null}]}` + "\n\n"
+	tcData := strings.TrimPrefix(tcEvent, "data: ")
+	tail := pvOpenAIFinish(0, "tool_calls") + "data: [DONE]\n\n"
 	for _, tc := range []struct{ name, stream string }{
+		{"BOM line after an empty line", "\n" + bomPrefix + "data:" + tcData + tail},
+		{"BOM line after a text event", pvOpenAIContent(0, "hi") + bomPrefix + "data:" + tcData + tail},
+		{"BOM line after a comment in the first event", ": c\n" + bomPrefix + "data:" + tcData + tail},
+		{"BOM line after an event name, after a text event", pvOpenAIContent(0, "hi") + "event: x\n" + bomPrefix + "data:" + tcData + tail},
 		{"tool_calls in the first event", bomPrefix + tcEvent +
 			pvOpenAIFinish(0, "tool_calls") + "data: [DONE]\n\n"},
 		{"function_call in the first event", bomPrefix + pvOpenAIFunctionCallDelta("bash", `{"command":"rm -rf /"}`) +
@@ -118,17 +127,22 @@ func TestBOMStream_WithToolCall_IsRefused(t *testing.T) {
 	}
 }
 
-// A BOM-prefixed stream with no call has nothing to gate; it is
-// forwarded byte-identical, BOM included, as before.
+// A stream with BOM-prefixed lines but no call has nothing to gate; it
+// is forwarded byte-identical, BOMs included, as before.
 func TestBOMStream_TextOnly_IsForwardedUnchanged(t *testing.T) {
-	stream := bomPrefix + pvOpenAIContent(0, "hello") + pvOpenAIContent(0, " world") +
-		pvOpenAIFinish(0, "stop") + "data: [DONE]\n\n"
-	got, spy := runStreamWithAudit(t, "openai", stream, 0)
-	if got != stream {
-		t.Errorf("text-only BOM stream changed:\n got %q\nwant %q", got, stream)
-	}
-	if n := len(spy.recorded()); n != 0 {
-		t.Errorf("text-only BOM stream audited %d refusals", n)
+	for _, stream := range []string{
+		bomPrefix + pvOpenAIContent(0, "hello") + pvOpenAIContent(0, " world") +
+			pvOpenAIFinish(0, "stop") + "data: [DONE]\n\n",
+		pvOpenAIContent(0, "hello") + bomPrefix + pvOpenAIContent(0, " world") +
+			pvOpenAIFinish(0, "stop") + "data: [DONE]\n\n",
+	} {
+		got, spy := runStreamWithAudit(t, "openai", stream, 0)
+		if got != stream {
+			t.Errorf("text-only BOM stream changed:\n got %q\nwant %q", got, stream)
+		}
+		if n := len(spy.recorded()); n != 0 {
+			t.Errorf("text-only BOM stream audited %d refusals", n)
+		}
 	}
 }
 
@@ -184,6 +198,31 @@ func TestNonUTF8Body_WithToolCall_IsRefused(t *testing.T) {
 				assertRefusedNonStreaming(t, got, spy, ruleUndecodable)
 			})
 		}
+	}
+}
+
+// The refusal is UTF-8 JSON, so it must not keep the upstream's charset.
+func TestNonUTF8Body_RefusalIsLabelledJSON(t *testing.T) {
+	body := encodeUTF16(rmToolCallBody, binary.LittleEndian, false)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-16-le")
+		_, _ = io.WriteString(w, body)
+	}))
+	defer upstream.Close()
+	srv, base, teardown := newGatedTestServer(t, upstream, nil, denyRm)
+	defer teardown()
+	srv.BuildRefusal = BuildRefusalRich
+	resp, err := http.Post(base+"/v1/chat/completions", "application/json", strings.NewReader(`{"model":"gpt-4","messages":[]}`))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	got, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(got), ruleUndecodable) {
+		t.Fatalf("want the %s refusal; got %q", ruleUndecodable, got)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("refusal Content-Type = %q, want application/json", ct)
 	}
 }
 
@@ -243,6 +282,8 @@ func TestCaseVariantKeys_Streaming_IsRefused(t *testing.T) {
 			pvOpenAIFinish(0, "function_call") + "data: [DONE]\n\n"},
 		{"delta then Delta", `data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_rm","type":"function","function":{"name":"bash","arguments":"{\"command\":\"rm -rf /\"}"}}]},"Delta":{"content":"hi"},"finish_reason":null}]}` + "\n\n" +
 			pvOpenAIFinish(0, "tool_calls") + "data: [DONE]\n\n"},
+		{"on a BOM-prefixed line", pvOpenAIContent(0, "hi") + bomPrefix +
+			`data: {"choices":[{"index":0,"delta":{"content":"x"},"finish_reason":null,"Finish_Reason":"stop"}]}` + "\n\n" + "data: [DONE]\n\n"},
 		{"finish_reason then Finish_Reason", pvOpenAIContent(0, "hi") +
 			`data: {"choices":[{"index":0,"delta":{},"finish_reason":null,"Finish_Reason":"stop"}]}` + "\n\n" + "data: [DONE]\n\n"},
 	} {
