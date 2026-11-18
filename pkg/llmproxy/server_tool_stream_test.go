@@ -182,6 +182,16 @@ func TestVR10_ReviewBypasses_Refused(t *testing.T) {
 			wantGated: 0,
 		},
 		{
+			// The position half of the in-place check, which S1b no
+			// longer reaches: index 2 is unused but the block sits at
+			// content[1], so the SDKs would apply the delta to content[2].
+			name: "S1e_server_index_past_its_position",
+			stream: pvAnthropicTextStart(0) + pvAnthropicStop(0) +
+				vrBlockStart(2, vrServerToolUse) + pvAnthropicInputDelta(2, rm) + pvAnthropicStop(2),
+			wantRule:  "deny:llm_api_proxy:orphaned_tool_input",
+			wantGated: 0,
+		},
+		{
 			// anthropic-python ignores a second message_start and keeps
 			// the content, so it must not reset the index bookkeeping.
 			name: "S1d_repeated_message_start_then_index_reuse",
