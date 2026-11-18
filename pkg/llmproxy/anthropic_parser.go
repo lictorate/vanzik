@@ -79,9 +79,10 @@ type anthropicBlockState struct {
 // OpenAIToolCallAccumulator, with the same FeedResult contract.
 //
 // From a tool_use's content_block_start until its content_block_stop,
-// every event is buffered, including deltas for other blocks:
+// every event is buffered, including non-input deltas for other blocks:
 // forwarding them while holding the tool_use would reorder the stream,
-// which some clients don't tolerate.
+// which some clients don't tolerate. An input_json_delta for another
+// block is refused instead (see FeedEvent).
 type AnthropicAccumulator struct {
 	maxBufferBytes int
 
@@ -203,7 +204,7 @@ func (a *AnthropicAccumulator) FeedEvent(rawEvent []byte) (FeedResult, error) {
 
 	switch env.Type {
 	case "content_block_start":
-		if blockHasCaseVariantKey(fields["content_block"]) {
+		if objectHasCaseVariantKey(fields["content_block"], anthropicBlockKeys[:]) {
 			return FeedResult{ProtocolViolation: true, violation: violationInterleavedToolUse}, nil
 		}
 		inPlace := env.Index == a.startCount && !a.startIndexes[env.Index]
@@ -213,8 +214,11 @@ func (a *AnthropicAccumulator) FeedEvent(rawEvent []byte) (FeedResult, error) {
 			// SECURITY: a second tool_use opening while one buffers
 			// would be flushed when the first cycle Resets, and its
 			// remaining deltas would pass ungated. One cycle cannot gate
-			// two blocks, so refuse the stream.
-			if a.activeToolUseIndex >= 0 {
+			// two blocks, so refuse the stream. A tool_use out of place
+			// is refused too: the gate reads the deltas sent at its
+			// index, and the SDKs apply them to content[index], another
+			// block, while this one keeps the start's input.
+			if a.activeToolUseIndex >= 0 || !inPlace {
 				return FeedResult{ProtocolViolation: true, violation: violationInterleavedToolUse}, nil
 			}
 			st := &anthropicBlockState{
@@ -253,9 +257,32 @@ func (a *AnthropicAccumulator) FeedEvent(rawEvent []byte) (FeedResult, error) {
 		return FeedResult{PassThrough: true}, nil
 
 	case "content_block_delta":
+		// SECURITY: the delta object's keys get the event's case-variant
+		// check: `"Type":"text_delta"` beside `"type":"input_json_delta"`
+		// would hide arguments from the gate that the SDKs apply. An
+		// absent or non-object delta leaves the map nil.
+		var delta map[string]json.RawMessage
+		_ = json.Unmarshal(fields["delta"], &delta)
+		if hasCaseVariantKey(delta, anthropicDeltaKeys[:]) {
+			return FeedResult{ProtocolViolation: true, violation: violationInterleavedToolUse}, nil
+		}
+		isInput := env.Delta != nil && env.Delta.Type == "input_json_delta"
+		// SECURITY: a null or missing partial_json decodes to "" and adds
+		// nothing for the gate, while @anthropic-ai/sdk appends the
+		// literal `null` or `undefined` to the input. Other non-strings
+		// already fail the envelope decode.
+		if isInput && !isJSONString(delta["partial_json"]) {
+			return FeedResult{ProtocolViolation: true, violation: violationInterleavedToolUse}, nil
+		}
 		if a.activeToolUseIndex >= 0 {
-			if env.Index == a.activeToolUseIndex && env.Delta != nil &&
-				env.Delta.Type == "input_json_delta" && env.Delta.PartialJSON != "" {
+			// SECURITY: an input delta for another index would be
+			// flushed after this cycle's gate, unread by it, and the SDKs
+			// would apply it to that block, possibly a tool_use an
+			// earlier cycle already gated.
+			if isInput && env.Index != a.activeToolUseIndex {
+				return FeedResult{ProtocolViolation: true, violation: violationOrphanedToolInput}, nil
+			}
+			if isInput && env.Delta.PartialJSON != "" {
 				st := a.blocks[env.Index]
 				if st == nil {
 					// Unreachable (start precedes delta); defensive.
@@ -283,7 +310,7 @@ func (a *AnthropicAccumulator) FeedEvent(rawEvent []byte) (FeedResult, error) {
 		// provider runs that call, and no client executes it. A block
 		// out of place would hand the delta to an earlier block in the
 		// client, possibly an already-gated tool_use.
-		if env.Delta != nil && env.Delta.Type == "input_json_delta" {
+		if isInput {
 			if st := a.blocks[env.Index]; st != nil && !st.Closed && st.inPlace && anthropicProviderExecutedBlocks[st.Type] {
 				return FeedResult{PassThrough: true}, nil
 			}
@@ -388,22 +415,30 @@ func isEmptyJSONObject(seed []byte) bool {
 	return true
 }
 
-// anthropicEventKeys and anthropicBlockKeys are the keys FeedEvent
-// reads from an event (anthropicEventEnvelope) and from a
-// content_block_start's content_block.
+// anthropicEventKeys, anthropicBlockKeys and anthropicDeltaKeys are the
+// keys FeedEvent decodes from an event (anthropicEventEnvelope), from a
+// content_block_start's content_block and from a content_block_delta's
+// delta.
 var (
 	anthropicEventKeys = [...]string{"type", "index", "content_block", "delta"}
 	anthropicBlockKeys = [...]string{"type", "id", "name", "input"}
+	anthropicDeltaKeys = [...]string{"type", "partial_json", "text"}
 )
 
-// blockHasCaseVariantKey is hasCaseVariantKey for a content_block
-// object; anything else (absent, not an object) reports false.
-func blockHasCaseVariantKey(raw json.RawMessage) bool {
-	var block map[string]json.RawMessage
-	if json.Unmarshal(raw, &block) != nil {
+// objectHasCaseVariantKey is hasCaseVariantKey for a raw nested object;
+// anything else (absent, not an object) reports false.
+func objectHasCaseVariantKey(raw json.RawMessage, keys []string) bool {
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(raw, &obj) != nil {
 		return false
 	}
-	return hasCaseVariantKey(block, anthropicBlockKeys[:])
+	return hasCaseVariantKey(obj, keys)
+}
+
+// isJSONString reports whether raw, a value encoding/json has already
+// validated, is a JSON string.
+func isJSONString(raw json.RawMessage) bool {
+	return len(raw) > 0 && raw[0] == '"'
 }
 
 // hasCaseVariantKey reports whether obj has a key that encoding/json

@@ -95,6 +95,10 @@ func TestAT_AnthropicParser_TextBlocksDoNotInterfereWithToolUse(t *testing.T) {
 		toolArgs := `{"cmd":"echo hi"}`
 
 		acc := NewAnthropicAccumulator(0)
+		// The text block the deltas below belong to, at content[0].
+		if _, err := acc.FeedEvent([]byte(pvAnthropicTextStart(0))); err != nil {
+			return false
+		}
 		startTool := `event: content_block_start
 data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_x","name":"bash","input":{}}}
 
@@ -212,6 +216,12 @@ func TestAT_AnthropicParser_EventLineOptional(t *testing.T) {
 	property := func(includeEventLine bool, indexN uint8) bool {
 		acc := NewAnthropicAccumulator(0)
 		idx := int(indexN) % 16
+		// A tool_use's index must be its content position: idx blocks first.
+		for i := 0; i < idx; i++ {
+			if _, err := acc.FeedEvent([]byte(pvAnthropicTextStart(i))); err != nil {
+				return false
+			}
+		}
 		var ev string
 		if includeEventLine {
 			ev = fmt.Sprintf(

@@ -241,7 +241,8 @@ func TestAT_RefusalCorrectness_Anthropic_SDKParseable(t *testing.T) {
 // reuses the tool_use's block index; index 0 would corrupt text blocks
 // the client already received.
 func TestAT_RefusalCorrectness_Anthropic_PreservesToolUseIndex(t *testing.T) {
-	// Text blocks at 0-2, then a tool_use at 3.
+	// Text blocks at 0-2, then a tool_use at 3. Each index is its content
+	// position, or the stream is refused before the gate runs.
 	fixture := []byte(`event: message_start
 data: {"type":"message_start","message":{"id":"msg_ix","type":"message"}}
 
@@ -253,6 +254,18 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
 event: content_block_stop
 data: {"type":"content_block_stop","index":0}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+event: content_block_start
+data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":2}
 
 event: content_block_start
 data: {"type":"content_block_start","index":3,"content_block":{"type":"tool_use","id":"toolu_test","name":"bash","input":{}}}
@@ -297,15 +310,15 @@ data: {"type":"message_stop"}
 
 	// The refusal's content_block_start must be at index 3.
 	refusalStartIdx := -1
-	seenTextBlockStart := false // index 0 from upstream
+	upstreamTextStarts := 0 // indexes 0-2 from upstream
 	for _, p := range dataPayloads {
 		var env anthropicEventForSDK
 		if err := json.Unmarshal([]byte(p), &env); err != nil {
 			continue
 		}
 		if env.Type == "content_block_start" {
-			if !seenTextBlockStart && env.Index == 0 {
-				seenTextBlockStart = true
+			if upstreamTextStarts < 3 && env.Index == upstreamTextStarts {
+				upstreamTextStarts++
 				continue
 			}
 			// Subsequent content_block_start is the refusal's start.
