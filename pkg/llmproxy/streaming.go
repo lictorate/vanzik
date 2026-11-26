@@ -583,7 +583,8 @@ func (s *Server) runOpenAIStreamLoop(w http.ResponseWriter, flusher http.Flusher
 
 // stripLineBOMs returns event with one UTF-8 BOM removed from the start
 // of each line, and whether any line had one. openai-node decodes every
-// SSE line with a TextDecoder that drops a leading BOM. Lines end where
+// SSE line with a TextDecoder that drops a leading BOM, and
+// @anthropic-ai/sdk drops one from each line it splits. Lines end where
 // cutSSELine ends them, so a BOM after a bare CR counts.
 func stripLineBOMs(event []byte) ([]byte, bool) {
 	if !bytes.Contains(event, utf8BOM) {
@@ -909,6 +910,11 @@ func fallbackFailModeRule(failMode string) string {
 func (s *Server) runAnthropicStreamLoop(w http.ResponseWriter, flusher http.Flusher, r *http.Request, body io.Reader) {
 	acc := NewAnthropicAccumulator(hardCappedBufferBytes(s.cfg.MaxBufferBytes))
 	reader := bufio.NewReader(body)
+	// bomStream: as in runOpenAIStreamLoop. @anthropic-ai/sdk drops one
+	// BOM from the start of each line, so a BOM-prefixed line is an
+	// event or data line to it; anthropic-python ignores the line. A
+	// client tool_use in such a stream is refused, not gated.
+	bomStream := false
 
 	for {
 		event, err := readSSEEvent(reader, hardCappedBufferBytes(s.cfg.MaxBufferBytes*2))
@@ -928,7 +934,22 @@ func (s *Server) runAnthropicStreamLoop(w http.ResponseWriter, flusher http.Flus
 		}
 
 		if len(event) > 0 {
-			result, ferr := acc.FeedEvent(event)
+			// Stripped only for the parser; a passed-through event keeps
+			// its BOMs.
+			feed, hasBOMLine := stripLineBOMs(event)
+			bomStream = bomStream || hasBOMLine
+			result, ferr := acc.FeedEvent(feed)
+			if bomStream && acc.ActiveToolUseIndex() >= 0 {
+				metrics.IncLLMProxyUndecodableToolCall("anthropic")
+				decision := undecodableToolCallDecision("anthropic")
+				refusal := s.buildRefusal("anthropic", decision,
+					&RefusalContext{Provider: "anthropic", AnthropicToolUseIndex: acc.ActiveToolUseIndex()})
+				_, _ = w.Write(refusal)
+				flusher.Flush()
+				name, id := acc.pendingIdentity()
+				s.auditStreamRefusal(r, "anthropic", decision, name, id)
+				return
+			}
 			if ferr != nil && !result.Completed && !isEOF {
 				// As in the OpenAI loop: drop malformed non-completion deltas.
 				continue

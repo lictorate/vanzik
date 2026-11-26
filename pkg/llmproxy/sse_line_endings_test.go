@@ -246,6 +246,7 @@ func TestVR17a_LineEndingFixtures(t *testing.T) {
 		{"a_mixed_ls", []string{lsCall}, "forwarded"},
 		{"a_split_ls", []string{lsCall}, "forwarded"},
 		{"a_cr_text", nil, "forwarded"},
+		{"a_cr_bom", nil, "undecodable"},
 	} {
 		raw, err := os.ReadFile(filepath.Join("testdata", "line_endings", tc.fixture+".sse"))
 		if err != nil {

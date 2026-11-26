@@ -1052,7 +1052,7 @@ func (r *Registry) WritePrometheus(w io.Writer) {
 		"LLM-proxy responses refused fail-closed because their structure was unsafe to gate (e.g. an interleaved second tool_use, or an OpenAI envelope key differing only in case, streaming or not), by provider.",
 		"provider", snapshotStringMap(&r.llmProxyProtocolViolationMu, r.llmProxyProtocolViolationCount))
 	writeLabeledCounter(w, "vanzik_llmproxy_undecodable_tool_call_total",
-		"LLM-proxy responses refused fail-closed because they carried a tool call the proxy could not decode the way a client SDK does (a non-streaming body that failed strict decode, or an OpenAI stream with a BOM-prefixed line), by provider.",
+		"LLM-proxy responses refused fail-closed because they carried a tool call the proxy could not decode the way a client SDK does (a non-streaming body that failed strict decode, or an OpenAI or Anthropic stream with a BOM-prefixed line), by provider.",
 		"provider", snapshotStringMap(&r.llmProxyUndecodableToolCallMu, r.llmProxyUndecodableToolCallCount))
 	writeLabeledCounter(w, "vanzik_llmproxy_undecodable_content_encoding_total",
 		"LLM-proxy 2xx responses refused fail-closed because they still carried a Content-Encoding the proxy could not decode, by provider.",
