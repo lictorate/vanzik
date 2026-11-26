@@ -562,7 +562,8 @@ The same rule refuses an OpenAI **stream** in which any line starts
 with a UTF-8 byte order mark (the stream's first bytes, or any later
 line), at its first tool call. openai-node decodes each SSE line on its
 own and drops a leading mark, so such a line is a data line to it and
-it runs the call on it; openai-python ignores the line. The clients
+it runs the call on it; openai-python ignores the line. A line starts
+after CRLF, a bare CR or a bare LF, so a mark after a bare CR counts. The clients
 disagree on what the stream holds. The proxy reads such a line as
 openai-node does only to see whether it carries a call (the
 case-variant check below sees it too); it does not gate it: it
@@ -717,8 +718,11 @@ Why 1 MiB:
   clients (and their connection pools) are shared.
 - When the client closes the connection, the proxy cancels both the
   upstream read and any in-flight `/v1/check` call, then drops buffers.
-- An SSE event is read up to its `\n\n` delimiter with no fixed line
-  limit other than `--max-buffer-bytes`.
+- An SSE event is read up to the blank line that ends it, with no fixed
+  line limit other than `--max-buffer-bytes`. A line ends at CRLF, a
+  bare CR or a bare LF, as in the SSE spec and every client SDK; a CR
+  and the LF after it are one line ending, even when they arrive in
+  separate reads. The bytes are forwarded as they arrived.
 
 ---
 

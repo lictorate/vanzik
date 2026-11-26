@@ -14,3 +14,7 @@ pkg/proxy/schema/v1/schema.json text eol=lf
 # Report golden files are compared byte-for-byte by TestGolden; a CRLF
 # checkout on Windows would make every one of them differ.
 pkg/report/testdata/* text eol=lf
+
+# SSE line-ending fixtures hold bare CRs, CRLFs and LFs on purpose; the
+# tests replay them byte-for-byte. Never convert them.
+pkg/llmproxy/testdata/line_endings/* -text
