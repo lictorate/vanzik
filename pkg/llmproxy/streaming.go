@@ -265,11 +265,19 @@ func (s *Server) runPolicyCheck(ctx context.Context, tc ToolCallCheck) (Decision
 	// executor would act on a value that was never gated. This is a
 	// deny with nil error, so --fail-mode allow cannot override it.
 	if hasDuplicateJSONKeys(tc.RawArguments) {
-		return Decision{
+		d := Decision{
 			Allow:  false,
 			Reason: "tool call arguments contain duplicate JSON keys (ambiguous to gate; refused)",
 			Rule:   "deny:llm_api_proxy:duplicate_argument_key",
-		}, nil
+		}
+		// PolicyCheck never sees this call, so /v1/check writes nothing:
+		// record the refusal the client gets, as the conflicting-alias
+		// deny does. With no hook (tests, embedders) there is no entry;
+		// /v1/check is not called for arguments it would misread.
+		if s.RecordForcedAudit != nil {
+			s.RecordForcedAudit(ctx, &tc, d)
+		}
+		return d, nil
 	}
 	if s.PolicyCheck == nil {
 		return Decision{Allow: true, Rule: "allow:llm_api_proxy:no_hook"}, nil
@@ -969,6 +977,11 @@ func (s *Server) runAnthropicStreamLoop(w http.ResponseWriter, flusher http.Flus
 				decision := protocolViolationDecision("anthropic", result.violation)
 				refusal := s.buildRefusal("anthropic", decision,
 					&RefusalContext{Provider: "anthropic", AnthropicToolUseIndex: acc.ActiveToolUseIndex()})
+				if !acc.MessageStarted() {
+					// Refused at or before the first message_start (one
+					// carrying content): open the stream for the SDKs.
+					_, _ = w.Write(anthropicMessageStartEvent(""))
+				}
 				_, _ = w.Write(refusal)
 				flusher.Flush()
 				name, id := acc.pendingIdentity()
