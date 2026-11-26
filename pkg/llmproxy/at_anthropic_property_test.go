@@ -209,11 +209,13 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta"
 	}
 }
 
-// TestAT_AnthropicParser_EventLineOptional: events are dispatched on the
-// JSON `type` with or without an `event:` line, which some
-// intermediaries strip.
+// TestAT_AnthropicParser_EventLineOptional: an event is dispatched on
+// its JSON `type` only when its SSE `event:` name is that type. Both
+// Anthropic SDKs dispatch on the name and skip an unnamed or `ping`
+// event, so an event with no `event:` line (some intermediaries strip
+// them) or another name is refused, never gated (VR-17b, O-3).
 func TestAT_AnthropicParser_EventLineOptional(t *testing.T) {
-	property := func(includeEventLine bool, indexN uint8) bool {
+	property := func(nameMode uint8, indexN uint8) bool {
 		acc := NewAnthropicAccumulator(0)
 		idx := int(indexN) % 16
 		// A tool_use's index must be its content position: idx blocks first.
@@ -222,35 +224,36 @@ func TestAT_AnthropicParser_EventLineOptional(t *testing.T) {
 				return false
 			}
 		}
+		data := fmt.Sprintf(`data: {"type":"content_block_start","index":%d,"content_block":{"type":"tool_use","id":"toolu_p","name":"bash","input":{}}}`, idx)
 		var ev string
-		if includeEventLine {
-			ev = fmt.Sprintf(
-				`event: content_block_start
-data: {"type":"content_block_start","index":%d,"content_block":{"type":"tool_use","id":"toolu_p","name":"bash","input":{}}}
-
-`, idx)
-		} else {
-			ev = fmt.Sprintf(
-				`data: {"type":"content_block_start","index":%d,"content_block":{"type":"tool_use","id":"toolu_p","name":"bash","input":{}}}
-
-`, idx)
+		switch nameMode % 3 {
+		case 0: // the name matches the type: dispatched
+			ev = "event: content_block_start\n" + data + "\n\n"
+		case 1: // no event line: the SDKs skip it
+			ev = data + "\n\n"
+		default: // another name: the SDKs skip `ping`
+			ev = "event: ping\n" + data + "\n\n"
 		}
 		res, err := acc.FeedEvent([]byte(ev))
 		if err != nil {
 			t.Logf("err=%v", err)
 			return false
 		}
-		if !res.Accumulating {
-			t.Logf("expected Accumulating, got %+v", res)
+		if nameMode%3 == 0 {
+			if !res.Accumulating {
+				t.Logf("expected Accumulating, got %+v", res)
+				return false
+			}
+			return acc.ActiveToolUseIndex() == idx
+		}
+		if !res.ProtocolViolation || res.violation != violationEventTypeMismatch {
+			t.Logf("expected an event_type_mismatch refusal, got %+v", res)
 			return false
 		}
-		if acc.ActiveToolUseIndex() != idx {
-			return false
-		}
-		return true
+		return acc.ActiveToolUseIndex() == -1
 	}
 	if err := quick.Check(property, quickConfig); err != nil {
-		t.Errorf("event-line-optional property failed: %v", err)
+		t.Errorf("event-line property failed: %v", err)
 	}
 }
 

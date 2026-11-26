@@ -2,8 +2,9 @@ package llmproxy
 
 // Anthropic Messages streaming parser and tool_use accumulator (wire
 // format: docs/LLM_API_PROXY.md § 5.2). The parser discriminates on the
-// JSON `type` field, not the `event:` line, so a missing `event:` line
-// is tolerated. tool_use input arrives as input_json_delta.partial_json
+// JSON `type` field. The client SDKs dispatch on the SSE `event:` name,
+// so an event with data whose name is missing or differs from its type
+// is refused. tool_use input arrives as input_json_delta.partial_json
 // fragments, concatenated verbatim and parsed at content_block_stop.
 
 import (
@@ -200,7 +201,7 @@ func (a *AnthropicAccumulator) pendingIdentity() (name, id string) {
 // FeedEvent ingests one complete raw SSE event; same contract as
 // OpenAIToolCallAccumulator.FeedEvent.
 func (a *AnthropicAccumulator) FeedEvent(rawEvent []byte) (FeedResult, error) {
-	dataLine, hasData := extractAnthropicDataLine(rawEvent)
+	dataLine, hasData, name, hasName := extractAnthropicEvent(rawEvent)
 	if !hasData {
 		if a.activeToolUseIndex >= 0 {
 			return a.appendBuffered(rawEvent)
@@ -233,6 +234,16 @@ func (a *AnthropicAccumulator) FeedEvent(rawEvent []byte) (FeedResult, error) {
 	env, block, delta, ok := readAnthropicEvent(fields)
 	if !ok {
 		return FeedResult{ProtocolViolation: true, violation: violationInterleavedToolUse}, nil
+	}
+	// SECURITY: the SDKs dispatch on the SSE `event:` name, the gate on
+	// the JSON type. Both SDKs skip an event named `ping` or with no name,
+	// so `event: ping` over an input delta hid it from the client while
+	// the gate applied it (O-3). anthropic-python also skips an empty
+	// name, which @anthropic-ai/sdk dispatches, and both dispatch any
+	// other name on the JSON type. Only an event whose name is its type
+	// reads the same everywhere; refuse any other event that has data.
+	if !hasName || len(name) == 0 || string(name) != env.Type {
+		return FeedResult{ProtocolViolation: true, violation: violationEventTypeMismatch}, nil
 	}
 
 	switch env.Type {
@@ -639,6 +650,16 @@ func totalAnthropicArgsLen(blocks map[int]*anthropicBlockState) int {
 // `data:` lines joined with '\n' per the SSE spec). Lines end at CRLF,
 // CR or LF (cutSSELine).
 func extractAnthropicDataLine(rawEvent []byte) (dataLine []byte, hasData bool) {
+	dataLine, hasData, _, _ = extractAnthropicEvent(rawEvent)
+	return dataLine, hasData
+}
+
+// extractAnthropicEvent is extractAnthropicDataLine plus the event's
+// SSE name, read as both Anthropic SDKs read it: a line whose field name
+// (up to the first colon, or the whole line) is exactly "event", its
+// value with one leading space removed, the last such line winning.
+// hasName is false when there is no such line.
+func extractAnthropicEvent(rawEvent []byte) (dataLine []byte, hasData bool, name []byte, hasName bool) {
 	const dataPrefix = "data: "
 	const dataPrefixShort = "data:"
 	var buf bytes.Buffer
@@ -654,6 +675,11 @@ func extractAnthropicDataLine(rawEvent []byte) (dataLine []byte, hasData bool) {
 			payload = line[len(dataPrefix):]
 		case bytes.HasPrefix(line, []byte(dataPrefixShort)):
 			payload = line[len(dataPrefixShort):]
+		case bytes.HasPrefix(line, []byte("event")):
+			if v, ok := sseFieldValue(line, "event"); ok {
+				name, hasName = v, true
+			}
+			continue
 		default:
 			continue
 		}
@@ -664,7 +690,25 @@ func extractAnthropicDataLine(rawEvent []byte) (dataLine []byte, hasData bool) {
 		hasData = true
 	}
 	if !hasData {
+		return nil, false, name, hasName
+	}
+	return buf.Bytes(), true, name, hasName
+}
+
+// sseFieldValue returns the value of line when its SSE field name is
+// exactly field: the text up to the first colon, or the whole line when
+// there is none (an empty value). One leading space is removed.
+func sseFieldValue(line []byte, field string) ([]byte, bool) {
+	colon := bytes.IndexByte(line, ':')
+	if colon < 0 {
+		return nil, string(line) == field
+	}
+	if string(line[:colon]) != field {
 		return nil, false
 	}
-	return buf.Bytes(), true
+	v := line[colon+1:]
+	if len(v) > 0 && v[0] == ' ' {
+		v = v[1:]
+	}
+	return v, true
 }

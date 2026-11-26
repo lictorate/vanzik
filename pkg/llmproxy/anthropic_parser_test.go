@@ -137,13 +137,30 @@ func TestAnthropicParser_MalformedJSON(t *testing.T) {
 	}
 }
 
-// TestAnthropicParser_MissingEventLineToleratedViaJSONType — the type is
-// read from the JSON payload, so a missing `event:` line is fine.
+// TestAnthropicParser_MissingEventLineToleratedViaJSONType — an event
+// with data but no `event:` line is refused, not dispatched on its JSON
+// type: both Anthropic SDKs skip an unnamed event, so the gate would
+// read a tool_use the client never sees (VR-17b, O-3). The same event
+// with its `event:` line is dispatched on the JSON type as before.
 func TestAnthropicParser_MissingEventLineToleratedViaJSONType(t *testing.T) {
-	acc := NewAnthropicAccumulator(0)
+	const data = "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_y\",\"name\":\"bash\",\"input\":{}}}\n\n"
+
 	// content_block_start arrives without the `event:` line.
-	startEvent := []byte("data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_y\",\"name\":\"bash\",\"input\":{}}}\n\n")
-	res, err := acc.FeedEvent(startEvent)
+	acc := NewAnthropicAccumulator(0)
+	res, err := acc.FeedEvent([]byte(data))
+	if err != nil {
+		t.Fatalf("start event: %v", err)
+	}
+	if !res.ProtocolViolation || res.violation != violationEventTypeMismatch {
+		t.Errorf("want an event_type_mismatch ProtocolViolation (no event: line), got %+v", res)
+	}
+	if acc.ActiveToolUseIndex() != -1 {
+		t.Errorf("active index = %d, want -1", acc.ActiveToolUseIndex())
+	}
+
+	// The same event with its `event:` line.
+	acc = NewAnthropicAccumulator(0)
+	res, err = acc.FeedEvent([]byte("event: content_block_start\n" + data))
 	if err != nil {
 		t.Fatalf("start event: %v", err)
 	}

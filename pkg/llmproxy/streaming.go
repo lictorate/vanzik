@@ -713,6 +713,12 @@ func protocolViolationDecision(provider string, kind protocolViolationKind) Deci
 			Reason: "upstream response carries keys that differ only in case; refused",
 			Rule:   "deny:llm_api_proxy:case_variant_key",
 		}
+	case violationEventTypeMismatch:
+		return Decision{
+			Allow:  false,
+			Reason: "upstream stream event's name does not match its type; refused",
+			Rule:   "deny:llm_api_proxy:event_type_mismatch",
+		}
 	default:
 		if provider == "anthropic" {
 			return Decision{
@@ -973,7 +979,11 @@ func (s *Server) runAnthropicStreamLoop(w http.ResponseWriter, flusher http.Flus
 				// SECURITY: interleaved tool_use, start input conflicting
 				// with deltas, or input with no block open cannot be gated
 				// safely: discard the buffer and refuse.
-				metrics.IncLLMProxyProtocolViolation("anthropic")
+				if result.violation == violationEventTypeMismatch {
+					metrics.IncLLMProxyEventTypeMismatch("anthropic")
+				} else {
+					metrics.IncLLMProxyProtocolViolation("anthropic")
+				}
 				decision := protocolViolationDecision("anthropic", result.violation)
 				refusal := s.buildRefusal("anthropic", decision,
 					&RefusalContext{Provider: "anthropic", AnthropicToolUseIndex: acc.ActiveToolUseIndex()})

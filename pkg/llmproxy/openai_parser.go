@@ -126,6 +126,11 @@ const (
 	// violationCaseVariantKey (OpenAI): an envelope object carries a
 	// case variant of a key the gate reads (see hasOpenAICaseVariantKey).
 	violationCaseVariantKey
+
+	// violationEventTypeMismatch (Anthropic): an event's SSE `event:`
+	// name differs from its JSON `type`, or an event with data has no
+	// name. The SDKs dispatch on the name, the gate on the type.
+	violationEventTypeMismatch
 )
 
 // OpenAIToolCallAccumulator assembles streaming tool_call fragments
