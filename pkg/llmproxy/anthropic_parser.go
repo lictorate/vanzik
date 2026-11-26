@@ -10,7 +10,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // anthropicEventEnvelope types only the fields the parser reads.
@@ -19,6 +21,18 @@ type anthropicEventEnvelope struct {
 	Index        int                         `json:"index,omitempty"`
 	ContentBlock *anthropicContentBlockShape `json:"content_block,omitempty"`
 	Delta        *anthropicEventDeltaShape   `json:"delta,omitempty"`
+}
+
+// anthropicEvent is an event as readAnthropicEvent reads it. Block and
+// Delta are values, valid when HasBlock / HasDelta, so reading an event
+// allocates nothing for them.
+type anthropicEvent struct {
+	Type     string
+	Index    int
+	HasBlock bool
+	Block    anthropicContentBlockShape
+	HasDelta bool
+	Delta    anthropicEventDeltaShape
 }
 
 // anthropicContentBlockShape is content_block_start's content_block.
@@ -107,6 +121,11 @@ type AnthropicAccumulator struct {
 	// rejects one outright.
 	startCount   int
 	startIndexes map[int]bool
+
+	// messageStarted: a message_start has been passed to the client. A
+	// refusal before one must open the stream itself: both SDKs reject
+	// a stream that does not start with message_start.
+	messageStarted bool
 }
 
 // NewAnthropicAccumulator returns an accumulator with the given
@@ -123,6 +142,11 @@ func NewAnthropicAccumulator(maxBufferBytes int) *AnthropicAccumulator {
 // BufferedEvents returns the held raw events. Read-only.
 func (a *AnthropicAccumulator) BufferedEvents() [][]byte {
 	return a.bufferedEvents
+}
+
+// MessageStarted reports whether a message_start has been passed on.
+func (a *AnthropicAccumulator) MessageStarted() bool {
+	return a.messageStarted
 }
 
 // ActiveToolUseIndex returns the buffering tool_use's block index, or
@@ -184,8 +208,10 @@ func (a *AnthropicAccumulator) FeedEvent(rawEvent []byte) (FeedResult, error) {
 		return FeedResult{PassThrough: true}, nil
 	}
 
-	var env anthropicEventEnvelope
-	if err := json.Unmarshal(dataLine, &env); err != nil {
+	// encoding/json still decides which events are well formed: one it
+	// cannot decode into the envelope (a string index, a numeric
+	// partial_json) is dropped, as before. Its values are not used.
+	if err := json.Unmarshal(dataLine, new(anthropicEventEnvelope)); err != nil {
 		return FeedResult{}, fmt.Errorf("anthropic parser: malformed event JSON: %w", err)
 	}
 
@@ -195,22 +221,29 @@ func (a *AnthropicAccumulator) FeedEvent(rawEvent []byte) (FeedResult, error) {
 	// block types, indexes, ids, names, inputs. No reading is safe;
 	// refuse. The event's own keys are checked here, before the switch,
 	// because the switch trusts the decoded type. The same input just
-	// decoded into env, so this decode cannot fail.
+	// decoded, so this decode cannot fail.
 	var fields map[string]json.RawMessage
 	_ = json.Unmarshal(dataLine, &fields)
 	if hasCaseVariantKey(fields, anthropicEventKeys[:]) {
 		return FeedResult{ProtocolViolation: true, violation: violationInterleavedToolUse}, nil
 	}
+	// SECURITY: every value the switch reads comes from these maps, as
+	// the client SDKs read it, never from a struct decode (see
+	// readAnthropicEvent).
+	env, block, delta, ok := readAnthropicEvent(fields)
+	if !ok {
+		return FeedResult{ProtocolViolation: true, violation: violationInterleavedToolUse}, nil
+	}
 
 	switch env.Type {
 	case "content_block_start":
-		if objectHasCaseVariantKey(fields["content_block"], anthropicBlockKeys[:]) {
+		if hasCaseVariantKey(block, anthropicBlockKeys[:]) {
 			return FeedResult{ProtocolViolation: true, violation: violationInterleavedToolUse}, nil
 		}
 		inPlace := env.Index == a.startCount && !a.startIndexes[env.Index]
 		a.startCount++
 		a.startIndexes[env.Index] = true
-		if env.ContentBlock != nil && env.ContentBlock.Type == "tool_use" {
+		if env.HasBlock && env.Block.Type == "tool_use" {
 			// SECURITY: a second tool_use opening while one buffers
 			// would be flushed when the first cycle Resets, and its
 			// remaining deltas would pass ungated. One cycle cannot gate
@@ -224,8 +257,8 @@ func (a *AnthropicAccumulator) FeedEvent(rawEvent []byte) (FeedResult, error) {
 			st := &anthropicBlockState{
 				Index: env.Index,
 				Type:  "tool_use",
-				ID:    env.ContentBlock.ID,
-				Name:  env.ContentBlock.Name,
+				ID:    env.Block.ID,
+				Name:  env.Block.Name,
 			}
 			// SECURITY: an adversarial upstream can put the real
 			// arguments in the start event's input and send no delta.
@@ -233,7 +266,7 @@ func (a *AnthropicAccumulator) FeedEvent(rawEvent []byte) (FeedResult, error) {
 			// Emptiness is structural: `{ }` is empty, and treating it
 			// as a seed would trip the conflict check on the first
 			// conformant input_json_delta.
-			if seed := bytes.TrimSpace(env.ContentBlock.Input); len(seed) > 0 && !isEmptyJSONObject(seed) {
+			if seed := bytes.TrimSpace(env.Block.Input); len(seed) > 0 && !isEmptyJSONObject(seed) {
 				st.InputJSON.Write(seed)
 				st.startSeeded = true
 			}
@@ -247,10 +280,10 @@ func (a *AnthropicAccumulator) FeedEvent(rawEvent []byte) (FeedResult, error) {
 		if a.activeToolUseIndex >= 0 {
 			return a.appendBuffered(rawEvent)
 		}
-		if env.ContentBlock != nil {
+		if env.HasBlock {
 			a.blocks[env.Index] = &anthropicBlockState{
 				Index:   env.Index,
-				Type:    env.ContentBlock.Type,
+				Type:    env.Block.Type,
 				inPlace: inPlace,
 			}
 		}
@@ -259,21 +292,11 @@ func (a *AnthropicAccumulator) FeedEvent(rawEvent []byte) (FeedResult, error) {
 	case "content_block_delta":
 		// SECURITY: the delta object's keys get the event's case-variant
 		// check: `"Type":"text_delta"` beside `"type":"input_json_delta"`
-		// would hide arguments from the gate that the SDKs apply. An
-		// absent or non-object delta leaves the map nil.
-		var delta map[string]json.RawMessage
-		_ = json.Unmarshal(fields["delta"], &delta)
+		// would hide arguments from the gate that the SDKs apply.
 		if hasCaseVariantKey(delta, anthropicDeltaKeys[:]) {
 			return FeedResult{ProtocolViolation: true, violation: violationInterleavedToolUse}, nil
 		}
-		isInput := env.Delta != nil && env.Delta.Type == "input_json_delta"
-		// SECURITY: a null or missing partial_json decodes to "" and adds
-		// nothing for the gate, while @anthropic-ai/sdk appends the
-		// literal `null` or `undefined` to the input. Other non-strings
-		// already fail the envelope decode.
-		if isInput && !isJSONString(delta["partial_json"]) {
-			return FeedResult{ProtocolViolation: true, violation: violationInterleavedToolUse}, nil
-		}
+		isInput := env.Delta.Type == "input_json_delta"
 		if a.activeToolUseIndex >= 0 {
 			// SECURITY: an input delta for another index would be
 			// flushed after this cycle's gate, unread by it, and the SDKs
@@ -342,6 +365,9 @@ func (a *AnthropicAccumulator) FeedEvent(rawEvent []byte) (FeedResult, error) {
 		return FeedResult{PassThrough: true}, nil
 
 	case "message_start", "message_delta", "message_stop", "ping":
+		if env.Type == "message_start" {
+			a.messageStarted = true
+		}
 		if a.activeToolUseIndex >= 0 {
 			return a.appendBuffered(rawEvent)
 		}
@@ -425,20 +451,163 @@ var (
 	anthropicDeltaKeys = [...]string{"type", "partial_json", "text"}
 )
 
-// objectHasCaseVariantKey is hasCaseVariantKey for a raw nested object;
-// anything else (absent, not an object) reports false.
-func objectHasCaseVariantKey(raw json.RawMessage, keys []string) bool {
-	var obj map[string]json.RawMessage
-	if json.Unmarshal(raw, &obj) != nil {
-		return false
-	}
-	return hasCaseVariantKey(obj, keys)
-}
-
 // isJSONString reports whether raw, a value encoding/json has already
 // validated, is a JSON string.
 func isJSONString(raw json.RawMessage) bool {
 	return len(raw) > 0 && raw[0] == '"'
+}
+
+// readAnthropicEvent returns the values FeedEvent reads from an event,
+// taken the way the client SDKs take them, and the decoded
+// content_block and delta objects. ok is false when the event must be
+// refused.
+//
+// SECURITY: JSON.parse and Python's json keep the last of duplicate
+// keys and keep null as null. A struct decode does neither: a null
+// leaves the field as it was, and a second "delta" object is merged into
+// the first. So `"type":"input_json_delta",...,"type":null` was an input
+// delta to the gate while both SDKs dropped it, and the gate checked
+// arguments the clients never assembled. Every value here comes from
+// the last-wins maps, and a value the SDKs would not read as the gate
+// does is refused:
+//   - "type", when present, must be a string (null makes the SDKs skip
+//     the event or delta);
+//   - a content_block_* event's "index" must be an integer:
+//     @anthropic-ai/sdk reads content.at(index) but writes
+//     content[index], so a null or missing index sends the delta nowhere
+//     while the gate applied it to block 0;
+//   - in a content_block, "type" must be a string, and a tool_use's
+//     "id" and "name" strings; in a delta, an input_json_delta's
+//     "partial_json" must be a string (@anthropic-ai/sdk appends a null
+//     or missing one as the text "null" or "undefined"). A second
+//     content_block or delta object replaces the first, as in the SDKs.
+//     An absent or null object reads as none, as before;
+//   - message_start's message.content must be an empty array. Both SDKs
+//     start the message from it, so a tool_use there reaches the client
+//     with no content_block_start for the gate to see.
+func readAnthropicEvent(fields map[string]json.RawMessage) (env anthropicEvent, block, delta map[string]json.RawMessage, ok bool) {
+	if raw, present := fields["type"]; present {
+		if env.Type, ok = jsonStringValue(raw); !ok {
+			return env, nil, nil, false
+		}
+	}
+	switch env.Type {
+	case "content_block_start", "content_block_delta", "content_block_stop":
+		if env.Index, ok = jsonIntValue(fields["index"]); !ok {
+			return env, nil, nil, false
+		}
+	case "message_start":
+		var message map[string]json.RawMessage
+		_ = json.Unmarshal(fields["message"], &message)
+		if content, present := message["content"]; present && !isEmptyJSONArray(content) {
+			return env, nil, nil, false
+		}
+		return env, nil, nil, true
+	default:
+		return env, nil, nil, true
+	}
+
+	switch env.Type {
+	case "content_block_start":
+		// An absent or null content_block reads as none, as before; both
+		// SDKs fail on it. Any other non-object failed the envelope decode.
+		if json.Unmarshal(fields["content_block"], &block) != nil || block == nil {
+			return env, nil, nil, true
+		}
+		cb := &env.Block
+		if cb.Type, ok = jsonStringValue(block["type"]); !ok {
+			return env, nil, nil, false
+		}
+		if cb.Type == "tool_use" {
+			if cb.Name, ok = jsonStringValue(block["name"]); !ok {
+				return env, nil, nil, false
+			}
+			if raw, present := block["id"]; present {
+				if cb.ID, ok = jsonStringValue(raw); !ok {
+					return env, nil, nil, false
+				}
+			}
+			cb.Input = block["input"]
+		}
+		env.HasBlock = true
+	case "content_block_delta":
+		// An absent or null delta carries nothing for the gate, and both
+		// SDKs fail on it.
+		d := &env.Delta
+		env.HasDelta = true
+		if json.Unmarshal(fields["delta"], &delta) != nil || delta == nil {
+			return env, nil, nil, true
+		}
+		if raw, present := delta["type"]; present {
+			if d.Type, ok = jsonStringValue(raw); !ok {
+				return env, nil, nil, false
+			}
+		}
+		if d.Type == "input_json_delta" {
+			if d.PartialJSON, ok = jsonStringValue(delta["partial_json"]); !ok {
+				return env, nil, nil, false
+			}
+		}
+	}
+	return env, block, delta, true
+}
+
+// jsonStringValue decodes raw, a value encoding/json has already
+// validated, when it is a JSON string. Plain ASCII without escapes is
+// sliced instead of decoded; that is every type name.
+func jsonStringValue(raw json.RawMessage) (string, bool) {
+	if !isJSONString(raw) {
+		return "", false
+	}
+	plain := true
+	for _, c := range raw {
+		if c == '\\' || c >= utf8.RuneSelf {
+			plain = false
+			break
+		}
+	}
+	if plain {
+		if name, known := anthropicTypeNames[string(raw[1:len(raw)-1])]; known {
+			return name, true // no allocation for the names every event carries
+		}
+		return string(raw[1 : len(raw)-1]), true
+	}
+	var v string
+	if json.Unmarshal(raw, &v) != nil {
+		return "", false
+	}
+	return v, true
+}
+
+// anthropicTypeNames interns the event, block and delta type names.
+var anthropicTypeNames = func() map[string]string {
+	m := map[string]string{}
+	for _, n := range []string{
+		"message_start", "message_delta", "message_stop", "ping", "error",
+		"content_block_start", "content_block_delta", "content_block_stop",
+		"text", "tool_use", "server_tool_use", "mcp_tool_use", "thinking", "redacted_thinking",
+		"text_delta", "input_json_delta", "thinking_delta", "signature_delta", "citations_delta",
+	} {
+		m[n] = n
+	}
+	return m
+}()
+
+// jsonIntValue decodes raw, a value encoding/json has already
+// validated, when it is a JSON integer. null, a missing value, a string
+// or a fraction report false.
+func jsonIntValue(raw json.RawMessage) (int, bool) {
+	if len(raw) == 0 || (raw[0] != '-' && (raw[0] < '0' || raw[0] > '9')) {
+		return 0, false
+	}
+	n, err := strconv.Atoi(string(raw))
+	return n, err == nil
+}
+
+// isEmptyJSONArray reports whether raw is `[]`, whitespace allowed inside.
+func isEmptyJSONArray(raw json.RawMessage) bool {
+	t := bytes.TrimSpace(raw)
+	return len(t) >= 2 && t[0] == '[' && len(bytes.TrimSpace(t[1:len(t)-1])) == 0 && t[len(t)-1] == ']'
 }
 
 // hasCaseVariantKey reports whether obj has a key that encoding/json
