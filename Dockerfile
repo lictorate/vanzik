@@ -35,9 +35,11 @@ RUN for b in vanzik vanzik-mcp-gateway vanzik-llm-proxy; do \
 # Runtime stage
 FROM alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f
 
-# The pinned base image predates the CVE-2026-4738 fix (zlib 1.4-r0). Drop the
-# `apk upgrade` once a base-image digest ships zlib 1.4-r0 or later.
-RUN apk --no-cache upgrade zlib \
+# The pinned base image predates the fixes for CVE-2026-4738 (zlib 1.4-r0) and
+# CVE-2026-95692, -107496, -95691, -88823 and -88822 (libssl3 and libcrypto3
+# 3.5.9-r1). Drop the `apk upgrade` once a base-image digest ships zlib 1.4-r0
+# and OpenSSL 3.5.9-r1 or later.
+RUN apk --no-cache upgrade zlib libssl3 libcrypto3 \
     && apk --no-cache add ca-certificates \
     && addgroup -S vanzik \
     && adduser -S -G vanzik -u 10001 vanzik \
