@@ -473,12 +473,15 @@ func totalArgsLen(byIndex map[int]*openAIToolCallState) int {
 
 // extractOpenAIDataLine returns the event's data payload (several
 // `data:` lines joined with '\n' per the SSE spec), whether it is the
-// `[DONE]` sentinel, and whether any `data:` line exists.
+// `[DONE]` sentinel, and whether any `data:` line exists. Lines end at
+// CRLF, CR or LF (cutSSELine).
 func extractOpenAIDataLine(rawEvent []byte) (dataLine []byte, isDone bool, hasData bool) {
 	const dataPrefix = "data: "
 	const dataPrefixShort = "data:" // some servers omit the space
 	var buf bytes.Buffer
-	for _, line := range bytes.Split(rawEvent, []byte("\n")) {
+	for rest := rawEvent; len(rest) > 0; {
+		var line []byte
+		line, rest = cutSSELine(rest)
 		if len(line) == 0 {
 			continue
 		}

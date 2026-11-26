@@ -14,3 +14,9 @@ pkg/proxy/schema/v1/schema.json text eol=lf
 # Report golden files are compared byte-for-byte by TestGolden; a CRLF
 # checkout on Windows would make every one of them differ.
 pkg/report/testdata/* text eol=lf
+
+# LLM proxy stream and body fixtures are replayed byte-for-byte: the
+# published-format streams must stay LF-only, and line_endings/ holds
+# bare CRs, CRLFs and LFs on purpose. Never convert any of them (eol=lf
+# would rewrite the CRLF fixtures).
+pkg/llmproxy/testdata/** -text

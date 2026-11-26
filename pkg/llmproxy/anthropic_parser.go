@@ -467,12 +467,15 @@ func totalAnthropicArgsLen(blocks map[int]*anthropicBlockState) int {
 }
 
 // extractAnthropicDataLine returns the event's data payload (several
-// `data:` lines joined with '\n' per the SSE spec).
+// `data:` lines joined with '\n' per the SSE spec). Lines end at CRLF,
+// CR or LF (cutSSELine).
 func extractAnthropicDataLine(rawEvent []byte) (dataLine []byte, hasData bool) {
 	const dataPrefix = "data: "
 	const dataPrefixShort = "data:"
 	var buf bytes.Buffer
-	for _, line := range bytes.Split(rawEvent, []byte("\n")) {
+	for rest := rawEvent; len(rest) > 0; {
+		var line []byte
+		line, rest = cutSSELine(rest)
 		if len(line) == 0 {
 			continue
 		}

@@ -153,41 +153,92 @@ func (s *Server) streamingForwardError(w http.ResponseWriter, err error) {
 // blank-line terminator. A partial trailing event comes back with
 // io.EOF; callers should still dispatch it.
 //
+// SECURITY: a line ends at CRLF, a bare CR or a bare LF, as in the SSE
+// spec and every client SDK. Splitting on LF alone let `: x\rdata: {call}`
+// pass as one comment line while the clients ran the call. A CR at the
+// end of one read and an LF at the start of the next are one line
+// ending. If the CR ended the blank line that ends an event and its LF
+// has not arrived yet, the event is returned without waiting: the LF
+// then starts the next call, where a leading LF is never a blank line.
+// That is exact, because an LF there is either the rest of that CRLF or
+// a blank line with nothing pending, which no client acts on.
+//
 // Not bufio.Scanner: events can exceed its 64 KiB default. Not
 // ReadBytes: it buffers a whole line before returning, so a giant
-// newline-free blob would grow memory before the cap check. ReadSlice
-// returns at most one buffer per call, so maxEventBytes is enforced
-// every few KiB.
+// newline-free blob would grow memory before the cap check. Each step
+// takes at most the reader's buffered bytes, so maxEventBytes is
+// enforced every few KiB.
 func readSSEEvent(r *bufio.Reader, maxEventBytes int) ([]byte, error) {
 	var buf bytes.Buffer
 	atLineStart := true
+	afterCR := true // an LF here continues a CR line ending (see above)
 	for {
-		chunk, err := r.ReadSlice('\n')
-		if len(chunk) > 0 {
-			buf.Write(chunk)
-			if maxEventBytes > 0 && buf.Len() > maxEventBytes {
-				return buf.Bytes(), errSSEEventTooLarge
+		if r.Buffered() == 0 {
+			if _, err := r.Peek(1); err != nil {
+				if errors.Is(err, io.EOF) && buf.Len() > 0 {
+					return buf.Bytes(), io.EOF
+				}
+				return buf.Bytes(), err
 			}
 		}
-		if errors.Is(err, bufio.ErrBufferFull) {
-			// Line longer than the reader's buffer; keep draining it.
-			atLineStart = false
-			continue
+		avail, _ := r.Peek(r.Buffered())
+		take, blank := len(avail), false
+		if afterCR && avail[0] == '\n' {
+			take, afterCR = 1, false
+		} else if i := sseLineEnd(avail); i >= 0 {
+			// A blank line ends the event, but only when it is a whole
+			// line: the tail of an over-length line can be a lone CR or LF.
+			take, blank = i+1, atLineStart && i == 0
+			atLineStart, afterCR = true, avail[i] == '\r'
+		} else {
+			// No line end buffered: a line longer than the buffer, or one
+			// still arriving. Keep reading it.
+			atLineStart, afterCR = false, false
 		}
-		if err != nil {
-			if errors.Is(err, io.EOF) && buf.Len() > 0 {
-				return buf.Bytes(), io.EOF
+		buf.Write(avail[:take])
+		_, _ = r.Discard(take)
+		if maxEventBytes > 0 && buf.Len() > maxEventBytes {
+			return buf.Bytes(), errSSEEventTooLarge
+		}
+		if blank {
+			if afterCR && r.Buffered() > 0 {
+				if next, _ := r.Peek(1); next[0] == '\n' {
+					buf.WriteByte('\n')
+					_, _ = r.Discard(1)
+				}
 			}
-			return buf.Bytes(), err
-		}
-		// A blank line ends the event, but only when the chunk is the
-		// whole line: the tail of an over-length line can be exactly "\n".
-		wasLineStart := atLineStart
-		atLineStart = true
-		if wasLineStart && (bytes.Equal(chunk, []byte("\n")) || bytes.Equal(chunk, []byte("\r\n"))) {
 			return buf.Bytes(), nil
 		}
 	}
+}
+
+// sseLineEnd returns the index of the first CR or LF in b, or -1.
+func sseLineEnd(b []byte) int {
+	lf := bytes.IndexByte(b, '\n')
+	head := b
+	if lf >= 0 {
+		head = b[:lf]
+	}
+	if cr := bytes.IndexByte(head, '\r'); cr >= 0 {
+		return cr
+	}
+	return lf
+}
+
+// cutSSELine returns the first line of b without its line ending, and
+// the bytes after that ending. A line ends at CRLF, a bare CR or a bare
+// LF; the last line may have no ending. readSSEEvent keeps a CRLF in one
+// event, so the parsers see the lines the client SDKs see.
+func cutSSELine(b []byte) (line, rest []byte) {
+	i := sseLineEnd(b)
+	if i < 0 {
+		return b, nil
+	}
+	next := i + 1
+	if b[i] == '\r' && next < len(b) && b[next] == '\n' {
+		next++
+	}
+	return b[:i], b[next:]
 }
 
 var errSSEEventTooLarge = errors.New("sse event exceeded buffer cap")
@@ -532,18 +583,23 @@ func (s *Server) runOpenAIStreamLoop(w http.ResponseWriter, flusher http.Flusher
 
 // stripLineBOMs returns event with one UTF-8 BOM removed from the start
 // of each line, and whether any line had one. openai-node decodes every
-// SSE line with a TextDecoder that drops a leading BOM.
+// SSE line with a TextDecoder that drops a leading BOM, and
+// @anthropic-ai/sdk drops one from each line it splits. Lines end where
+// cutSSELine ends them, so a BOM after a bare CR counts.
 func stripLineBOMs(event []byte) ([]byte, bool) {
 	if !bytes.Contains(event, utf8BOM) {
 		return event, false
 	}
 	out := make([]byte, 0, len(event))
 	found := false
-	for _, line := range bytes.SplitAfter(event, []byte("\n")) {
+	for rest := event; len(rest) > 0; {
+		line, after := cutSSELine(rest)
+		withEnding := rest[:len(rest)-len(after)]
 		if bytes.HasPrefix(line, utf8BOM) {
-			line, found = line[len(utf8BOM):], true
+			withEnding, found = withEnding[len(utf8BOM):], true
 		}
-		out = append(out, line...)
+		out = append(out, withEnding...)
+		rest = after
 	}
 	return out, found
 }
@@ -854,6 +910,11 @@ func fallbackFailModeRule(failMode string) string {
 func (s *Server) runAnthropicStreamLoop(w http.ResponseWriter, flusher http.Flusher, r *http.Request, body io.Reader) {
 	acc := NewAnthropicAccumulator(hardCappedBufferBytes(s.cfg.MaxBufferBytes))
 	reader := bufio.NewReader(body)
+	// bomStream: as in runOpenAIStreamLoop. @anthropic-ai/sdk drops one
+	// BOM from the start of each line, so a BOM-prefixed line is an
+	// event or data line to it; anthropic-python ignores the line. A
+	// client tool_use in such a stream is refused, not gated.
+	bomStream := false
 
 	for {
 		event, err := readSSEEvent(reader, hardCappedBufferBytes(s.cfg.MaxBufferBytes*2))
@@ -873,7 +934,22 @@ func (s *Server) runAnthropicStreamLoop(w http.ResponseWriter, flusher http.Flus
 		}
 
 		if len(event) > 0 {
-			result, ferr := acc.FeedEvent(event)
+			// Stripped only for the parser; a passed-through event keeps
+			// its BOMs.
+			feed, hasBOMLine := stripLineBOMs(event)
+			bomStream = bomStream || hasBOMLine
+			result, ferr := acc.FeedEvent(feed)
+			if bomStream && acc.ActiveToolUseIndex() >= 0 {
+				metrics.IncLLMProxyUndecodableToolCall("anthropic")
+				decision := undecodableToolCallDecision("anthropic")
+				refusal := s.buildRefusal("anthropic", decision,
+					&RefusalContext{Provider: "anthropic", AnthropicToolUseIndex: acc.ActiveToolUseIndex()})
+				_, _ = w.Write(refusal)
+				flusher.Flush()
+				name, id := acc.pendingIdentity()
+				s.auditStreamRefusal(r, "anthropic", decision, name, id)
+				return
+			}
 			if ferr != nil && !result.Completed && !isEOF {
 				// As in the OpenAI loop: drop malformed non-completion deltas.
 				continue
