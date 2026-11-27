@@ -4,6 +4,73 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.1.0] — unreleased
+
+> **A security release.** A review of how the firewall and the client SDKs read the same bytes found several ways a tool call could reach an agent without being checked, or be approved with one set of arguments and run with another. 2.1.0 closes them. It also hardens the keyless control plane, binds approvals to their exact arguments, tightens the bundled agent policies, and makes coding-agent hooks block by default in setup.
+>
+> **No field, route, flag, subcommand or schema version was removed or renamed.** Several behaviours are stricter, and some responses that used to pass are now refused. Read [`docs/COMPATIBILITY.md` § Security fixes in 2.1.0](docs/COMPATIBILITY.md#security-fixes-in-210) before you upgrade. What 2.1.0 still doesn't check is in [`docs/THREAT_MODEL.md` § Known limits](docs/THREAT_MODEL.md#known-limits).
+
+### Security
+
+- **Compressed responses skipped the LLM API Proxy's gate (High).**
+  - **What got through:** the proxy forwarded the client's `Accept-Encoding`, and every stock OpenAI and Anthropic SDK asks for compression. Any 2xx response that came back encoded failed to parse, and its tool calls passed through ungated and unaudited. Whether first-party OpenAI or Anthropic responses are ever encoded this way has not been verified; if they are, this would be Critical.
+  - **The fix:** the proxy no longer forwards `Accept-Encoding`. It asks the upstream for gzip only and decodes it itself, so the gate always reads plain bytes and clients get uncompressed responses. A gated 2xx response that still has a `Content-Encoding` is refused (`deny:llm_api_proxy:undecodable_content_encoding`). `--max-buffer-bytes` bounds the decoded size.
+- **Legacy `function_call` replies were never read (High).** A LangChain functions agent ran `rm -rf` through the proxy with an empty audit log. Replies to the `functions` API are now gated like `tool_calls`, streaming and non-streaming.
+- **The firewall and the client SDKs could read one OpenAI response differently (High).** Each of these is now refused:
+  - a tool name sent in fragments, repeated, or mixed with a legacy `function_call` (`tool_name_conflict`, `mixed_function_call`): the SDKs concatenate or keep the last fragment, so no single name could be gated;
+  - a UTF-8 BOM at the start of a body or of any SSE line, or a UTF-16 or UTF-32 body, when it carries a tool call (`undecodable_tool_call`): openai-node and openai-python read these, the gate couldn't;
+  - an envelope key that differs only in case from one the gate reads, such as `Tool_Calls` beside `tool_calls` (new rule `case_variant_key`): Go folds the key, the SDKs read only the exact one;
+  - a body or stream event that the gate can't decode, such as a wrong-typed `choices` element or a `NaN` or `Infinity` literal, and that has a tool-call key in any spelling a client would read (`undecodable_tool_call`): openai-python, openai-node and LangChain ran the call.
+- **The firewall and the client SDKs could read one Anthropic response differently (High).** Each of these is now refused:
+  - a `tool_use` that reuses a content index or sits out of its content position, or an input delta for another block during a tool cycle: the gate checked one set of arguments while the SDKs attached another;
+  - a key that differs only in case on an event, a content block or a delta, or (non-streaming) on the message or a block (`tool_use_interleaved`, `case_variant_key`);
+  - a missing or `null` `partial_json`, a non-string `type`, `id` or `name`, a missing or non-integer content-block `index`, and content in `message_start`: in each case the SDKs and their tool runners ended up with arguments the gate never saw;
+  - an event whose SSE `event:` name is not its JSON `type`, or that has data but no name (new rule `event_type_mismatch`): the SDKs dispatch on the name, so an input delta sent as `event: ping` was dropped by the client but counted by the gate;
+  - a line starting with a BOM in a stream that carries a client `tool_use`, and a non-streaming body that the gate can't decode but that has a `tool_use` block (`undecodable_tool_call`).
+- **SSE lines ending in a bare CR hid tool calls (High).** The proxy split stream lines on LF only, while every client SDK also splits on CR. `: x\rdata: {call}` was a comment to the gate and a tool call to the client. Lines now end at CRLF, CR or LF for both providers, so such a call is gated like any other.
+- **The keyless control plane could be driven by a web page (High).** A page on another localhost port, or a DNS-rebound page, could read `/api/pending` and `/v1/audit` and approve pending actions, and a cross-origin `text/plain` POST could write a forged DENY to `/v1/audit`. Keyless mode now accepts only a loopback `Host` from the same origin, and `POST /v1/audit` requires `Content-Type: application/json`.
+- **An approval was not bound to the call's arguments (High).** An approved `send_email` could be replayed to another recipient, and a command replayed with a different redacted password. The gates now send `meta.args_digest`, a keyed HMAC-SHA256 of the tool name and arguments taken before redaction, and the server honours an approval only for a retry with the same digest. A central server older than 2.1.0 ignores the digest: upgrade it first.
+- **The bundled policies let an agent help itself (High).** `copy_file` could copy a denied file to `/tmp`; `append_file` was allowed where `write_file` was denied; the agent policies let the agent call the approve endpoints, run `vanzik approve`, read the saved API key, rewrite the policy, stop the server or edit its own hook settings. The bundled policies now deny these. They are glob rules on the command text and path, so they stop the plain forms, not a determined agent (see Known limits). Existing policies are not rewritten.
+- **A Go standard library CVE and a zlib CVE in the image (High).** GO-2026-6859 (`net/http`) and CVE-2026-4738 (zlib). Builds use Go 1.26.11, and the runtime image upgrades zlib. The image also upgrades libssl3 and libcrypto3 to 3.5.9-r1 for CVE-2026-95692, -107496, -95691 and -88823 (High) and -88822 (Medium).
+- **Argument aliases let a second key hide the real value (Medium).** Each gate checked only the first non-empty key from a hard-coded list, so `{"command":"ls","cmd":"rm …"}` was checked as `ls`. Both gates now read one shared table and deny conflicting aliases (`conflicting_argument_alias`), before any check and whatever `--fail-mode` says.
+- **Redaction ran before approval matching (Medium).** An approved command with one password matched a replay with another. The digest is taken before redaction.
+- **The MCP gateway kept secret-named arguments in plain text (Medium).** `password`, `api_key` and similar argument values were in `/api/pending`, the audit log and the new dashboard card. They are now masked by name, as in the LLM API Proxy.
+- **An MCP notification flood exhausted memory (Medium).** Two million `list_changed` notifications drove the gateway past 3 GB. Notifications are now coalesced and delivered in order.
+- **Audit entries could be lost at shutdown, or shutdown hung (Medium).** With a stalled audit writer, `Close` waited forever and the queue was lost. It now waits up to 5 s, spills the queue to the overflow file, and replays it on the next start.
+- **Coding-agent hooks let calls through when the server was down, and setup chose that (Medium).** `vanzik setup` now preselects blocking for a new hook connection.
+- **Streamed Anthropic server tools were refused (Medium).** Web search and MCP-connector responses reached the client empty. They now pass through, as in the non-streaming path; they are not gated or audited (see Known limits).
+- **No upstream timeout (Low).** A stalled upstream held a stream slot or a non-streaming request forever. New flag `--upstream-header-timeout` (default `10m`) answers 502.
+
+### Added
+
+- `--upstream-header-timeout` on the LLM API Proxy.
+- Refusal rules `deny:llm_api_proxy:case_variant_key`, `deny:llm_api_proxy:event_type_mismatch` and `deny:llm_api_proxy:undecodable_content_encoding`, and `deny:gateway:conflicting_argument_alias` / `deny:llm_api_proxy:conflicting_argument_alias`.
+- Counters `vanzik_llmproxy_undecodable_content_encoding_total{provider}` and `vanzik_llmproxy_event_type_mismatch_total{provider}`.
+- `args_digest` in gate request meta, so in audit entries, SSE events, webhooks and `/api/pending`.
+- The dashboard's pending card shows the request's redacted arguments.
+- `le="0.05"` and `le="0.1"` buckets on the latency histograms, so a sub-millisecond p99 can be read.
+- [`docs/THREAT_MODEL.md` § Known limits](docs/THREAT_MODEL.md#known-limits).
+
+### Changed
+
+- Clients receive uncompressed responses from the LLM API Proxy on every route.
+- Non-streaming refusals are always labelled `Content-Type: application/json`.
+- Approval audit text names the channel that resolved it instead of "by human"; keyless resolutions record `open`.
+- A `duplicate_argument_key` refusal writes an audit entry.
+- The MCP gateway reads the union of both alias lists. Eight argument shapes change from denied to forwarded (see Known limits).
+- Parsing a streamed event costs about 1.6 µs more than in 2.0.0 (benchmark averages on an Apple M4).
+- Docs state what the firewall gates and what it doesn't, give latency as a measured p99 with its hardware, and give "tamper-evident" only with its condition (`--audit-seal` with a key file).
+
+### Fixed
+
+- The non-streaming overflow refusal kept `Content-Encoding: gzip` on a plain body, and wrote no audit entry.
+- Non-streaming refusals copied the upstream's `Content-Type`, for example `charset=utf-16-le` on a UTF-8 body.
+- `scripts/bump-version.sh` no longer fails on a version label `docs/POLICY_REFERENCE.md` dropped.
+
+### Compatibility
+
+The full list of behaviour changes, including approvals during a rolling upgrade, the MCP gateway's number normalisation and the stop-timeout guidance, is in [`docs/COMPATIBILITY.md` § Security fixes in 2.1.0](docs/COMPATIBILITY.md#security-fixes-in-210). To get the new policy rules, copy the blocks from `configs/` into an existing policy.
+
 ## [2.0.0] — 2026-10-26
 
 > **AgentGuard is now Vanzik.** 2.0.0 renames the project, and the rename, including refusing the old `AGENTGUARD_*` variable names, is its only breaking change: every name that said AgentGuard says Vanzik, with no alias for the old one. Everything else is an addition (`vanzik migrate --from-agentguard`, the server adopting an `agentguard.db`) or a fix. The policy schema, the `/v1/*` wire protocol, the audit log format and seal, the store and every command's existing flags are as in 1.4.0, so policies, audit logs and databases carry over unchanged.

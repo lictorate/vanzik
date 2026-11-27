@@ -44,7 +44,7 @@ from vanzik.adapters._common import (
 
 # MCP protocol constants
 MCP_PROTOCOL_VERSION = "2024-11-05"
-SDK_VERSION = "2.0.0"
+SDK_VERSION = "2.1.0"
 
 # Secret patterns, identical to pkg/notify/notify.go's DefaultRedactor
 # (tests/test_redactor_property.py compares them), so MCP egress, such as

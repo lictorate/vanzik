@@ -22,7 +22,6 @@
 #   docs/API.md                                — "version": "X.Y.Z" (/health response example)
 #   docs/MCP_GATEWAY.md                        — "version": "X.Y.Z" (MCP serverInfo example)
 #   docs/PROXY_ARCHITECTURE.md                 — "version": "X.Y.Z" (/health response example)
-#   docs/POLICY_REFERENCE.md                   — self-label "as of **vX.Y.Z**"
 #   docs/DEPLOYMENT.md                         — Compose/Kubernetes example image tags
 #   docs/CLI.md                                — `vanzik version` example output
 #
@@ -82,7 +81,6 @@ REPLACEMENTS=(
   'docs/API.md|s/("version":\s*")[0-9]+\.[0-9]+\.[0-9]+(")/${1}'"$NEW"'${2}/'
   'docs/MCP_GATEWAY.md|s/("version":\s*")[0-9]+\.[0-9]+\.[0-9]+(")/${1}'"$NEW"'${2}/'
   'docs/PROXY_ARCHITECTURE.md|s/("version":\s*")[0-9]+\.[0-9]+\.[0-9]+(")/${1}'"$NEW"'${2}/'
-  'docs/POLICY_REFERENCE.md|s/(format as of \*\*v)[0-9]+\.[0-9]+\.[0-9]+(\*\*)/${1}'"$NEW"'${2}/'
   'docs/DEPLOYMENT.md|s/(image: (?:registry\.example\.com\/|ghcr\.io\/lictorate\/)?vanzik:)[0-9]+\.[0-9]+\.[0-9]+/${1}'"$NEW"'/'
   'docs/CLI.md|s/(^# vanzik )[0-9]+\.[0-9]+\.[0-9]+( \()/${1}'"$NEW"'${2}/'
 )
@@ -146,7 +144,6 @@ TRACKED=(
   docs/API.md
   docs/MCP_GATEWAY.md
   docs/PROXY_ARCHITECTURE.md
-  docs/POLICY_REFERENCE.md
   docs/DEPLOYMENT.md
   docs/CLI.md
 )
@@ -201,7 +198,6 @@ check_canonical 'docs/SETUP.md'                             "\"version\":\"$OLD\
 check_canonical 'docs/API.md'                               "\"version\":\s*\"$OLD\""
 check_canonical 'docs/MCP_GATEWAY.md'                       "\"version\":\s*\"$OLD\""
 check_canonical 'docs/PROXY_ARCHITECTURE.md'                "\"version\":\s*\"$OLD\""
-check_canonical 'docs/POLICY_REFERENCE.md'                  "format as of \*\*v$OLD\*\*"
 check_canonical 'docs/DEPLOYMENT.md'                        "image: (registry\.example\.com/|ghcr\.io/lictorate/)?vanzik:$OLD"
 check_canonical 'docs/CLI.md'                               "^# vanzik $OLD \\("
 
