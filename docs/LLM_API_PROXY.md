@@ -558,6 +558,17 @@ If one is present the response is refused under the fixed rule
 passes through unchanged: a UTF-16 answer with no call carries nothing
 to gate, so it reaches the client as before.
 
+Some OpenAI bodies the probe cannot read either: a `choices` array with
+a wrong-typed element (`[{...}, 5]`), or a `NaN`, `Infinity` or
+`-Infinity` literal, which Python's `json` accepts and openai-python
+and LangChain then act on (openai-node acts on the type error). For
+those the proxy looks only at the keys: the body is refused if any
+JSON string in it, unescaped and compared without case, is `tool_calls`
+or `function_call` (so `"tool\u005fcalls"` and `"Tool_Calls"` count),
+and passed through unchanged if none is. A text-only answer that
+happens to carry an empty `"tool_calls": []` beside such a literal is
+refused too: there is no reading of it the proxy can trust.
+
 The same rule refuses an OpenAI or Anthropic **stream** in which any
 line starts with a UTF-8 byte order mark (the stream's first bytes, or
 any later line), at its first tool call. openai-node decodes each SSE
@@ -598,8 +609,10 @@ Two details worth knowing:
 A non-zero rate on that counter usually means an OpenAI-compatible shim
 (vLLM, Ollama, LiteLLM, a cloud gateway) is stringifying a numeric field.
 Worth fixing at the source: each one is a call your agent did not get to
-make. Streaming responses are unaffected — they are gated by the
-accumulator, which has its own fail-closed defences.
+make. In a stream, an OpenAI event the parser cannot decode is
+dropped, as before, unless it carries a tool call by the same test (the
+stream probe for `delta.tool_calls` / `delta.function_call`, else the
+keys); then the stream is refused under the same rule.
 
 #### Ungateable streams fail closed (v1.0)
 

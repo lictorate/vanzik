@@ -1,0 +1,1 @@
+{"id":"c1","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"bash","arguments":"{\"command\": \"rm -rf /tmp/vzx\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":NaN,"completion_tokens":1,"total_tokens":2}}

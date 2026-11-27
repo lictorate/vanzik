@@ -518,11 +518,28 @@ func (s *Server) runOpenAIStreamLoop(w http.ResponseWriter, flusher http.Flusher
 				s.auditStreamRefusal(r, "openai", decision, name, id)
 				return
 			}
-			if ferr != nil && !result.Completed && !isEOF {
-				// Malformed non-completion delta: drop it rather than inject
-				// bytes. Corruption that affects a decision surfaces at
-				// completion, which fails closed below.
-				continue
+			if ferr != nil && !result.Completed {
+				// SECURITY: an event the parser cannot decode that carries a
+				// tool call is refused, not dropped: openai-python reads a
+				// NaN or Infinity literal and runs the call, and dropping it
+				// would hand the client a stream the gate never read (O-4).
+				if undecodableStreamEventHasToolCall(feed) {
+					metrics.IncLLMProxyUndecodableToolCall("openai")
+					decision := undecodableToolCallDecision("openai")
+					refusal := s.buildRefusal("openai", decision,
+						&RefusalContext{Provider: "openai", AnthropicToolUseIndex: -1})
+					_, _ = w.Write(refusal)
+					flusher.Flush()
+					name, id := acc.pendingIdentity()
+					s.auditStreamRefusal(r, "openai", decision, name, id)
+					return
+				}
+				if !isEOF {
+					// Malformed non-completion delta with no call: drop it
+					// rather than inject bytes. Corruption that affects a
+					// decision surfaces at completion, which fails closed below.
+					continue
+				}
 			}
 			switch {
 			case ferr != nil && result.Completed:
