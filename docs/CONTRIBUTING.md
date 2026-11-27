@@ -182,7 +182,7 @@ Key metrics to watch when contributing:
 | `vanzik_denied_total` | Cumulative deny count (sanity check for policy tests) |
 | `vanzik_pending_approvals` | Current approval queue depth |
 
-Histogram buckets go from 0.25 ms to 10,000 ms, plus `+Inf`. A healthy server at low load should show p99 `request_duration_ms` below 5 ms.
+Histogram buckets go from 0.05 ms to 10,000 ms, plus `+Inf`. The SLO target is p99 `request_duration_ms` below 5 ms; the 2.1.0 verification run measured 1.2 ms p99 for the full path at 1k RPS on an Apple M4 over loopback (see [`SLO.md`](SLO.md)).
 
 ## Latency budget
 

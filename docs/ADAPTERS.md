@@ -459,7 +459,7 @@ crew_tools = guard_crew_tools(my_crew_tools, ...)
 
 ### Fail-closed by default
 
-Each adapter delegates to `Guard.check(...)`. The underlying `Guard` is fail-closed unless constructed with `fail_mode="allow"`. If your proxy is down in development, tools will return deny markers — set `fail_mode="allow"` or run the proxy locally.
+Each adapter delegates to `Guard.check(...)`. The underlying `Guard` is fail-closed unless constructed with `fail_mode="allow"`. If the Vanzik server is down in development, tools will return deny markers — set `fail_mode="allow"` or run the server locally.
 
 ### Cost scope hints
 
@@ -467,7 +467,7 @@ Every adapter forwards `session_id` and `est_cost` from the tool input to the po
 
 ### What the adapters do NOT do
 
-- They do **not** rate-limit locally. Rate limiting lives in the proxy.
+- They do **not** rate-limit locally. Rate limiting lives in the Vanzik server.
 - They do **not** block on `REQUIRE_APPROVAL`. Call `guard.wait_for_approval(...)` yourself if you want blocking.
 - They do **not** modify tool input or output. Only the decision gates execution.
 - They do **not** attempt schema validation of `arguments` against `inputSchema` (MCP) — that is the upstream protocol's job.

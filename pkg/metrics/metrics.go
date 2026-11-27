@@ -887,16 +887,21 @@ func (r *Registry) ObserveAuditWriteDuration(ms float64) { r.auditWriteDuration.
 
 // -- Histogram -------------------------------------------------------------------
 
-// durationBuckets are shared upper-bounds in milliseconds. The tail (2500,
-// 5000, 10000) covers events that are rare on the hot path but visible in
-// practice: a slow audit-file fsync, a policy reload contending with
-// Engine.Check, a rate-limit lock under heavy fan-out. Without these
-// buckets, anything over 1 s all lands in +Inf and p99 loses resolution.
+// durationBuckets are shared upper-bounds in milliseconds. The head
+// (0.05, 0.1) resolves the hot path, which runs well under 0.25 ms: with
+// 0.25 as the smallest bound, every /v1/check latency up to about 20k
+// RPS landed in the first bucket and p99 could not be read. The tail
+// (2500, 5000, 10000) covers events that are rare on the hot path but
+// visible in practice: a slow audit-file write, a policy reload
+// contending with Engine.Check, a rate-limit lock under heavy fan-out.
 //
-// These boundaries are treated as a stable contract: re-bucketing
-// invalidates historical Prometheus data. Only
-// append new boundaries at the tail; do not edit or reorder existing ones.
+// These boundaries are a stable contract: never edit or remove an
+// existing one, because that changes what its `le` series means and
+// invalidates historical Prometheus data. A new boundary may be added
+// anywhere; it adds a series and leaves every existing one unchanged.
+// TestDurationBuckets_Contract pins the list.
 var durationBuckets = []float64{
+	0.05, 0.1,
 	0.25, 0.5, 1, 2, 5, 10, 25, 50, 100, 250, 500, 1000,
 	2500, 5000, 10000,
 }

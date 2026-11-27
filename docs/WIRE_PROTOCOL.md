@@ -2,7 +2,7 @@
 
 This document is the operator-facing description of the JSON wire format
 for the Vanzik `/v1/check` endpoint. It is the public contract between
-the proxy (Go) and any client SDK (Python, TypeScript, or third-party).
+the Vanzik server (Go) and any client SDK (Python, TypeScript, or third-party).
 
 The machine-readable spec lives at
 [`pkg/proxy/schema/v1/schema.json`](../pkg/proxy/schema/v1/schema.json)
@@ -36,7 +36,7 @@ The constant lives at `pkg/proxy.SchemaVersionV1` (Go) and
    unknown response fields (ignore-and-pass-through). Servers MUST
    tolerate unknown request fields (the Go decoder does this by default).
 4. Breaking changes ship as a separate `pkg/proxy/schema/v2` package
-   with its own `Version = "v2"` constant. The proxy will negotiate
+   with its own `Version = "v2"` constant. The server will negotiate
    between v1 and v2 by inspecting `schema_version` on the request.
 
 Strict clients that reject unknown response fields (a security-hardened
@@ -146,7 +146,7 @@ is a subset of the v1 schema. Specifically:
 - They do **not** currently emit `schema_version`; the server defaults
   it. This is a documented optimization — adding `schema_version: "v1"`
   to every request is a no-op and forward-compatible.
-- Both fail closed by default when the proxy is unreachable (DENY
+- Both fail closed by default when the server is unreachable (DENY
   decision with `reason: "Vanzik unreachable (deny): …"` from Python,
   `"Vanzik unreachable: …"` from TypeScript). Both accept fail-open for
   callers whose threat model treats Vanzik as best-effort:

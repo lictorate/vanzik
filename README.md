@@ -4,7 +4,7 @@
 
 <p align="center">
   <strong>The firewall for AI agents.</strong><br/>
-  Every tool call, every API call — gated by policy, logged, and routed for human approval. No opt-out path at the wire-level layers; the SDK layer is opt-in.<br/>
+  Every tool call your agent's client runs — gated by policy, logged, and routed for human approval. The wire-level layers sit in the agent's path, so it can't skip them without changing its own configuration; the SDK layer is opt-in. <a href="docs/THREAT_MODEL.md#known-limits">Known limits</a>.<br/>
   Built by <a href="https://lictorate.com">Lictorate</a> · <a href="https://vanzik.lictorate.com">vanzik.lictorate.com</a>
 </p>
 
@@ -86,7 +86,7 @@ Tool calls inside the response stream are intercepted, gated against your policy
 
 ### 3. SDK (compatibility tier)
 
-The Python and TypeScript SDKs remain fully supported for direct callers and for code paths where the proxy isn't practical (offline tools, embedded scripts, custom transports). They opt in via an explicit `Guard.check(...)` call:
+The Python and TypeScript SDKs remain fully supported for direct callers and for code paths where the MCP Gateway or LLM API Proxy isn't practical (offline tools, embedded scripts, custom transports). They opt in via an explicit `Guard.check(...)` call:
 
 ```bash
 pip install vanzik
@@ -216,7 +216,8 @@ Rule precedence: `deny → require_approval → allow → default deny`. Policy 
 
 Vanzik is a policy enforcement and audit layer. It is **not** an OS sandbox. Read this before you trust it as your last line of defense.
 
-- **Two of the three layers are wire-level.** The MCP Gateway and LLM API Proxy sit between the agent and its tools / model. There is no opt-out short of pointing the client at a different MCP server or ignoring the SDK's base-URL configuration. Operators who control the agent's environment (env vars, network egress, MCP client config) get an enforcement boundary, not just an advisory one.
+- **Two of the three layers are wire-level.** The MCP Gateway and LLM API Proxy sit between the agent and its tools / model. The agent can't skip them short of pointing its client at a different MCP server or base URL. Operators who control the agent's environment (env vars, network egress, MCP client config) get an enforcement boundary, not just an advisory one.
+- **The wire-level layers gate the tool calls the client runs.** Tools the model provider runs itself (Anthropic server tools such as web search, and the MCP connector's calls) pass through ungated and unaudited, and non-streaming `/v1/completions` is not gated. Each call is checked on one argument per role (one path, one command, one URL), so a copy's source is not checked. See [Known limits](docs/THREAT_MODEL.md#known-limits).
 - **The SDK layer is opt-in.** The agent must call `guard.check(...)` (directly, via `@guarded`, or via a framework adapter) — that makes it advisory. Use it when the wire-level layers are impractical (offline scripts, custom transports); pair it with the gateway / LLM proxy whenever both apply.
 - **Vanzik does not sandbox the host or intercept syscalls.** A determined agent that controls its own runtime can bypass Vanzik by ignoring `OPENAI_BASE_URL`, talking to a different MCP server, or shelling out directly. Combine Vanzik with OS-level isolation (containers, seccomp, AppArmor, network egress rules) when the threat model includes a hostile agent.
 - **Pattern matching is string-glob, not semantic.** A deny rule for `rm -rf *` matches literal strings; an agent (or a creative human) can substitute equivalents (`find / -delete`, base64 payloads, etc.). Treat policies as a high-signal first filter, not a complete authorization model. A shell command that chains commands (`;`, `&&`, `|`, `$( )`, redirections) is checked one command at a time, so `allow: "ls *"` does not cover `ls /tmp; rm -rf /` — see [Compound shell commands](docs/POLICY_REFERENCE.md#compound-shell-commands). A single `*` also matches across `/`, so an **ALLOW** path pattern like `/workspace/*` grants the **whole subtree** (`/workspace/a/b/secret.env`), not just the top level — bound path allows with `**`. See [`docs/POLICY_REFERENCE.md`](docs/POLICY_REFERENCE.md#pattern-matching-semantics-read-this).
@@ -285,12 +286,12 @@ Full reference configs (nginx + Docker Compose + Kubernetes), auth/CORS/TLS deta
 
 ### Where things stand (v2.0)
 
-Everything in the pitch above is shipped: the policy engine with all seven scopes; the three enforcement paths (MCP Gateway with stdio and Streamable HTTP upstreams, LLM API Proxy, SDKs + adapters); audit logging with rotation, secret redaction, a tamper-evident hash chain and `vanzik audit verify`; the approval queue, dashboard and session replay; cost guardrails and rate limiting; persistent state and multi-tenant policies on SQLite, or shared across replicas on PostgreSQL; compound shell command checking; policy tests (`vanzik test`); compliance reports (`vanzik report`); prebuilt binaries, installers, `vanzik setup` and hooks for Claude Code, Cursor, Gemini CLI and Codex CLI. v2.0 renames AgentGuard to Vanzik and adds `vanzik migrate --from-agentguard`. Release-by-release detail: [`CHANGELOG.md`](CHANGELOG.md); frozen surfaces and the additive-only promise: [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md).
+Everything in the pitch above is shipped: the policy engine with all seven scopes; the three enforcement paths (MCP Gateway with stdio and Streamable HTTP upstreams, LLM API Proxy, SDKs + adapters); audit logging with rotation, secret redaction, and an optional hash chain that makes edits tamper-evident (`--audit-seal`, file backend; `vanzik setup` turns it on for a new install) with `vanzik audit verify`; the approval queue, dashboard and session replay; cost guardrails and rate limiting; persistent state and multi-tenant policies on SQLite, or shared across replicas on PostgreSQL; compound shell command checking; policy tests (`vanzik test`); compliance reports (`vanzik report`); prebuilt binaries, installers, `vanzik setup` and hooks for Claude Code, Cursor, Gemini CLI and Codex CLI. v2.0 renames AgentGuard to Vanzik and adds `vanzik migrate --from-agentguard`. Release-by-release detail: [`CHANGELOG.md`](CHANGELOG.md); frozen surfaces and the additive-only promise: [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md).
 
 ### Shipped in v1.4
 - [x] Policy-as-code: `vanzik test` runs a policy against test cases in CI/CD
 - [x] Hooks for Cursor, Gemini CLI and Codex CLI, and a fail-closed option for all hooks
-- [x] Tamper-evident audit log (hash chain, HMAC, anchoring) and `vanzik audit verify`
+- [x] Tamper-evident audit log when sealing is on (`--audit-seal`, file backend only; off by default on `vanzik server`, on for a new install by `vanzik setup`): hash chain, HMAC, anchoring, and `vanzik audit verify`
 - [x] Multi-agent session correlation
 - [x] Session replay in dashboard
 - [x] OpenAI Agents SDK adapter

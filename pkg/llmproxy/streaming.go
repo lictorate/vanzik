@@ -272,8 +272,11 @@ func (s *Server) runPolicyCheck(ctx context.Context, tc ToolCallCheck) (Decision
 		}
 		// PolicyCheck never sees this call, so /v1/check writes nothing:
 		// record the refusal the client gets, as the conflicting-alias
-		// deny does. With no hook (tests, embedders) there is no entry;
-		// /v1/check is not called for arguments it would misread.
+		// deny does. With no hook (tests, embedders) there is no entry.
+		// The wired hook posts to /v1/audit; when that is refused (a keyed
+		// central server and no --api-key on the proxy) it falls back to
+		// /v1/check, which records the engine's verdict on the last-wins
+		// arguments, not this deny (docs/OPERATIONS.md).
 		if s.RecordForcedAudit != nil {
 			s.RecordForcedAudit(ctx, &tc, d)
 		}

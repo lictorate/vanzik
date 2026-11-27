@@ -137,12 +137,12 @@ func TestAnthropicParser_MalformedJSON(t *testing.T) {
 	}
 }
 
-// TestAnthropicParser_MissingEventLineToleratedViaJSONType — an event
+// TestAnthropicParser_MissingEventLineRefused — an event
 // with data but no `event:` line is refused, not dispatched on its JSON
 // type: both Anthropic SDKs skip an unnamed event, so the gate would
 // read a tool_use the client never sees (VR-17b, O-3). The same event
 // with its `event:` line is dispatched on the JSON type as before.
-func TestAnthropicParser_MissingEventLineToleratedViaJSONType(t *testing.T) {
+func TestAnthropicParser_MissingEventLineRefused(t *testing.T) {
 	const data = "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_y\",\"name\":\"bash\",\"input\":{}}}\n\n"
 
 	// content_block_start arrives without the `event:` line.

@@ -124,7 +124,7 @@ These are **not configurable** yet. Listed so you know what ceiling you're runni
 | `DefaultWorkers` (notifier) | `8` | `pkg/notify/notify.go` | Goroutine pool for dispatch. |
 | `DefaultQueueSize` (notifier) | `256` | `pkg/notify/notify.go` | Shared queue depth across notifiers. |
 | Policy watch fallback poll interval | `2s` | `pkg/policy/watcher.go` | Reloads are fsnotify-driven (immediate); the 2 s `os.Stat().ModTime()` poll is the fallback when fsnotify is unavailable. |
-| Histogram buckets (ms) | `0.25..10000` | `pkg/metrics/metrics.go` | Contract — re-bucketing invalidates historical Prometheus data. |
+| Histogram buckets (ms) | `0.05..10000` | `pkg/metrics/metrics.go` | Contract — existing boundaries never change (that would invalidate historical Prometheus data); 0.05 and 0.1 were added in 2.1.0. |
 | Notifier histogram buckets (s) | `0.005..10` | `pkg/metrics/metrics.go` | Same contract note. |
 | Audit scanner buffer | `4 MiB` per line | `pkg/audit/logger.go` | Raised from stdlib default to tolerate long rows. |
 | `absoluteMaxBufferBytes` (LLM proxy) | `64 MiB` | `pkg/llmproxy/streaming.go` | Hard safety ceiling on the streaming buffers. A `MaxBufferBytes` of `0` disables the operator cap (`--max-buffer-bytes` itself rejects `0`; only reachable by embedding the package) but this ceiling still applies — the stream is refused fail-closed past it. |

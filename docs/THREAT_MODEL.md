@@ -42,7 +42,7 @@ Anything the agent does outside the gated transport — shelling out directly, p
 
 ### The upstream LLM provider — semi-trusted
 
-The provider is trusted for the *content* of its answers but **not for the structure of its stream**. A non-conformant or hostile stream is in scope, and these fail-closed defences exist for exactly this actor:
+The provider is trusted for the *content* of its answers but **not for the structure of its stream**. A non-conformant or hostile stream is in scope, and these fail-closed defences exist for exactly this actor. Where the firewall and the client SDKs used to read a response differently, 2.1.0 reads it as the SDKs do or refuses it: SSE lines ending in a bare CR, an Anthropic event whose `event:` name is not its JSON `type`, an OpenAI or Anthropic body the firewall cannot decode that still carries a tool call, a BOM-prefixed line in an Anthropic stream, and case-variant keys in a non-streaming Anthropic body. Each has a row below.
 
 | Defence | Where | What it refuses |
 |---|---|---|
@@ -112,8 +112,18 @@ Enforcement is only as strong as the operator's control over the agent's environ
 - Central server unreachable: both proxies default to `--fail-mode deny` (`deny:<gateway>:fail_closed`), with `fail-closed-with-audit` writing the denial to a local fallback file. `allow` is an explicit opt-in for trusted development environments; neither proxy logs the mode at startup.
 - `/v1/check` answers 2xx with an unparseable or unknown decision: hard deny (`InvalidResponseRule`), regardless of `--fail-mode`.
 - SDKs: fail-closed by default; `fail_mode="allow"` / `failMode: 'allow'` is an explicit opt-in.
-- Audit backend saturated: entries spill to a durable overflow file and the request is still answered — the audit path never blocks or fails the decision.
+- Coding-agent hooks (`vanzik hook <agent>`): when the hook gets no verdict (server stopped, input it can't read, an API key refused while an approval is pending), it **lets the call through with a warning** unless the hook command has `--fail-closed`, which blocks it. Letting it through is the hook command's own default; `vanzik setup` preselects blocking for a new connection. See [`CODING_AGENTS.md`](CODING_AGENTS.md#failing-open-or-closed).
+- Audit backend saturated: entries spill to an overflow file and the request is still answered — the audit path never blocks or fails the decision. The log is not synced to disk per entry: on a hard kill (SIGKILL, OOM kill, power loss), acknowledged decisions still queued are lost, up to the queue size plus the worker count (1024 + 4 by default). A clean shutdown flushes them, waiting up to 7 s. See [`OPERATIONS.md`](OPERATIONS.md).
 - Approval queue full: 503, not a silent allow.
+
+## Known limits
+
+These are gaps in what 2.1.0 checks, not design decisions. Each is tracked.
+
+- **Provider-executed tools are not gated or audited.** Anthropic server tools (`server_tool_use`: web search, web fetch, code execution) and MCP-connector calls (`mcp_tool_use`) run at the provider. Their blocks pass through the LLM API Proxy, streaming and non-streaming, with no policy check and no audit entry. The request field that turns the MCP connector on, `mcp_servers`, is not inspected either, so an agent can have the provider call an MCP server of its choosing and Vanzik records nothing. If that matters, block the feature upstream (API key settings, organisation policy) or at the network egress.
+- **Non-streaming `/v1/completions` is not gated.** The legacy Completions API is forwarded as-is when not streaming, with no audit entry. No client SDK runs a tool call from a Completion. Streaming `/v1/completions` goes through the gated stream loop.
+- **One argument per role.** Each call is checked on one key per field: one path, one command, one URL. A copy or move source is never checked (a `source` key), and a call with a path-like key and `destination` or `src` is checked on the path-like key only. The bundled policies deny `copy_file` and `append_file` for this reason; a custom policy that allows them inherits the gap.
+- **Argument-name precedence in the MCP gateway.** Since 2.1.0 the gateway reads the same argument names as the LLM API Proxy, and checks a newly read name instead of the one it checked before. Eight shapes that were denied are now forwarded: `copy_file` with `{target, destination}`, `{file, src}`, `{notebook_path, dst}` or `{filename, destination}`; `run` with `{code, args}`; `fetch` with `{uri, domain}` or `{endpoint, host}`; and a browser call with `{target_url, domain}`. The LLM API Proxy already behaved this way. A per-role check, which reads every argument of a role, is the planned fix for this and the previous item.
 
 ## Explicit non-goals
 

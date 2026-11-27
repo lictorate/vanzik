@@ -94,10 +94,15 @@ type FeedResult struct {
 type protocolViolationKind uint8
 
 const (
-	// violationInterleavedToolUse (Anthropic): a second tool_use opened
-	// before the first closed, start-seeded input conflicts with
-	// input_json_deltas, or a content_block_start carries a key that
-	// differs from a field name only in case. Anthropic emits blocks
+	// violationInterleavedToolUse (Anthropic): the stream cannot be read
+	// the way the SDKs read it. A second tool_use opened before the
+	// first closed; start-seeded input conflicts with input_json_deltas;
+	// a tool_use is out of its content position or reuses an index; an
+	// event, block or delta key differs from one the gate reads only in
+	// case; an input_json_delta's partial_json is null or missing; an
+	// event, block or delta type is not a string, or a content-block
+	// event's index is not an integer; a tool_use id or name is not a
+	// string; or message_start carries content. Anthropic emits blocks
 	// serially; an interleaved second tool_use would pass ungated once
 	// the first cycle resets.
 	violationInterleavedToolUse protocolViolationKind = iota

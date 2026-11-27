@@ -704,8 +704,9 @@ and the one-line installer.
 
 ## v1.3.x → v1.4.0
 
-1.4.0 adds hooks for Cursor, Gemini CLI and Codex CLI, a tamper-evident audit
-log, `agentguard test`, session correlation and replay, `agentguard report`,
+1.4.0 adds hooks for Cursor, Gemini CLI and Codex CLI, an audit log that is
+tamper-evident when sealing is on (`--audit-seal`, file backend, off by
+default), `agentguard test`, session correlation and replay, `agentguard report`,
 Streamable HTTP upstreams for the MCP gateway, and an OpenAI Agents SDK
 adapter. Nothing was removed or renamed. A few behaviors are stricter, and
 two of them can change what a policy decides.

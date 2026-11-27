@@ -432,3 +432,33 @@ func TestLLMProxyEventTypeMismatch_Counter(t *testing.T) {
 		}
 	}
 }
+
+// TestDurationBuckets_Contract pins the latency histogram boundaries.
+// Existing boundaries never change (their `le` series would change
+// meaning); 0.05 and 0.1 were added in 2.1.0 so the hot path, which runs
+// well under 0.25 ms, has resolution (O-32).
+func TestDurationBuckets_Contract(t *testing.T) {
+	want := []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000}
+	if len(durationBuckets) != len(want) {
+		t.Fatalf("durationBuckets = %v, want %v", durationBuckets, want)
+	}
+	for i := range want {
+		if durationBuckets[i] != want[i] {
+			t.Fatalf("durationBuckets = %v, want %v", durationBuckets, want)
+		}
+	}
+	r := NewRegistry()
+	r.ObserveRequestDuration(0.07)
+	var out bytes.Buffer
+	r.WritePrometheus(&out)
+	for _, line := range []string{
+		`vanzik_request_duration_ms_bucket{le="0.05"} 0`,
+		`vanzik_request_duration_ms_bucket{le="0.1"} 1`,
+		`vanzik_request_duration_ms_bucket{le="0.25"} 1`,
+		`vanzik_request_duration_ms_bucket{le="+Inf"} 1`,
+	} {
+		if !strings.Contains(out.String(), line) {
+			t.Errorf("output lacks %q", line)
+		}
+	}
+}
