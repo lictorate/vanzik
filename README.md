@@ -4,7 +4,7 @@
 
 <p align="center">
   <strong>The firewall for AI agents.</strong><br/>
-  Every tool call that passes through Vanzik — gated by policy, logged, and routed for human approval. The wire-level layers sit in the agent's path, which it can't leave without changing its own configuration, and by default refuse calls when the server can't answer; coding-agent hooks let a call through with a warning in that case unless you choose to block it; the SDK layer is opt-in. <a href="docs/THREAT_MODEL.md#known-limits">Known limits</a> · <a href="docs/THREAT_MODEL.md#fail-open-versus-fail-closed">Fail-open and fail-closed</a>.<br/>
+  Every tool call your agent's client runs through Vanzik — gated by policy, logged, and routed for human approval. The wire-level layers sit in the agent's path, which it can't leave without changing its own configuration, and by default refuse calls when the server can't answer; coding-agent hooks let a call through with a warning in that case unless you choose to block it, which `vanzik setup` preselects for a new connection; the SDK layer is opt-in. <a href="docs/THREAT_MODEL.md#known-limits">Known limits</a> · <a href="docs/THREAT_MODEL.md#fail-open-versus-fail-closed">Fail-open and fail-closed</a>.<br/>
   Built by <a href="https://lictorate.com">Lictorate</a> · <a href="https://vanzik.lictorate.com">vanzik.lictorate.com</a>
 </p>
 
