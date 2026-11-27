@@ -4,7 +4,7 @@
 BINARY=vanzik
 MCP_GATEWAY_BINARY=vanzik-mcp-gateway
 LLM_PROXY_BINARY=vanzik-llm-proxy
-VERSION=2.0.0
+VERSION=2.1.0
 COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
 LDFLAGS=-ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 

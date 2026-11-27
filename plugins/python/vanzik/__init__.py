@@ -23,7 +23,7 @@ The client, results, exceptions and constants live in :mod:`vanzik.core`,
 
 # The SDK's release version; scripts/bump-version.sh keeps it in step with
 # pyproject.toml.
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 # Back-compat module aliases: they keep ``vanzik.request.urlopen``,
 # ``vanzik.time.sleep``, ... valid mock.patch targets. Patching through

@@ -181,7 +181,7 @@ Sequence:
      "id": 1,
      "result": {
        "protocolVersion": "2025-11-25",
-       "serverInfo": { "name": "vanzik-mcp-gateway", "version": "2.0.0" },
+       "serverInfo": { "name": "vanzik-mcp-gateway", "version": "2.1.0" },
        "capabilities": {
          "tools": { "listChanged": true }
        }

@@ -509,7 +509,7 @@ Returns `204 No Content`. Safe to call with no session (no-op).
 ## `GET /health`
 
 ```json
-{ "status": "ok", "version": "2.0.0" }
+{ "status": "ok", "version": "2.1.0" }
 ```
 
 Always `200` once the HTTP server is accepting connections. Use for liveness probes (see [`DEPLOYMENT.md`](DEPLOYMENT.md)). For the richer operator probe see `/v1/health` below.
@@ -525,7 +525,7 @@ Operator-grade health endpoint. Richer than `/health`: includes the resolved ten
 ```json
 {
   "status": "ok",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "tenant": "local",
   "last_request_at": "2026-05-05T19:04:54.646Z",
   "last_policy_load_at": "2026-05-05T19:04:53.549Z",

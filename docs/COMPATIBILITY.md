@@ -32,6 +32,214 @@ are as in 1.4.0 (2.0 adds one, `vanzik migrate --from-agentguard`), so a 1.x pol
 unchanged. Below, "the stabilized line" means the 2.x line, with these
 names.
 
+## Security fixes in 2.1.0
+
+2.1.0 is a security release. No frozen surface changed: no field, route,
+flag, subcommand or schema version was removed or renamed. The additions are
+one LLM API Proxy flag, new refusal rules, one gate meta key
+(`args_digest`), two counters and two histogram buckets. Several fixes do
+change behaviour you may rely on, because the old behaviour let a tool call
+through that the policy never checked, or let an approval be replayed with
+other arguments. Read this list before you upgrade. The limits that remain
+are in [`THREAT_MODEL.md` § Known limits](THREAT_MODEL.md#known-limits).
+
+### Build
+
+- Building or importing the Go module needs Go 1.26.11 or later.
+- The runtime image runs `apk upgrade zlib libssl3 libcrypto3`
+  (CVE-2026-4738 in zlib; CVE-2026-95692, -107496, -95691, -88823 and -88822
+  in OpenSSL 3.5.9-r0). While it does, the image is not byte-reproducible.
+
+### LLM API Proxy: responses
+
+- Clients receive uncompressed responses from the proxy on every route,
+  including the ungated ones (`/v1/embeddings`, `/v1/completions`). The
+  proxy no longer forwards the client's `Accept-Encoding`: it asks the
+  upstream for gzip only and decodes it itself.
+- A gated 2xx response that still has a `Content-Encoding` after that is
+  refused (`deny:llm_api_proxy:undecodable_content_encoding`, counted in
+  `vanzik_llmproxy_undecodable_content_encoding_total{provider}`).
+- `--max-buffer-bytes` bounds the decoded size.
+- Non-streaming refusals are always labelled `Content-Type:
+  application/json`.
+- Streamed Anthropic server-tool and MCP-connector responses now reach the
+  client. They are not gated or audited, matching the non-streaming path.
+
+### LLM API Proxy: refusals that are new in 2.1.0
+
+Each refusal is an HTTP 200 in the provider's shape with one audit entry,
+and none is subject to `--fail-mode allow`.
+
+- Responses to the legacy `functions` API (`function_call`) are now
+  policy-checked, streaming and non-streaming.
+- **Both providers, streams:** SSE lines end at CRLF, a bare CR or a bare
+  LF, as in the SSE spec and every client SDK. A tool call after a bare CR
+  is now gated; before, it reached the client unchecked. A stream framed
+  with bare CRs is now read and forwarded; before, it was dropped or
+  forwarded unread.
+- **OpenAI-format responses.** These are refused:
+  - a stream with conflicting, mixed or repeated tool-name fragments
+    (`deny:llm_api_proxy:tool_name_conflict`); a server that repeats the
+    tool name on every delta is refused too;
+  - a legacy `function_call` and `tool_calls` in one response
+    (`deny:llm_api_proxy:mixed_function_call`);
+  - a UTF-8 BOM at the start of a body or of any SSE line, when it carries a
+    tool call (`deny:llm_api_proxy:undecodable_tool_call`);
+  - a UTF-16 or UTF-32 body that carries a tool call
+    (`undecodable_tool_call`; Anthropic bodies too);
+  - an envelope key that differs only in case from one the gate reads, such
+    as `Tool_Calls` beside `tool_calls`, under the new rule
+    `deny:llm_api_proxy:case_variant_key`;
+  - a body or stream event that even the lenient probe cannot decode (a
+    wrong-typed `choices` element, or a `NaN`, `Infinity` or `-Infinity`
+    literal) and that has a `tool_calls` or `function_call` key in any
+    spelling a client or Go would read (`undecodable_tool_call`). Text-only
+    bodies like these are still forwarded unchanged, and text-only stream
+    events still dropped.
+- **Anthropic streams.** These are refused, under
+  `deny:llm_api_proxy:tool_use_interleaved` unless noted:
+  - a stream that reuses a content index, or puts a block out of its content
+    position;
+  - a key that differs only in case on an event, a content block or a delta;
+  - an input delta for another block during a tool cycle
+    (`deny:llm_api_proxy:orphaned_tool_input`);
+  - a missing or `null` `partial_json`;
+  - an event, content block or delta whose `type` is not a string; a
+    content-block event whose `index` is missing, `null` or not an integer;
+    a `tool_use` whose `id` or `name` is not a string. Duplicate keys are
+    read as the SDKs read them: the last one wins;
+  - a `message_start` whose `message.content` is not empty. A refusal at the
+    first `message_start` opens the stream with a synthetic one;
+  - a BOM at the start of any line, when the stream carries a client
+    `tool_use` (`undecodable_tool_call`). Text-only BOM streams are
+    forwarded unchanged;
+  - an event with data whose SSE `event:` name is missing, empty or not
+    exactly its JSON `type`, for example an input delta sent as `event:
+    ping`, or a stream whose intermediary strips `event:` lines. This is the
+    new rule `deny:llm_api_proxy:event_type_mismatch`, counted in
+    `vanzik_llmproxy_event_type_mismatch_total{provider}` and not in
+    `vanzik_llmproxy_protocol_violation_total`.
+- **Anthropic non-streaming bodies.** These are refused:
+  - a key that differs only in case from one the gate reads, on the message
+    (`id`, `type`, `role`, `model`, `content`, `stop_reason`, `usage`) or on
+    a content block (`type`, `text`, `id`, `name`, `input`), under
+    `case_variant_key`;
+  - a body that even the lenient probe cannot decode (a wrong-typed
+    `content` element, a `NaN` or `Infinity` literal) and that has a
+    `tool_use` block type in any spelling (`undecodable_tool_call`).
+- **Audit:** a `deny:llm_api_proxy:duplicate_argument_key` refusal now
+  writes an audit entry, for both providers, streaming and non-streaming.
+  Without `--api-key` on the proxy against a keyed central server, the entry
+  goes through the `/v1/check` fallback and carries the engine's verdict on
+  the last value of each duplicated key ([`OPERATIONS.md`](OPERATIONS.md)).
+- **Cost:** parsing a streamed event costs about 1.6 µs more than in 2.0.0
+  (benchmark averages on an Apple M4: about 1.5 µs from the Anthropic and
+  OpenAI parser fixes, about 0.1 µs from the line-ending, event-name and
+  undecodable-body fixes). The `/v1/check` latency gate passed.
+
+### LLM API Proxy: flags
+
+- New flag `--upstream-header-timeout`, default `10m`. An upstream that
+  sends no headers within it gets a 502; `0` restores the old behaviour.
+  Code that builds `llmproxy.Config` directly gets no timeout unless it sets
+  the field.
+
+### Metrics
+
+- New counters `vanzik_llmproxy_event_type_mismatch_total{provider}` and
+  `vanzik_llmproxy_undecodable_content_encoding_total{provider}`.
+- `vanzik_llmproxy_protocol_violation_total` also counts case-variant
+  refusals; `vanzik_llmproxy_undecodable_tool_call_total` also counts the
+  stream and undecodable-body refusals above. No series was renamed.
+- The latency histograms (`vanzik_request_duration_ms`,
+  `vanzik_policy_eval_duration_ms`, `vanzik_audit_write_duration_ms`) gain
+  `le="0.05"` and `le="0.1"` buckets. Existing buckets are unchanged, so
+  existing series keep their meaning.
+
+### Server
+
+- Keyless mode accepts only a loopback `Host`, from the same origin. Another
+  localhost origin, `host.docker.internal`, tunnels and reverse proxies now
+  need `--api-key` (and `--allowed-origin` for another origin).
+- `POST /v1/audit` requires `Content-Type: application/json` in every mode
+  (415 otherwise).
+- Approval audit text names the real channel instead of "by human"; keyless
+  resolutions record `open`.
+- `args_digest` is a new key in gate request meta, so it appears in audit
+  entries, SSE events, webhooks and `/api/pending`.
+- The dashboard's pending card shows the request's redacted argument values.
+
+### Approvals are bound to the exact arguments
+
+- The LLM API Proxy and the MCP Gateway send `meta.args_digest`, a keyed
+  HMAC-SHA256 of the tool name and canonical arguments. The central server
+  honours an `approval_id` only for a retry with the same digest. Any change
+  needs a new approval, costs a rate-limit token and creates a new pending
+  entry.
+- Values must match. Through the LLM API Proxy, a model re-emitting `1.0`
+  for `1`, or `""` for `{}`, asks for approval again. Key order and
+  whitespace don't matter.
+- `vanzik_approval_replay_mismatch_total` also counts digest mismatches.
+- Without `--api-key` on the LLM API Proxy or the MCP Gateway, the digest
+  key is random per process, so an approval doesn't survive a restart of
+  that gate. With `--api-key`, gates that share the key derive the same
+  digest key, and approvals work across restarts and replicas.
+- Anyone holding the gates' API key can derive the digest key, and so test
+  guesses of a redacted argument value against the `args_digest` in the
+  audit log.
+
+#### Approvals during a rolling upgrade
+
+- **A central server older than 2.1.0 gives no argument binding.** It
+  ignores `args_digest` and matches a retry on the request's other fields
+  only, as before. Upgrade the central server first for the fix to take
+  effect.
+- An approval made through an upgraded gate is not honoured for a retry
+  through a gate that doesn't send the digest yet.
+- An approval made through an old gate (no digest) and retried through an
+  upgraded gate is matched on the other fields only, as before.
+
+### MCP Gateway
+
+- Masks secret-named arguments (`password`, `token`, `secret`, `api_key`,
+  `apikey` or `auth` in the name) as `[REDACTED]` in audit and
+  pending-approval meta, as the LLM API Proxy already did. No verdict
+  changes, because policy evaluation does not read meta, but the `vanzik
+  report` count of redacted entries rises.
+- Decodes tool arguments before computing the approval digest, so numbers
+  that decode to the same value bind as equal: `1` and `1.0`, and 2^53+1 and
+  2^53. The downstream MCP server receives the same normalised bytes.
+- Reads the union of both alias lists, so some tools are checked on
+  arguments that were ignored before. Eight argument shapes change from
+  denied to forwarded ([`THREAT_MODEL.md` § Known
+  limits](THREAT_MODEL.md#known-limits)).
+- A conflicting alias is denied (`deny:gateway:conflicting_argument_alias`;
+  `deny:llm_api_proxy:conflicting_argument_alias` on the proxy).
+- Upstream notifications are coalesced and delivered in order.
+
+### Policies
+
+- The bundled agent policies deny:
+  - self-approval through the control-plane endpoints and `vanzik approve` /
+    `vanzik deny`;
+  - reading or writing Vanzik's config folder;
+  - stop-type `kill`, `pkill`, `killall`, `taskkill`, `launchctl` and
+    `systemctl` commands that name vanzik;
+  - writing any agent's hook-settings file, including a project's own
+    `.claude/settings.json`.
+- `default.yaml` denies `copy_file` and `append_file`.
+- **An existing policy is not rewritten.** To get these rules, copy the
+  blocks from [`configs/`](../configs/) into your policy.
+
+### Setup and shutdown
+
+- `vanzik setup` preselects "Block them" for a new hook connection
+  (`--fail-closed` on the hook command), so the agent's tools are blocked
+  while the server is down. The hook command's own default, without
+  `--fail-closed`, is unchanged: it lets the call through with a warning.
+- Shutdown with a stalled audit backend takes up to 7 s instead of hanging.
+  Set the host's stop timeout above `ShutdownTimeout` (10 s) plus 7 s.
+
 ## The promise
 
 **As of v0.9 these surfaces are stable, and from v1.0 every change to them is

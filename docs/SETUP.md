@@ -127,7 +127,7 @@ go install lictorate.com/vanzik/v2/cmd/vanzik-llm-proxy@latest
 
 ```bash
 curl http://localhost:8080/health
-# {"status":"ok","version":"2.0.0"}
+# {"status":"ok","version":"2.1.0"}
 ```
 
 Open `http://localhost:8080/dashboard` in your browser to see the live dashboard.

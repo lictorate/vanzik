@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vanzik"
-version = "2.0.0"
+version = "2.1.0"
 description = "Python SDK for Vanzik — the firewall for AI agents"
 readme = "README.md"
 license = "Apache-2.0"

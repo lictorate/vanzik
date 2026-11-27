@@ -144,7 +144,7 @@ image yourself instead, replace `image:` with `build: .` at the repo root.
 ```yaml
 services:
   vanzik:
-    image: ghcr.io/lictorate/vanzik:2.0.0
+    image: ghcr.io/lictorate/vanzik:2.1.0
     restart: unless-stopped
     command: >
       serve
@@ -201,7 +201,7 @@ spec:
         - name: vanzik
           # Published per release; or build the Dockerfile and push it to a
           # registry your cluster can pull from.
-          image: ghcr.io/lictorate/vanzik:2.0.0
+          image: ghcr.io/lictorate/vanzik:2.1.0
           args:                   # replaces the image's CMD, so --policy must be repeated
             - serve
             - --policy=/etc/vanzik/default.yaml

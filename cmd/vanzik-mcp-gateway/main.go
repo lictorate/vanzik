@@ -46,7 +46,7 @@ import (
 // Versions are injected at link time via -ldflags. Defaults are used
 // for `go run ./cmd/vanzik-mcp-gateway` and `go test`.
 var (
-	version = "2.0.0"
+	version = "2.1.0"
 	commit  = "dev"
 )
 

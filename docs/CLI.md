@@ -688,7 +688,7 @@ vanzik migrate --from-agentguard
 
 ```bash
 vanzik version
-# vanzik 2.0.0 (abc1234)
+# vanzik 2.1.0 (abc1234)
 ```
 
 The version comes from the source; the part in parentheses identifies the build:
