@@ -558,6 +558,21 @@ If one is present the response is refused under the fixed rule
 passes through unchanged: a UTF-16 answer with no call carries nothing
 to gate, so it reaches the client as before.
 
+Some OpenAI bodies the probe cannot read either: a `choices` array with
+a wrong-typed element (`[{...}, 5]`), or a `NaN`, `Infinity` or
+`-Infinity` literal, which Python's `json` accepts and openai-python
+and LangChain then act on (openai-node acts on the type error). For
+those the proxy looks only at the keys: the body is refused if any
+JSON string in it, unescaped and compared without case, is `tool_calls`
+or `function_call` (so `"tool\u005fcalls"` and `"Tool_Calls"` count),
+and passed through unchanged if none is. A text-only answer that
+happens to carry an empty `"tool_calls": []` beside such a literal is
+refused too: there is no reading of it the proxy can trust. Anthropic
+bodies get the same treatment with the block type `tool_use`:
+anthropic-python reads a `NaN` or `Infinity` literal and its tool runner
+runs the call, and `@anthropic-ai/sdk` runs one beside a wrong-typed
+`content` element.
+
 The same rule refuses an OpenAI or Anthropic **stream** in which any
 line starts with a UTF-8 byte order mark (the stream's first bytes, or
 any later line), at its first tool call. openai-node decodes each SSE
@@ -598,8 +613,10 @@ Two details worth knowing:
 A non-zero rate on that counter usually means an OpenAI-compatible shim
 (vLLM, Ollama, LiteLLM, a cloud gateway) is stringifying a numeric field.
 Worth fixing at the source: each one is a call your agent did not get to
-make. Streaming responses are unaffected — they are gated by the
-accumulator, which has its own fail-closed defences.
+make. In a stream, an OpenAI event the parser cannot decode is
+dropped, as before, unless it carries a tool call by the same test (the
+stream probe for `delta.tool_calls` / `delta.function_call`, else the
+keys); then the stream is refused under the same rule.
 
 #### Ungateable streams fail closed (v1.0)
 
@@ -619,7 +636,7 @@ refused rather than forwarded, each under its own stable rule string:
 | `deny:llm_api_proxy:multi_choice_tool_calls` | **OpenAI.** Tool-call deltas arrived on more than one `choices[].index`. `tool_calls[i].index` is unique only *within* a choice, so two choices' fragments would merge into a single argument string the firewall gates and no client executes. |
 | `deny:llm_api_proxy:mixed_function_call` | **OpenAI.** One response streamed both a legacy `function_call` and `tool_calls`. No real upstream mixes them, and clients disagree on which one they execute. |
 | `deny:llm_api_proxy:tool_name_conflict` | **OpenAI.** A call (`tool_calls[i]` or a legacy `function_call`) carried a second non-empty `name` fragment, identical to the first or not. openai-python concatenates the fragments (`bash` twice becomes `bashbash`) and openai-node keeps the last, so no single name can be gated. A server that repeats the full name on every delta is refused too. |
-| `deny:llm_api_proxy:case_variant_key` | **OpenAI, streaming and non-streaming.** An envelope object (the response, `choices[]`, `message`, `delta`, `tool_calls[]`, `function`, `function_call`) carries a key that differs only in case from a key the gate reads, such as `Function_Call` beside `function_call`. Go's decoder matches keys case-insensitively (with Unicode folding, so `ſ` matches `s`) and keeps the last; the SDKs read only the exact key, so the gate would evaluate one call and the client run another. A variant without the exact key beside it is refused too, as in the Anthropic check above. The check runs on every gated OpenAI body and stream event, including a body behind a BOM or in UTF-16. Exact duplicate keys are not refused: every parser keeps the last. |
+| `deny:llm_api_proxy:case_variant_key` | **OpenAI, streaming and non-streaming; Anthropic, non-streaming.** An envelope object (the response, `choices[]`, `message`, `delta`, `tool_calls[]`, `function`, `function_call`) carries a key that differs only in case from a key the gate reads, such as `Function_Call` beside `function_call`. Go's decoder matches keys case-insensitively (with Unicode folding, so `ſ` matches `s`) and keeps the last; the SDKs read only the exact key, so the gate would evaluate one call and the client run another. A variant without the exact key beside it is refused too, as in the Anthropic check above. The check runs on every gated OpenAI body and stream event, including a body behind a BOM or in UTF-16. Exact duplicate keys are not refused: every parser keeps the last. The same check runs on a non-streaming Anthropic body, on the message (`id`, `type`, `role`, `model`, `content`, `stop_reason`, `usage`) and on each content block (`type`, `text`, `id`, `name`, `input`): a `"Content":[]` beside `"content"` hid a `tool_use` the SDKs and both tool runners ran. Anthropic streams refuse their variants under `tool_use_interleaved` (above). |
 
 Every rule above discards the buffered bytes and stops reading upstream.
 None is subject to `--fail-mode allow`: the guard is healthy, it simply

@@ -1,0 +1,1 @@
+{"id":"c1","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"},5],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}

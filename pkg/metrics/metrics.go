@@ -1080,7 +1080,7 @@ func (r *Registry) WritePrometheus(w io.Writer) {
 		"LLM-proxy non-streaming upstream responses that exceeded --max-buffer-bytes and were converted to synthetic refusals, by provider.",
 		"provider", snapshotStringMap(&r.llmProxyNonStreamingOverflowMu, r.llmProxyNonStreamingOverflowCount))
 	writeLabeledCounter(w, "vanzik_llmproxy_protocol_violation_total",
-		"LLM-proxy responses refused fail-closed because their structure was unsafe to gate (e.g. an interleaved second tool_use, or an OpenAI envelope key differing only in case, streaming or not), by provider.",
+		"LLM-proxy responses refused fail-closed because their structure was unsafe to gate (e.g. an interleaved second tool_use, or an OpenAI or Anthropic key differing only in case, streaming or not), by provider.",
 		"provider", snapshotStringMap(&r.llmProxyProtocolViolationMu, r.llmProxyProtocolViolationCount))
 	writeLabeledCounter(w, "vanzik_llmproxy_undecodable_tool_call_total",
 		"LLM-proxy responses refused fail-closed because they carried a tool call the proxy could not decode the way a client SDK does (a non-streaming body that failed strict decode, or an OpenAI or Anthropic stream with a BOM-prefixed line), by provider.",

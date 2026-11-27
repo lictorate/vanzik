@@ -37,6 +37,17 @@ type openAIToolCallProbe struct {
 	} `json:"choices"`
 }
 
+// openAIStreamToolCallProbe is openAIToolCallProbe for a stream chunk:
+// choices[].delta.tool_calls and choices[].delta.function_call.
+type openAIStreamToolCallProbe struct {
+	Choices []struct {
+		Delta struct {
+			ToolCalls    []json.RawMessage `json:"tool_calls"`
+			FunctionCall json.RawMessage   `json:"function_call"`
+		} `json:"delta"`
+	} `json:"choices"`
+}
+
 // anthropicToolUseProbe declares only content[].type.
 type anthropicToolUseProbe struct {
 	Content []struct {
@@ -53,7 +64,12 @@ func hasLenientToolCall(body []byte, provider string) bool {
 	case "openai":
 		var p openAIToolCallProbe
 		if err := json.Unmarshal(body, &p); err != nil {
-			return false
+			// SECURITY: the probe cannot read the body either: a
+			// wrong-typed choices element (`[{...}, 5]`) or a NaN or
+			// Infinity literal, which Python's json accepts. openai-python
+			// (and openai-node for the type error) still run the call, so
+			// decide on the keys alone (O-4).
+			return hasToolCallMarker(body, openAIToolCallMarkers)
 		}
 		for i := range p.Choices {
 			m := p.Choices[i].Message
@@ -66,7 +82,11 @@ func hasLenientToolCall(body []byte, provider string) bool {
 	case "anthropic":
 		var p anthropicToolUseProbe
 		if err := json.Unmarshal(body, &p); err != nil {
-			return false
+			// SECURITY: as for OpenAI. anthropic-python reads a NaN or
+			// Infinity literal and its tool runner runs the call;
+			// @anthropic-ai/sdk runs one beside a wrong-typed content
+			// element (N5).
+			return hasToolCallMarker(body, anthropicToolUseMarkers)
 		}
 		for i := range p.Content {
 			if p.Content[i].Type == "tool_use" {
@@ -78,6 +98,81 @@ func hasLenientToolCall(body []byte, provider string) bool {
 	default:
 		return false
 	}
+}
+
+// undecodableStreamEventHasToolCall reports whether an OpenAI stream
+// event whose data the parser could not decode carries a tool call, as
+// hasLenientToolCall does for a body: by the stream probe when it can
+// read the data, else by the keys alone.
+func undecodableStreamEventHasToolCall(event []byte) bool {
+	data, _, hasData := extractOpenAIDataLine(event)
+	if !hasData {
+		return false
+	}
+	var p openAIStreamToolCallProbe
+	if err := json.Unmarshal(data, &p); err != nil {
+		return hasToolCallMarker(data, openAIToolCallMarkers)
+	}
+	for i := range p.Choices {
+		d := p.Choices[i].Delta
+		if len(d.ToolCalls) > 0 || hasJSONValue(d.FunctionCall) {
+			return true
+		}
+	}
+	return false
+}
+
+// openAIToolCallMarkers are the keys an OpenAI client reads calls from.
+var openAIToolCallMarkers = [][]byte{[]byte("tool_calls"), []byte("function_call")}
+
+// anthropicToolUseMarkers is the content block type a client runs.
+var anthropicToolUseMarkers = [][]byte{[]byte("tool_use")}
+
+// hasToolCallMarker reports whether data, JSON that may not parse, holds
+// a string that unescapes to one of markers up to case: Python and JS
+// decode `"tool\u005fcalls"` to tool_calls, and encoding/json folds
+// keys with Unicode simple folding (strings.EqualFold, so the Kelvin
+// sign matches k). Keys and values both count: a body the probe cannot
+// read is refused if it could hold a call, never forwarded unread.
+func hasToolCallMarker(data []byte, markers [][]byte) bool {
+	maxRaw := 0
+	for _, m := range markers {
+		maxRaw = max(maxRaw, 6*len(m)) // every byte spelled as \uXXXX
+	}
+	for i := 0; i < len(data); i++ {
+		if data[i] != '"' {
+			continue
+		}
+		start, escaped := i+1, false
+		j := start
+		for ; j < len(data) && data[j] != '"'; j++ {
+			if data[j] == '\\' {
+				escaped = true
+				j++
+			}
+		}
+		if j >= len(data) {
+			return false // unterminated string: no client parses this body
+		}
+		if tok := data[start:j]; len(tok) <= maxRaw {
+			s := tok
+			if escaped {
+				var v string
+				if json.Unmarshal(data[start-1:j+1], &v) != nil {
+					i = j
+					continue
+				}
+				s = []byte(v)
+			}
+			for _, m := range markers {
+				if bytes.EqualFold(s, m) {
+					return true
+				}
+			}
+		}
+		i = j
+	}
+	return false
 }
 
 // utf8BOM is the UTF-8 byte order mark.

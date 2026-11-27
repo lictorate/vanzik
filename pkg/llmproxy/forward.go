@@ -181,6 +181,15 @@ func (s *Server) forwardWithToolCallGating(
 			return nil
 		}
 	case "anthropic":
+		// As for OpenAI: before the typed decode and on the text a
+		// lenient client decodes, so it covers the probe path too.
+		if hasAnthropicCaseVariantKey(jsonTextAsUTF8(bodyBytes)) {
+			metrics.IncLLMProxyProtocolViolation("anthropic")
+			decision := protocolViolationDecision("anthropic", violationCaseVariantKey)
+			s.auditNonStreamingRefusal(r, "anthropic", reqModel, decision)
+			writeNonStreamingRefusal(s, w, resp.Header, "anthropic", decision, ToolCallCheck{Provider: "anthropic"}, reqModel)
+			return nil
+		}
 		var parsed AnthropicMessagesResponse
 		if err := json.Unmarshal(bodyBytes, &parsed); err != nil {
 			if hasLenientToolCall(bodyBytes, "anthropic") {
