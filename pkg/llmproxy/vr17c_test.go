@@ -258,3 +258,95 @@ func TestVR17c_N5_AnthropicNonStreaming(t *testing.T) {
 		}
 	}
 }
+
+// --- N6: Anthropic non-streaming case-variant keys ---------------------------
+
+// New (VR-17c review) N6, the non-streaming half of O-19. encoding/json
+// folds `Content` onto `content` and a block's `Type` onto `type`; both
+// SDKs read only the exact key. The reviewer's bodies (n6_o19_*) and
+// two of mine had all four Anthropic clients, both tool runners
+// included, run rm while the gate saw no tool_use or `ls`.
+func TestHasAnthropicCaseVariantKey(t *testing.T) {
+	const tu = `{"type":"tool_use","id":"t","name":"bash","input":{"command":"ls"}}`
+	msg := func(extra string) string {
+		return `{"id":"m","type":"message","role":"assistant","model":"x","content":[` + tu + `]` + extra + `,"stop_reason":"tool_use","usage":{"input_tokens":1}}`
+	}
+	for _, tc := range []struct {
+		name, body string
+		want       bool
+	}{
+		{"plain", msg(""), false},
+		{"Content beside content", msg(`,"Content":[]`), true},
+		{"CONTENT", msg(`,"CONTENT":[]`), true},
+		{"escaped C", msg(`,"Content":[]`), true},
+		{"escaped exact key is not a variant", `{"content":[` + tu + `]}`, false},
+		{"exact duplicate", msg(`,"content":[]`), false},
+		{"Stop_Reason", msg(`,"Stop_Reason":"end_turn"`), true},
+		{"long s in stop_reason", msg(`,"ſtop_reason":"end_turn"`), true},
+		{"long s in usage", msg(`,"uſage":{}`), true},
+		{"Model", msg(`,"Model":"y"`), true},
+		{"block Type", `{"content":[{"type":"tool_use","id":"t","name":"bash","input":{},"Type":"text"}]}`, true},
+		{"block Input", `{"content":[{"type":"tool_use","id":"t","name":"bash","input":{},"Input":{}}]}`, true},
+		{"block Name", `{"content":[{"type":"tool_use","id":"t","name":"bash","input":{},"NAME":"x"}]}`, true},
+		{"block ID", `{"content":[{"type":"tool_use","id":"t","ID":"u","name":"bash","input":{}}]}`, true},
+		{"block Text", `{"content":[{"type":"text","text":"a","Text":"b"}]}`, true},
+		// Keys the gate does not read are not checked.
+		{"nested Content in a result block", `{"content":[{"type":"web_search_tool_result","tool_use_id":"s","content":[{"Type":"x","Content":"y"}]}]}`, false},
+		{"Citations on a text block", `{"content":[{"type":"text","text":"a","Citations":[]}]}`, false},
+		{"Container", msg(`,"Container":null`), false},
+		{"variant inside input", `{"content":[{"type":"tool_use","id":"t","name":"bash","input":{"Command":"x","command":"y"}}]}`, false},
+		{"variant as a value", msg(`,"x":"Content"`), false},
+		{"not JSON", `{"Content":NaN}`, false},
+	} {
+		if got := hasAnthropicCaseVariantKey([]byte(tc.body)); got != tc.want {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestVR17c_N6_AnthropicCaseVariantKeys(t *testing.T) {
+	post := func(t *testing.T, body string) (string, []forcedAuditCall) {
+		t.Helper()
+		upstream := upstreamServing(t, body)
+		srv, base, teardown := newGatedTestServer(t, upstream, upstream, denyRm)
+		defer teardown()
+		srv.BuildRefusal = BuildRefusalRich
+		spy := &forcedAuditSpy{}
+		srv.RecordForcedAudit = spy.record
+		resp, err := http.Post(base+"/v1/messages", "application/json",
+			strings.NewReader(`{"model":"m","max_tokens":5,"messages":[]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		got, _ := io.ReadAll(resp.Body)
+		return string(got), spy.recorded()
+	}
+	for _, name := range []string{"o19_Content_strict", "o19_Type_strict", "o19_Content_probe", "content_title", "block_Input"} {
+		t.Run(name, func(t *testing.T) {
+			before := metrics.LLMProxyProtocolViolationFor("anthropic")
+			got, audits := post(t, readVR17c(t, "n6_"+name+".json"))
+			if strings.Contains(got, "rm -rf") || !strings.Contains(got, ruleCaseVariant) {
+				t.Errorf("want the %s refusal and no rm; got %q", ruleCaseVariant, got)
+			}
+			if len(audits) != 1 || audits[0].decision.Rule != ruleCaseVariant {
+				t.Errorf("forced audits %+v, want one %s", audits, ruleCaseVariant)
+			}
+			if d := metrics.LLMProxyProtocolViolationFor("anthropic") - before; d != 1 {
+				t.Errorf("protocol_violation counter moved by %d, want 1", d)
+			}
+		})
+	}
+	// Realistic first-party bodies (thinking, server tools, web search and
+	// code execution results, citations, container, cache usage) are
+	// gated and forwarded byte-identical.
+	for _, name := range []string{"real_full_ls", "real_container_ls"} {
+		t.Run(name, func(t *testing.T) {
+			body := readVR17c(t, "n6_"+name+".json")
+			got, audits := post(t, body)
+			if got != body || len(audits) != 0 {
+				t.Errorf("changed or audited (%d):\n got %q\nwant %q", len(audits), got, body)
+			}
+		})
+	}
+}

@@ -462,6 +462,49 @@ var (
 	anthropicDeltaKeys = [...]string{"type", "partial_json", "text"}
 )
 
+// anthropicResponseKeys covers a non-streaming Messages response: the
+// keys the strict decoder and the probe read, on the message and on
+// each content block (AnthropicMessagesResponse, AnthropicContentBlock).
+// stop_reason is kept because the SDK tool runners decide their next
+// step from it.
+var anthropicResponseKeys = envelopeKeys{
+	"id": nil, "type": nil, "role": nil, "model": nil, "stop_reason": nil, "usage": nil,
+	"content": {"type": nil, "text": nil, "id": nil, "name": nil, "input": nil},
+}
+
+// anthropicResponseNames is every key in anthropicResponseKeys, once.
+var anthropicResponseNames = func() [][]byte {
+	seen := map[string]bool{}
+	var walk func(envelopeKeys)
+	walk = func(keys envelopeKeys) {
+		for name, sub := range keys {
+			seen[name] = true
+			walk(sub)
+		}
+	}
+	walk(anthropicResponseKeys)
+	names := make([][]byte, 0, len(seen))
+	for name := range seen {
+		names = append(names, []byte(name))
+	}
+	return names
+}()
+
+// hasAnthropicCaseVariantKey is hasOpenAICaseVariantKey for a
+// non-streaming Anthropic body.
+//
+// SECURITY: encoding/json folds `Content` or `CONTENT` onto `content`,
+// and a block's `Type` onto `type`, keeping the last; both SDKs read
+// only the exact key. So `"content":[{tool_use rm}],"Content":[]` was a
+// message with no tool_use to the gate and an rm call to the clients
+// and both tool runners (N6, the non-streaming half of O-19).
+func hasAnthropicCaseVariantKey(data []byte) bool {
+	if !hasFoldedNameString(data, anthropicResponseNames) {
+		return false
+	}
+	return envelopeHasCaseVariantKey(data, anthropicResponseKeys)
+}
+
 // isJSONString reports whether raw, a value encoding/json has already
 // validated, is a JSON string.
 func isJSONString(raw json.RawMessage) bool {
