@@ -144,7 +144,7 @@ survive a *restart*, but each replica keeps its own working copy):
 
 Mitigations if you must run multiple replicas *without* PostgreSQL:
 
-1. **Run one replica.** Scale vertically. Vanzik is a latency-sensitive sidecar, not a throughput bottleneck — one well-sized instance usually handles thousands of agents.
+1. **Run one replica.** Scale vertically. Vanzik is a latency-sensitive sidecar, not usually a throughput bottleneck: in the 2.1.0 verification run (Apple M4, loopback), the cost per check stayed flat as the number of agent ids grew to 1000. Larger fleets were not tested.
 2. **Pin sessions.** Configure your load balancer for session affinity on `session_id` (header or cookie). Rate-limit buckets still drift across replicas for multi-session agents, but cost accounting becomes accurate.
 3. **Divide limits by replica count.** If you run 3 replicas and want a global cap of 30 req/min, set `max_requests: 10`. Works only for steady-state traffic; burst behavior remains sloppy.
 4. **Aggregate externally.** Have each replica emit `/metrics` to Prometheus; alert on aggregate drift between declared and observed rates. Treat Vanzik rate limits as best-effort and backstop with an upstream rate limiter (the reverse proxy, a CDN, or an API gateway).

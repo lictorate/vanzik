@@ -42,8 +42,8 @@ The targets below assume:
 
 | Metric                      | Target               | Why                                               |
 | --------------------------- | -------------------- | ------------------------------------------------- |
-| `/v1/check` p50 latency     | **< 1 ms**           | Engine path is in-memory; the audit entry is queued for a background writer. |
-| `/v1/check` p95 latency     | **< 3 ms**           | Nothing on the request path waits on disk: Vanzik never calls fsync, audit writes run in the background, and the SQLite store is written behind the request path with `synchronous=NORMAL`. |
+| `/v1/check` p50 latency     | **< 1 ms**           | Engine path is in-memory; with the default `--audit-buffered`, the audit entry is queued for a background writer. |
+| `/v1/check` p95 latency     | **< 3 ms**           | Nothing on the request path waits on disk: Vanzik's own code never calls fsync; audit writes run in a background writer with the default `--audit-buffered` (with `--audit-buffered=false` the write is on the request path); and the SQLite store is written behind the request path (WAL, `synchronous=NORMAL`, which syncs only at checkpoints). |
 | `/v1/check` p99 latency     | **< 5 ms** at 1k RPS | Headroom for GC pauses and scheduling. Measured: 1.2 ms (see below). |
 | Throughput (sustained)      | **≥ 1 000 RPS**      | Per replica; scale horizontally with the PostgreSQL backend (per-replica targets unchanged — reconciliation is background-only). |
 | Audit-write durability lag  | **< 100 ms**         | Time between `Log()` returning and the entry being readable by `Query`. |
@@ -132,8 +132,8 @@ SLO validation:
 
 1. A `vegeta`/`hey` harness against `vanzik server` running with
    `--policy configs/default.yaml` and a tmpfs-backed audit log,
-   driving 1 kRPS sustained for 5 minutes. **Not automated yet** (the in-suite concurrent soak — `pkg/persist`, 32 workers,
-   ~11 kRPS locally — is the closest current proxy for it).
+   driving 1 kRPS sustained for 5 minutes. **Not automated yet** (the in-suite concurrent soak in `pkg/persist`,
+   `TestIntegration_ConcurrentHotPathLatencyWithPersistence`, which gates p99, is the closest current stand-in).
 2. Latency histograms exported via `/metrics`
    (`vanzik_request_duration_ms`,
    `vanzik_policy_eval_duration_ms`,

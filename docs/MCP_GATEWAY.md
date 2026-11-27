@@ -375,9 +375,11 @@ duplication.
 
 #### 4.4.2 Cost: two Engine.Check calls per tool call
 
-In a microbenchmark, one `Engine.Check` runs ~5–15 µs on a
-small policy. Two is still ≤ 30 µs — well below the network round-trip
-to a downstream MCP server. The cost is acceptable.
+In the micro-benchmark baseline in [`SLO.md`](SLO.md#baseline-captured-on-v050--still-the-recorded-floor)
+(AMD Ryzen 7 5800X), one `Engine.Check` averaged ≈ 285 ns on the allow
+path and ≈ 216 ns on a deny after 100 allow rules. A second check adds
+about that much, well below the network round-trip to a downstream MCP
+server. The cost is acceptable.
 
 #### 4.4.3 Configurable, but on by default
 

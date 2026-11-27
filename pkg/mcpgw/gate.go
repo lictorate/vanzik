@@ -248,8 +248,9 @@ func buildMcpMeta(req *ToolsCallRequest, digestKey []byte) map[string]string {
 		out[MetaGatewayConnectionKey] = req.ConnectionID
 	}
 	if len(req.Arguments) > 0 {
-		// Best-effort flatten so simple string args become discoverable
-		// rule attributes. Non-stringy values are JSON-encoded.
+		// Best-effort flatten so arguments become readable arg_<name>
+		// entries in the audit and approval views. Non-string values are
+		// JSON-encoded.
 		for k, v := range req.Arguments {
 			switch s := v.(type) {
 			case string:

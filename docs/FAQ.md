@@ -117,7 +117,7 @@ Three ways:
 
 ### How much does running Vanzik cost in overhead?
 
-Typical policy evaluation is sub-millisecond. Measured on an Apple M4 over loopback, the full `/v1/check` path ran at 1.2 ms p99 at a sustained 1k RPS; that is a p99, not a bound on every request, and it has not been measured on cloud vCPUs yet (see [`SLO.md`](SLO.md)). Memory grows linearly with audit log size during the startup replay only.
+In the micro-benchmark baseline on an AMD Ryzen 7 5800X, one `Engine.Check` on the allow path averaged ≈ 285 ns. Measured on an Apple M4 over loopback, the full `/v1/check` path ran at 1.2 ms p99 at a sustained 1k RPS; that is a p99, not a bound on every request, and it has not been measured on cloud vCPUs yet (see [`SLO.md`](SLO.md)). Memory grows linearly with audit log size during the startup replay only.
 
 ### Can I use it as a library instead of running the firewall?
 
