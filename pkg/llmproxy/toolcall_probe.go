@@ -82,7 +82,11 @@ func hasLenientToolCall(body []byte, provider string) bool {
 	case "anthropic":
 		var p anthropicToolUseProbe
 		if err := json.Unmarshal(body, &p); err != nil {
-			return false
+			// SECURITY: as for OpenAI. anthropic-python reads a NaN or
+			// Infinity literal and its tool runner runs the call;
+			// @anthropic-ai/sdk runs one beside a wrong-typed content
+			// element (N5).
+			return hasToolCallMarker(body, anthropicToolUseMarkers)
 		}
 		for i := range p.Content {
 			if p.Content[i].Type == "tool_use" {
@@ -120,6 +124,9 @@ func undecodableStreamEventHasToolCall(event []byte) bool {
 
 // openAIToolCallMarkers are the keys an OpenAI client reads calls from.
 var openAIToolCallMarkers = [][]byte{[]byte("tool_calls"), []byte("function_call")}
+
+// anthropicToolUseMarkers is the content block type a client runs.
+var anthropicToolUseMarkers = [][]byte{[]byte("tool_use")}
 
 // hasToolCallMarker reports whether data, JSON that may not parse, holds
 // a string that unescapes to one of markers up to case: Python and JS

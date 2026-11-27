@@ -13,6 +13,8 @@ package llmproxy
 
 import (
 	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -179,6 +181,80 @@ func TestUndecodableStreamEventHasToolCall(t *testing.T) {
 	} {
 		if got := undecodableStreamEventHasToolCall([]byte(tc.event)); got != tc.want {
 			t.Errorf("%q: got %v, want %v", tc.event, got, tc.want)
+		}
+	}
+}
+
+// --- N5: Anthropic non-streaming bodies the gate cannot decode ---------------
+
+// New (VR-17c) N5. A NaN or Infinity literal (anthropic-python reads it;
+// its tool runner ran rm) or a wrong-typed content element
+// (@anthropic-ai/sdk held rm) made the Anthropic probe fail too, so the
+// body passed through unread.
+func TestVR17c_N5_AnthropicNonStreaming(t *testing.T) {
+	post := func(t *testing.T, body string) (string, []forcedAuditCall) {
+		t.Helper()
+		upstream := upstreamServing(t, body)
+		srv, base, teardown := newGatedTestServer(t, upstream, upstream, denyRm)
+		defer teardown()
+		srv.BuildRefusal = BuildRefusalRich
+		spy := &forcedAuditSpy{}
+		srv.RecordForcedAudit = spy.record
+		resp, err := http.Post(base+"/v1/messages", "application/json",
+			strings.NewReader(`{"model":"m","max_tokens":5,"messages":[]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		got, _ := io.ReadAll(resp.Body)
+		return string(got), spy.recorded()
+	}
+	for _, kind := range []string{"nan", "infinity", "wrongtype"} {
+		for _, marker := range []string{"plain", "escaped", "case"} {
+			name := kind + "_" + marker
+			t.Run(name, func(t *testing.T) {
+				before := metrics.LLMProxyUndecodableToolCallFor("anthropic")
+				got, audits := post(t, readVR17c(t, "n5_"+name+".json"))
+				var msg AnthropicMessagesResponse
+				if err := json.Unmarshal([]byte(got), &msg); err != nil {
+					t.Fatalf("client did not receive an Anthropic message: %v\n%q", err, got)
+				}
+				if strings.Contains(got, "rm -rf") || strings.Contains(got, "tool_use\"") {
+					t.Errorf("the call reached the client: %q", got)
+				}
+				if !strings.Contains(got, ruleUndecodable) {
+					t.Errorf("no %s refusal: %q", ruleUndecodable, got)
+				}
+				if len(audits) != 1 || audits[0].decision.Rule != ruleUndecodable {
+					t.Errorf("forced audits %+v, want one %s", audits, ruleUndecodable)
+				}
+				if d := metrics.LLMProxyUndecodableToolCallFor("anthropic") - before; d != 1 {
+					t.Errorf("undecodable_tool_call counter moved by %d, want 1", d)
+				}
+			})
+		}
+	}
+	for _, name := range []string{"text_nan", "text_wrongtype"} {
+		t.Run(name, func(t *testing.T) {
+			body := readVR17c(t, "n5_"+name+".json")
+			got, audits := post(t, body)
+			if got != body || len(audits) != 0 {
+				t.Errorf("text-only body changed or audited (%d):\n got %q\nwant %q", len(audits), got, body)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		data string
+		want bool
+	}{
+		{`{"type":"tool_use"}`, true},
+		{`{"type":"tool_use"}`, true},
+		{`{"type":"TOOL_USE"}`, true},
+		{`{"type":"server_tool_use"}`, false},
+		{`{"type":"text","text":"use the tool_use block"}`, false},
+	} {
+		if got := hasToolCallMarker([]byte(tc.data), anthropicToolUseMarkers); got != tc.want {
+			t.Errorf("hasToolCallMarker(%s, tool_use) = %v, want %v", tc.data, got, tc.want)
 		}
 	}
 }

@@ -567,7 +567,11 @@ JSON string in it, unescaped and compared without case, is `tool_calls`
 or `function_call` (so `"tool\u005fcalls"` and `"Tool_Calls"` count),
 and passed through unchanged if none is. A text-only answer that
 happens to carry an empty `"tool_calls": []` beside such a literal is
-refused too: there is no reading of it the proxy can trust.
+refused too: there is no reading of it the proxy can trust. Anthropic
+bodies get the same treatment with the block type `tool_use`:
+anthropic-python reads a `NaN` or `Infinity` literal and its tool runner
+runs the call, and `@anthropic-ai/sdk` runs one beside a wrong-typed
+`content` element.
 
 The same rule refuses an OpenAI or Anthropic **stream** in which any
 line starts with a UTF-8 byte order mark (the stream's first bytes, or
