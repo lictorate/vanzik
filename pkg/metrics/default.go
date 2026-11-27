@@ -86,6 +86,12 @@ func IncLLMProxyUndecodableContentEncoding(provider string) {
 func LLMProxyUndecodableContentEncodingFor(provider string) uint64 {
 	return Default.LLMProxyUndecodableContentEncodingFor(provider)
 }
+func IncLLMProxyEventTypeMismatch(provider string) {
+	Default.IncLLMProxyEventTypeMismatch(provider)
+}
+func LLMProxyEventTypeMismatchFor(provider string) uint64 {
+	return Default.LLMProxyEventTypeMismatchFor(provider)
+}
 func SetLLMProxyStreamsActive(n int64)       { Default.SetLLMProxyStreamsActive(n) }
 func AddLLMProxyStreamsActive(d int64) int64 { return Default.AddLLMProxyStreamsActive(d) }
 func IncLLMProxyStreamsRejected()            { Default.IncLLMProxyStreamsRejected() }

@@ -146,6 +146,9 @@ type Registry struct {
 	llmProxyUndecodableContentEncodingMu    sync.Mutex
 	llmProxyUndecodableContentEncodingCount map[string]uint64
 
+	llmProxyEventTypeMismatchMu    sync.Mutex
+	llmProxyEventTypeMismatchCount map[string]uint64
+
 	migrationStatusMu sync.Mutex
 	migrationStatus   map[migrationStatusKey]int64
 
@@ -172,6 +175,7 @@ func NewRegistry() *Registry {
 		llmProxyProtocolViolationCount:          map[string]uint64{},
 		llmProxyUndecodableToolCallCount:        map[string]uint64{},
 		llmProxyUndecodableContentEncodingCount: map[string]uint64{},
+		llmProxyEventTypeMismatchCount:          map[string]uint64{},
 		migrationStatus:                         map[migrationStatusKey]int64{},
 		notifyDroppedCount:                      map[notifyDroppedKey]uint64{},
 		notifyDispatchHist:                      map[string]*Histogram{},
@@ -242,6 +246,9 @@ func (r *Registry) Reset() {
 	r.llmProxyUndecodableContentEncodingMu.Lock()
 	r.llmProxyUndecodableContentEncodingCount = map[string]uint64{}
 	r.llmProxyUndecodableContentEncodingMu.Unlock()
+	r.llmProxyEventTypeMismatchMu.Lock()
+	r.llmProxyEventTypeMismatchCount = map[string]uint64{}
+	r.llmProxyEventTypeMismatchMu.Unlock()
 	r.migrationStatusMu.Lock()
 	r.migrationStatus = map[migrationStatusKey]int64{}
 	r.migrationStatusMu.Unlock()
@@ -597,6 +604,30 @@ func (r *Registry) LLMProxyUndecodableContentEncodingFor(provider string) uint64
 	r.llmProxyUndecodableContentEncodingMu.Lock()
 	defer r.llmProxyUndecodableContentEncodingMu.Unlock()
 	return r.llmProxyUndecodableContentEncodingCount[provider]
+}
+
+// IncLLMProxyEventTypeMismatch increments
+// vanzik_llmproxy_event_type_mismatch_total{provider=...}. The Anthropic
+// SDKs dispatch a stream event on its SSE `event:` name (they skip `ping`
+// and unnamed events) while the proxy reads the JSON `type`; an event
+// whose name and type differ, or that has data but no name, would make
+// the gate and the client read different streams, so the proxy refuses
+// it fail-closed (deny:llm_api_proxy:event_type_mismatch). See
+// pkg/llmproxy/anthropic_parser.go.
+func (r *Registry) IncLLMProxyEventTypeMismatch(provider string) {
+	if provider == "" {
+		provider = "unknown"
+	}
+	r.llmProxyEventTypeMismatchMu.Lock()
+	r.llmProxyEventTypeMismatchCount[provider]++
+	r.llmProxyEventTypeMismatchMu.Unlock()
+}
+
+// LLMProxyEventTypeMismatchFor returns the current count (for tests).
+func (r *Registry) LLMProxyEventTypeMismatchFor(provider string) uint64 {
+	r.llmProxyEventTypeMismatchMu.Lock()
+	defer r.llmProxyEventTypeMismatchMu.Unlock()
+	return r.llmProxyEventTypeMismatchCount[provider]
 }
 
 // SetLLMProxyStreamsActive updates the active-streams gauge, mirroring the
@@ -1057,6 +1088,9 @@ func (r *Registry) WritePrometheus(w io.Writer) {
 	writeLabeledCounter(w, "vanzik_llmproxy_undecodable_content_encoding_total",
 		"LLM-proxy 2xx responses refused fail-closed because they still carried a Content-Encoding the proxy could not decode, by provider.",
 		"provider", snapshotStringMap(&r.llmProxyUndecodableContentEncodingMu, r.llmProxyUndecodableContentEncodingCount))
+	writeLabeledCounter(w, "vanzik_llmproxy_event_type_mismatch_total",
+		"LLM-proxy Anthropic streams refused fail-closed because an event's SSE name and JSON type differed, or an event carried data without a name, by provider.",
+		"provider", snapshotStringMap(&r.llmProxyEventTypeMismatchMu, r.llmProxyEventTypeMismatchCount))
 	writeDeprecations(w)
 }
 

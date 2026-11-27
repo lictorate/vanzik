@@ -331,6 +331,7 @@ func TestRegistry_ResetMatchesFresh(t *testing.T) {
 	r.IncLLMProxyProtocolViolation("openai")
 	r.IncLLMProxyUndecodableToolCall("openai")
 	r.IncLLMProxyUndecodableContentEncoding("openai")
+	r.IncLLMProxyEventTypeMismatch("anthropic")
 	r.SetLLMProxyStreamsActive(3)
 	r.IncLLMProxyStreamsRejected()
 	r.IncAuditCorruptLine()
@@ -403,5 +404,31 @@ func TestAddDecision_MatchesRepeatedIncDecision(t *testing.T) {
 	incremental.WritePrometheus(&b)
 	if a.String() != b.String() {
 		t.Errorf("AddDecision and IncDecision diverge:\n--- bulk ---\n%s\n--- incremental ---\n%s", a.String(), b.String())
+	}
+}
+
+// TestLLMProxyEventTypeMismatch_Counter: the counter is per provider,
+// "unknown" when unnamed, and exported with its HELP line.
+func TestLLMProxyEventTypeMismatch_Counter(t *testing.T) {
+	r := NewRegistry()
+	r.IncLLMProxyEventTypeMismatch("anthropic")
+	r.IncLLMProxyEventTypeMismatch("anthropic")
+	r.IncLLMProxyEventTypeMismatch("")
+	if got := r.LLMProxyEventTypeMismatchFor("anthropic"); got != 2 {
+		t.Errorf("anthropic = %d, want 2", got)
+	}
+	if got := r.LLMProxyEventTypeMismatchFor("unknown"); got != 1 {
+		t.Errorf("unknown = %d, want 1", got)
+	}
+	var out bytes.Buffer
+	r.WritePrometheus(&out)
+	for _, want := range []string{
+		"# HELP vanzik_llmproxy_event_type_mismatch_total ",
+		"# TYPE vanzik_llmproxy_event_type_mismatch_total counter",
+		`vanzik_llmproxy_event_type_mismatch_total{provider="anthropic"} 2`,
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q", want)
+		}
 	}
 }
