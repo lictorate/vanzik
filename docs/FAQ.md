@@ -78,7 +78,7 @@ No — it is a **hard policy-load error**. `time_window` only means something as
 
 ### Python fail-closed vs TypeScript failMode — which should I use?
 
-Both SDKs default to **fail-closed** (proxy unreachable → `DENY`). This matches the usual security posture: if the guard is down, don't act.
+Both SDKs default to **fail-closed** (Vanzik server unreachable → `DENY`). This matches the usual security posture: if the guard is down, don't act.
 
 - Python: `Guard(fail_mode="allow")` opts into fail-open.
 - TypeScript: `new Vanzik({ failMode: 'allow' })` opts into fail-open.
@@ -117,9 +117,9 @@ Three ways:
 
 ### How much does running Vanzik cost in overhead?
 
-Typical policy evaluation is sub-millisecond. End-to-end `/v1/check` runs in single-digit ms on a modern vCPU. At 500 RPS the service uses ~1 vCPU and ~50 MB RAM (no audit log). Memory grows linearly with audit log size during the startup replay only.
+In the micro-benchmark baseline on an AMD Ryzen 7 5800X, one `Engine.Check` on the allow path averaged ≈ 285 ns. Measured on an Apple M4 over loopback, the full `/v1/check` path ran at 1.2 ms p99 at a sustained 1k RPS; that is a p99, not a bound on every request, and it has not been measured on cloud vCPUs yet (see [`SLO.md`](SLO.md)). Memory grows linearly with audit log size during the startup replay only.
 
-### Can I use it as a library, not a proxy?
+### Can I use it as a library instead of running the firewall?
 
 The Go policy engine (`pkg/policy`), audit logger (`pkg/audit`), MCP gateway core (`pkg/mcpgw`), and LLM proxy core (`pkg/llmproxy`) are all importable Go packages. The three binaries (`vanzik`, `vanzik-mcp-gateway`, `vanzik-llm-proxy`) are thin wrappers around them, and the SDK + framework adapters assume an HTTP server endpoint — in-process embedding of the SDK story is uncommon and unsupported. If you want to embed the policy engine directly without an HTTP hop, lift `policy.Engine.Check` from `pkg/policy/engine.go`.
 

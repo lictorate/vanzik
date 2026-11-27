@@ -7,7 +7,7 @@ What happens from the moment a policy returns `REQUIRE_APPROVAL` to the moment t
 ## The 5-step lifecycle
 
 ```
- Agent               Vanzik proxy            Human (dashboard / CLI / API)
+ Agent               Vanzik server           Human (dashboard / CLI / API)
  ─────               ──────────────────          ─────────────────────────────
   │                   │                           │
   │ 1. /v1/check ─────▶                           │

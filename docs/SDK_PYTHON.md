@@ -20,7 +20,7 @@ Source: `plugins/python/vanzik/core.py` (Guard client, exceptions, constants), `
 - [Exception hierarchy](#exception-hierarchy)
 - [`@guarded` decorator](#guarded-decorator)
 - [Adapters](#adapters)
-- [Testing against a fake proxy](#testing-against-a-fake-proxy)
+- [Testing against a fake server](#testing-against-a-fake-server)
 
 ---
 
@@ -164,7 +164,7 @@ These failures of `check()` collapse into a synthetic `CheckResult` controlled b
 
 - `urllib.error.URLError` — connection-phase failure (connect refused, DNS, SSL handshake), and HTTP error statuses (urllib raises `HTTPError`, a `URLError` subclass, for `4xx`/`5xx`).
 - `OSError` — post-connect failure (`ConnectionResetError`, `BrokenPipeError`, `socket.timeout` surfaced from `resp.read()`).
-- `json.JSONDecodeError` — the body parsed as non-JSON; from the caller's perspective this is indistinguishable from an unreachable proxy.
+- `json.JSONDecodeError` — the body parsed as non-JSON; from the caller's perspective this is indistinguishable from an unreachable server.
 - A response that isn't a valid decision: a `Content-Type` other than `application/json`, or a JSON body without a `decision` field (reason `Vanzik returned unexpected content-type …` / `Vanzik returned malformed response body`).
 
 ```python
@@ -287,7 +287,7 @@ return semantics are documented once in [`ADAPTERS.md`](ADAPTERS.md).
 
 ---
 
-## Testing against a fake proxy
+## Testing against a fake server
 
 ### Option A — run the real binary
 
@@ -350,7 +350,7 @@ def test_denies_rm_rf(stub_vanzik):
 
 ### Option C — `fail_mode="allow"` for disconnected tests
 
-If you intentionally do not run a proxy in your unit tests and you want `check()` to succeed, construct `Guard(..., fail_mode="allow")`. Only do this in tests; it is the wrong default anywhere else.
+If you intentionally do not run a Vanzik server in your unit tests and you want `check()` to succeed, construct `Guard(..., fail_mode="allow")`. Only do this in tests; it is the wrong default anywhere else.
 
 ---
 

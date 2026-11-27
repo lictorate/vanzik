@@ -3,7 +3,7 @@
 TypeScript / JavaScript client for [Vanzik](https://github.com/lictorate/vanzik) — the firewall for AI agents.
 
 - **Zero runtime dependencies.** Uses native `fetch` + `AbortController`.
-- **Fail-closed by default.** If the proxy is unreachable, `check()` resolves to `DENY`. Opt in to `failMode: 'allow'` if your threat model requires it.
+- **Fail-closed by default.** If the Vanzik server is unreachable, `check()` resolves to `DENY`. Opt in to `failMode: 'allow'` if your threat model requires it.
 - **Types included.** Ships `.d.ts` alongside CommonJS `dist/`.
 
 > **Runtime requirement:** Node.js **20+** (the `engines` field in `package.json`; CI tests 20, 22 and 24), or any browser / Deno / Bun / Workers runtime that provides `fetch` and `AbortController` globally.

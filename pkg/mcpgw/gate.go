@@ -228,10 +228,13 @@ func (c *HTTPPolicyClient) Check(ctx context.Context, req *ToolsCallRequest) (De
 const MetaGatewayConnectionKey = "gateway_connection"
 
 // buildMcpMeta builds the meta map sent on the mcp_tool /v1/check call.
-// Argument values are best-effort serialised so policy authors can
-// match on them via meta-aware patterns; secrets are redacted by the
-// downstream notify Redactor before the value lands in the audit log
-// (see docs/MCP_GATEWAY.md § 5).
+// The policy engine does not match on meta: it is carried into the audit
+// entry, the pending-approval card, SSE events and webhooks, so argument
+// values are serialised here (as arg_<name>) for people reading those.
+// Secret-named arguments are masked here by name (gateclient.IsSecretKeyName),
+// because the central redactor only matches `key=value` text; the
+// redactor still runs on the audit entry (see docs/MCP_GATEWAY.md § 5).
+// The args digest is taken from the unmasked bytes the bridge forwards.
 func buildMcpMeta(req *ToolsCallRequest, digestKey []byte) map[string]string {
 	out := map[string]string{
 		"namespace": req.Namespace,
@@ -245,8 +248,9 @@ func buildMcpMeta(req *ToolsCallRequest, digestKey []byte) map[string]string {
 		out[MetaGatewayConnectionKey] = req.ConnectionID
 	}
 	if len(req.Arguments) > 0 {
-		// Best-effort flatten so simple string args become discoverable
-		// rule attributes. Non-stringy values are JSON-encoded.
+		// Best-effort flatten so arguments become readable arg_<name>
+		// entries in the audit and approval views. Non-string values are
+		// JSON-encoded.
 		for k, v := range req.Arguments {
 			switch s := v.(type) {
 			case string:

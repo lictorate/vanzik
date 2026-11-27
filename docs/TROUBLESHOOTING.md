@@ -132,14 +132,14 @@ curl -s http://127.0.0.1:8080/metrics | grep notify_events_dropped_total
 
 ## Python SDK always returns `DENY` in tests
 
-**Cause:** the Python SDK **defaults to fail-closed** on any network error (`urllib.error.URLError`, `OSError`, or a non-JSON response body → synthetic `DENY` with reason `"Vanzik unreachable (deny): ..."`). If your test environment cannot reach the proxy URL, every call fails closed.
+**Cause:** the Python SDK **defaults to fail-closed** on any network error (`urllib.error.URLError`, `OSError`, or a non-JSON response body → synthetic `DENY` with reason `"Vanzik unreachable (deny): ..."`). If your test environment cannot reach the Vanzik server URL, every call fails closed.
 
 **Confirm:** inspect `result.reason` — it will contain `"Vanzik unreachable"`.
 
 **Fixes:**
 
 - Point the test `Guard(base_url=...)` at a running test server, or stub the HTTP layer with the standard-library stub in [`SDK_PYTHON.md`](SDK_PYTHON.md) ("Option B"). `responses` can't intercept the SDK's calls: it only patches `requests`, and the SDK uses `urllib`.
-- For tests that need fail-open behavior, pass `fail_mode="allow"` explicitly. Do **not** flip this in production unless your threat model treats Vanzik as advisory — the `"deny"` default is what keeps agents safe when the proxy is down.
+- For tests that need fail-open behavior, pass `fail_mode="allow"` explicitly. Do **not** flip this in production unless your threat model treats Vanzik as advisory — the `"deny"` default is what keeps agents safe when the Vanzik server is down.
 
 ---
 

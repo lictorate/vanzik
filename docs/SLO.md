@@ -42,9 +42,9 @@ The targets below assume:
 
 | Metric                      | Target               | Why                                               |
 | --------------------------- | -------------------- | ------------------------------------------------- |
-| `/v1/check` p50 latency     | **< 1 ms**           | Engine path is in-memory; audit write is a single `json.Encode` to a buffered file. |
-| `/v1/check` p95 latency     | **< 3 ms**           | Allows one fsync per request to stay inside 3 ms. |
-| `/v1/check` p99 latency     | **< 5 ms** at 1k RPS | GC pause + sporadic file-system sync. |
+| `/v1/check` p50 latency     | **< 1 ms**           | Engine path is in-memory; with the default `--audit-buffered`, the audit entry is queued for a background writer. |
+| `/v1/check` p95 latency     | **< 3 ms**           | Nothing on the request path waits on disk: Vanzik's own code never calls fsync; audit writes run in a background writer with the default `--audit-buffered` (with `--audit-buffered=false` the write is on the request path); and the SQLite store is written behind the request path (WAL, `synchronous=NORMAL`, which syncs only at checkpoints). |
+| `/v1/check` p99 latency     | **< 5 ms** at 1k RPS | Headroom for GC pauses and scheduling. Measured: 1.2 ms (see below). |
 | Throughput (sustained)      | **≥ 1 000 RPS**      | Per replica; scale horizontally with the PostgreSQL backend (per-replica targets unchanged — reconciliation is background-only). |
 | Audit-write durability lag  | **< 100 ms**         | Time between `Log()` returning and the entry being readable by `Query`. |
 | Approval-required emit lag  | **< 250 ms**         | `notify.Dispatcher` queue depth + a single webhook hop. |
@@ -52,10 +52,13 @@ The targets below assume:
 These targets are backed two ways: the micro-benchmarks in
 §Baseline below, and a CI latency gate (`TestEngineCheck_P99LatencyGate`,
 `pkg/policy`) that fails the build if `Engine.Check` p99 crosses the 3 ms
-budget with the persistence syncer active (measured ≪0.1 ms for the bare
-engine; ~0.53 ms for the full HTTP `/v1/check` path). Production
-validation against a real workload (realistic policy sizes and
-concurrency) remains open — see §Validation plan.
+budget with the persistence syncer active. In the 2.1.0 verification
+run, the full HTTP `/v1/check` path measured **1.2 ms p99 at a sustained
+1k RPS on an Apple M4, over loopback**. That is a p99, not a bound on any
+single request: the slowest request in that 60 s run took 11 ms. Nothing
+has been measured on cloud vCPUs yet. Production validation against a
+real workload (realistic policy sizes and concurrency) remains open —
+see §Validation plan.
 
 ## Out of scope for this SLO
 
@@ -96,8 +99,8 @@ end-to-end RPS measurements — but they bound the per-request floor.
 - The deny-deep-match path (walk past 100 allows to a deny) is actually
   *cheaper* per-op than the allow fast path — the deny match short-
   circuits before any allow allocation, and `formatRule` for the matching
-  deny does fewer string ops than the allow message format. This bounds
-  the worst-case `Check()` shape we ship by default.
+  deny does fewer string ops than the allow message format, so a long
+  allow list ahead of the matching deny does not slow the deny path.
 - `globMatch` with `**` against a 5-segment path is ≈ 200 ns regardless
   of match/no-match. The two-allocation cost is the segment-split slices.
 - `FileLogger.Log` at 4.5 µs / 2 allocs / 336 B is within an order of
@@ -129,8 +132,8 @@ SLO validation:
 
 1. A `vegeta`/`hey` harness against `vanzik server` running with
    `--policy configs/default.yaml` and a tmpfs-backed audit log,
-   driving 1 kRPS sustained for 5 minutes. **Not automated yet** (the in-suite concurrent soak — `pkg/persist`, 32 workers,
-   ~11 kRPS locally — is the closest current proxy for it).
+   driving 1 kRPS sustained for 5 minutes. **Not automated yet** (the in-suite concurrent soak in `pkg/persist`,
+   `TestIntegration_ConcurrentHotPathLatencyWithPersistence`, which gates p99, is the closest current stand-in).
 2. Latency histograms exported via `/metrics`
    (`vanzik_request_duration_ms`,
    `vanzik_policy_eval_duration_ms`,

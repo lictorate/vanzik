@@ -27,7 +27,8 @@ deployment topologies, fail-mode flag) see
                 │  (HTTP server, default 127.0.0.1:8081)│
                 │                                      │
                 │  ┌─ /v1/chat/completions  (OpenAI)   │
-                │  ├─ /v1/completions       (legacy)   │
+                │  ├─ /v1/completions  (legacy; stream │
+                │  │   gated, non-stream passthru)     │
                 │  ├─ /v1/messages          (Anthropic)│
                 │  ├─ /v1/embeddings        (passthru) │
                 │  ├─ /v1/models            (passthru) │
@@ -158,11 +159,14 @@ Two paths:
 
 ### 3.3 Pass-through endpoints
 
-`/v1/embeddings` and `/v1/models` are forwarded as-is, with **no
-policy check and no audit entry** — there are no tool calls in the
-response, so nothing reaches `/v1/check`. This is honest
-about coverage: the proxy is for tool-call gating, not for blocking
-the agent from talking to the model.
+`/v1/embeddings`, `/v1/models` and **non-streaming** `/v1/completions`
+are forwarded as-is, with **no policy check and no audit entry**:
+nothing reaches `/v1/check`. Embeddings and model lists carry no tool
+calls, and no client SDK runs a tool call from a legacy Completion.
+Streaming `/v1/completions` goes through the same stream loop as chat
+completions. This is honest about coverage: the proxy is for tool-call
+gating, not for blocking the agent from talking to the model. See
+[Known limits](THREAT_MODEL.md#known-limits).
 
 ---
 
@@ -429,11 +433,12 @@ Algorithm (Anthropic): identical structure, but:
   `input_json_delta` fragments, when the block's index is its position
   in the message's content and no earlier block used that index:
   `server_tool_use` (server tools such as web search, web fetch and
-  code execution) and `mcp_tool_use` (the MCP connector). The provider runs these calls and client SDKs never
-  execute them. Their result blocks (`web_search_tool_result`,
-  `mcp_tool_result`, ...) arrive whole and also pass through. The
-  request fields that enable them (`tools[].type`, `mcp_servers`) are
-  not inspected.
+  code execution) and `mcp_tool_use` (the MCP connector). The provider
+  runs these calls and client SDKs never execute them. Their result
+  blocks (`web_search_tool_result`, `mcp_tool_result`, ...) arrive
+  whole and also pass through. The request fields that enable them
+  (`tools[].type`, `mcp_servers`) are not inspected, so these calls are
+  neither gated nor audited: see [Known limits](THREAT_MODEL.md#known-limits).
 - The buffer scope is **the bytes for that one block**, from
   `content_block_start` through `content_block_stop`. Other content
   blocks (text, image) flow around the buffered tool block in arrival
@@ -517,6 +522,13 @@ getting, and carries `usage`, which the Anthropic SDKs'
 `messages.stream()` reads on every `message_delta` (without it they
 raise `AttributeError`).
 
+The refusal does not include a `message_start`: on a conformant stream
+the upstream's has already been forwarded. A stream refused as
+malformed before any `message_start` reached the client (for example
+one whose `message_start` carries content) gets a synthetic one first.
+A policy deny of a `tool_use` that arrives before any `message_start`
+gets none: both SDKs then raise an error, and nothing runs.
+
 #### Malformed tool calls fail closed (v1.0)
 
 A tool call that **completes** with arguments that are not valid JSON —
@@ -579,9 +591,9 @@ any later line), at its first tool call. openai-node decodes each SSE
 line on its own and drops a leading mark, and @anthropic-ai/sdk drops
 one from each line it splits, so such a line is an event or data line
 to them and they run the call on it; openai-python and
-anthropic-python ignore the line. A line starts
-after CRLF, a bare CR or a bare LF, so a mark after a bare CR counts. The clients
-disagree on what the stream holds. The proxy reads such a line as
+anthropic-python ignore the line. A line starts after CRLF, a bare CR
+or a bare LF, so a mark after a bare CR counts. The clients disagree
+on what the stream holds. The proxy reads such a line as
 openai-node does only to see whether it carries a call (the
 case-variant check below sees it too); it does not gate it: it
 refuses, stream-shaped, and audits once. Such a stream with no tool
@@ -690,6 +702,12 @@ which still writes a transport-tagged entry (carrying the *engine* verdict,
 not the DENY). So fidelity degrades to the lower-fidelity path without
 `--api-key`, but audit **coverage never does** — a forced refusal is always
 recorded one way or the other.
+
+That includes `deny:llm_api_proxy:duplicate_argument_key`. The proxy
+refuses arguments with a duplicate JSON key before any policy check, and
+records the refusal through `/v1/audit`. On the fallback, `/v1/check`
+records the engine's verdict on the arguments as Go reads them (the last
+value of each duplicated key), not the duplicate-key DENY the client got.
 
 ### 5.5 Byte-identity invariant on ALLOW
 

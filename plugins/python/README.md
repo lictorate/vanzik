@@ -3,7 +3,7 @@
 Lightweight Python client for [Vanzik](https://github.com/lictorate/vanzik) — the firewall for AI agents.
 
 - **Zero runtime dependencies** for the core SDK (stdlib `urllib`).
-- **Fail-closed by default** — if the proxy is unreachable, `check()` returns `DENY`.
+- **Fail-closed by default** — if the Vanzik server is unreachable, `check()` returns `DENY`.
 - **Framework adapters** for LangChain, CrewAI, browser-use, MCP, and the OpenAI Agents SDK, gated behind optional extras.
 
 > **Deep reference:** [`docs/SDK_PYTHON.md`](../../docs/SDK_PYTHON.md) — full API, exception hierarchy, fail-mode details, adapter internals.
@@ -65,10 +65,10 @@ else:
 ### Fail mode
 
 ```python
-# Default: fail closed. Proxy unreachable → CheckResult(decision="DENY", reason="Vanzik unreachable (deny): …")
+# Default: fail closed. Server unreachable → CheckResult(decision="DENY", reason="Vanzik unreachable (deny): …")
 guard = Guard("http://localhost:8080")
 
-# Opt in to fail open. Proxy unreachable → CheckResult(decision="ALLOW", reason="Vanzik unreachable (allow): …")
+# Opt in to fail open. Server unreachable → CheckResult(decision="ALLOW", reason="Vanzik unreachable (allow): …")
 # Use only when your threat model treats Vanzik as advisory.
 guard = Guard("http://localhost:8080", fail_mode="allow")
 ```

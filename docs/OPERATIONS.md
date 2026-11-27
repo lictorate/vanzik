@@ -144,7 +144,7 @@ survive a *restart*, but each replica keeps its own working copy):
 
 Mitigations if you must run multiple replicas *without* PostgreSQL:
 
-1. **Run one replica.** Scale vertically. Vanzik is a latency-sensitive sidecar, not a throughput bottleneck — one well-sized instance usually handles thousands of agents.
+1. **Run one replica.** Scale vertically. Vanzik is a latency-sensitive sidecar, not usually a throughput bottleneck: in the 2.1.0 verification run (Apple M4, loopback), the cost per check stayed flat as the number of agent ids grew to 1000. Larger fleets were not tested.
 2. **Pin sessions.** Configure your load balancer for session affinity on `session_id` (header or cookie). Rate-limit buckets still drift across replicas for multi-session agents, but cost accounting becomes accurate.
 3. **Divide limits by replica count.** If you run 3 replicas and want a global cap of 30 req/min, set `max_requests: 10`. Works only for steady-state traffic; burst behavior remains sloppy.
 4. **Aggregate externally.** Have each replica emit `/metrics` to Prometheus; alert on aggregate drift between declared and observed rates. Treat Vanzik rate limits as best-effort and backstop with an upstream rate limiter (the reverse proxy, a CDN, or an API gateway).
@@ -245,6 +245,9 @@ Both wire-level enforcement points are **stateless** — they fan every gated re
 
 - **Health:** the LLM API Proxy serves `GET /healthz` on its listen port — use it as the readiness probe. The MCP Gateway is a stdio bridge with no HTTP listener; probe the process, not a port.
 - **Metrics:** neither proxy binary exposes `/metrics` — the central `vanzik server` does. See [`OBSERVABILITY.md`](OBSERVABILITY.md#mcp-gateway--llm-api-proxy-metrics-v05) for what is and isn't observable at the proxies.
+- **Audit fidelity:** with a keyed central server, give the LLM API Proxy and the MCP gateway `--api-key` too. Refusals they make themselves are recorded through `POST /v1/audit`, which needs the key. Without it:
+  - the LLM API Proxy (a malformed tool call, a duplicate argument key, an undecodable or ungateable response) falls back to `/v1/check`, so the entry carries the engine's verdict, not the DENY the client received; for a duplicate argument key that verdict is on the last value of each duplicated key. See [`LLM_API_PROXY.md`](LLM_API_PROXY.md#audit-fidelity).
+  - the MCP gateway (a conflicting argument alias) has no fallback: the record is refused and only logged on its stderr. The DENY itself is unaffected.
 - **Shutdown:** the LLM API Proxy buffers tool calls inside streaming responses; on SIGTERM it drains in-flight requests for 10 s, then closes them. Give the host a stop timeout above 10 s (the systemd and Kubernetes defaults, 90 s and 30 s, already are); a longer one doesn't extend the 10 s drain, and a hard kill truncates the client's response.
 - **Version skew:** the `/v1/*` wire protocol is frozen across 1.x and 2.x, so mixed server and proxy versions interoperate. Upgrading the server first, then the proxies, is still the safe order.
 - **Topology:** prefer per-agent sidecars — shared proxies couple every agent's lifecycle.
@@ -282,7 +285,7 @@ The buffered audit logger (the default) flushes its queue at shutdown, waiting u
 
 For a single replica on modern hardware:
 
-- CPU: 1 vCPU comfortably handles 500+ RPS of `/v1/check` (mostly spent in YAML policy evaluation and JSON decode).
+- CPU: measured on an Apple M4 over loopback, one server sustains 1k RPS of `/v1/check` at 1.2 ms p99; the cost is mostly policy evaluation and JSON decode. It has not been measured on cloud vCPUs, so size with headroom and check `vanzik_request_duration_ms` under your own load.
 - Memory: base ~50 MB; linear growth with audit log size during startup replay only.
 - Disk: **audit log drives this**. Size for at least 2× your retention window.
 
